@@ -1,0 +1,8 @@
+colorama>=0.4.6
+requests>=2.31
+dnspython>=2.4
+pytest>=8.0  # testler için (CI + lokal)
+# playwright  # opsiyonel: sadece --dom (headless DOM XSS) için:
+#   py -m pip install playwright && py -m playwright install chromium
+# cryptography  # opsiyonel: sadece --oob (interactsh OOB doğrulama) için:
+#   py -m pip install "gash[oob]"  (veya: py -m pip install cryptography)

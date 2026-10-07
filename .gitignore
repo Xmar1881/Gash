@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+build/
+dist/
+*.egg-info/
+.ruff_cache/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+
+# Virtual env
+.venv/
+venv/
+env/
+ENV/
+
+# GASH çalışma çıktıları (taramaya özel, repoya girmez)
+.gash_history/
+rapor.html
+rapor.json
+rapor.txt
+rapor/
+raporlar/
+reports/
+report.html
+report.json
+report.txt
+.html
+*.gash.json
+
+# OS / editör
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Env / secret (asla commitlenmez)
+.env
+.env.*
+*.pem
+*.key

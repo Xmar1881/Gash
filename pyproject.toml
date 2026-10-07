@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gash"
+version = "0.3.0"
+description = "Fast, modular automated web vulnerability scanner"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Xmar1881" }]
+keywords = ["security", "pentest", "scanner", "sqli", "xss", "recon"]
+dependencies = [
+  "colorama>=0.4.6",
+  "requests>=2.31",
+  "dnspython>=2.4",
+]
+
+[project.optional-dependencies]
+dom = ["playwright"]
+oob = ["cryptography"]
+test = ["pytest>=8.0"]
+
+[project.scripts]
+gash = "gash:cli"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+# Focused gate: real bugs (unused imports/vars) + syntax.
+# Broad style rules stay off: network scanners catch broad exceptions
+# on purpose, and short regex aliases (re.I) are fine.
+select = ["F", "E9"]
+
+[tool.setuptools]
+py-modules = ["gash"]
+
+[tool.setuptools.packages.find]
+include = ["core*"]

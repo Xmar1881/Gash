@@ -1,0 +1,864 @@
+"""Vulnerability scanning.
+
+Covers SQLi (query params + form inputs, DB error signatures), reflected
+XSS, upload-form hunting, and dir-brute with a built-in wordlist plus
+robots.txt. GET-heavy, no destructive payloads. Detection is signature /
+reflection / status based, with a soft-404 filter. ThreadPoolExecutor
+keeps it fast.
+"""
+
+from __future__ import annotations
+
+import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from urllib.parse import urljoin, urlparse, parse_qs, urlencode, urlunparse
+
+from core.colors import success, info, warn, DIM, RESET
+from core.recon import normalize_target
+from core.net import pace, get_context, ScanBudgetExceeded
+from core.knowledge import enrich
+from core.registry import check as register_check
+
+# ---------- veri ----------
+
+@dataclass
+class Finding:
+    title: str
+    severity: str  # CRITICAL | MEDIUM | LOW
+    detail: str = ""
+    url: str = ""
+    evidence: str = ""
+    confidence: str = ""  # High | Medium | Low — how sure the check is
+    cwe: str = ""
+    owasp: str = ""
+    cvss: str = ""
+    remediation: str = ""
+
+    def to_dict(self) -> dict:
+        # keep reports small: evidence 300, detail 2000 chars.
+        # URLs always live in `url`, never inside `detail`.
+        detail = self.detail or ""
+        return {"title": self.title, "severity": self.severity,
+                "detail": detail[:2000], "url": self.url,
+                "evidence": (self.evidence or "")[:300],
+                "confidence": self.confidence,
+                "cwe": self.cwe, "owasp": self.owasp, "cvss": self.cvss,
+                "remediation": self.remediation}
+
+
+# SQL error signatures (matched lowercase)
+SQL_ERRORS = [
+    "you have an error in your sql syntax",
+    "warning: mysql", "mysqli_fetch", "mysql_fetch_array",
+    "unclosed quotation mark", "quoted string not properly terminated",
+    "ora-01756", "ora-00933", "oracle error",
+    "pg_query()", "postgresql", "psql:",
+    "sqlite3", "sqlite error",
+    "odbc sql", "jdbc", "sqlstate",
+    "supplied argument is not a valid mysql",
+]
+
+SQLI_PAYLOADS = ["'", '"', "' OR '1'='1"]
+
+XSS_PAYLOAD = 'gashxss"><svg onload=alert(1)>'
+
+# Context-aware probe demeti: (baglam, marker, payload). Ilk vuran yeterli.
+XSS_PROBES = [
+    ("html-attr", "gx1", 'gx1"><svg onload=alert(1)>'),
+    ("attr-js", "gx2", 'gx2"autofocus/onfocus=alert(1)>\'-alert(1)-'),
+    ("tag-break", "gx3", "gx3</title><svg onload=alert(1)>"),
+]
+
+# Marker cevresi bunlari iceriyorsa echo encode'lanmis demektir -> FP'yi ele
+ESCAPED_HINTS = ["&lt;", "&gt;", "&quot;", "&#039;", "&#x27;", "&#39;",
+                 "\\u003c", "\\u003e", "\\x3c", "\\x3e"]
+
+# Common params to try when a page has no links (high hit rate)
+FUZZ_PARAMS = ["id", "q", "query", "s", "search", "keyword", "name", "term"]
+
+# Upload olabilecek endpoint'ler
+UPLOAD_PATHS = [
+    "/upload", "/uploads", "/upload.php", "/file-upload",
+    "/admin/upload", "/admin/uploads", "/wp-admin/media-new.php",
+    "/uploads.php", "/uploader", "/filemanager",
+]
+
+# Built-in quick wordlists (category -> paths). Picked by tech fingerprint.
+WL_GENERAL = [
+    "admin", "administrator", "login", "panel", "dashboard", "manager",
+    "portal", "backend", "secure", "private", "internal", "staff",
+    "signup", "register", "account", "profile", "settings", "user", "users",
+    "member", "session", "token", "auth", "oauth", "sso", "logout",
+    "password", "reset", "forgot", "verify", "captcha",
+    "search", "help", "contact", "about", "status", "health", "metrics",
+    "debug", "console", "support", "ticket", "docs", "blog", "forum",
+    "shop", "cart", "checkout", "payment", "order",
+    "static", "assets", "images", "css", "js", "fonts", "download",
+    "uploads", "upload", "files", "media",
+    "backup", "bak", "old", "test", "dev", "config",
+    "sitemap.xml", ".well-known/security.txt",
+    "api", "graphql", "console", "server-status",
+]
+WL_WORDPRESS = [
+    "wp-admin", "wp-login.php", "wp-content", "wp-includes", "wp-json",
+    "xmlrpc.php", "wp-config.php.bak", "readme.html", "license.txt",
+    "wp-content/debug.log", "wp-admin/admin-ajax.php", "wp-cron.php",
+    "wp-content/uploads", "wp-includes/js/jquery/jquery.js",
+]
+WL_PHP = [
+    "phpinfo.php", "info.php", "phpmyadmin", "adminer.php", "pma",
+    ".git/HEAD", ".git/config", "composer.json", "composer.lock",
+    "config.php.bak", "config.php.old", "index.php.bak", "index.php.old",
+    ".env", ".htaccess", ".htpasswd",
+]
+WL_NODE = [
+    "package.json", "package-lock.json", "yarn.lock", ".env", ".env.local",
+    "server.js", "app.js", "index.js", ".npmrc", ".nvmrc",
+    "webpack.config.js", ".babelrc", "next.config.js",
+]
+WL_JAVA = [
+    "WEB-INF/web.xml", "WEB-INF/classes/", "actuator", "actuator/health",
+    "actuator/env", "actuator/info", "manager/html", "manager/status",
+    ".env", "application.properties", "config.json",
+]
+WL_PYTHON = [
+    ".env", "settings.py.bak", "settings.py.old", "config.py.bak",
+    "requirements.txt", "app.py.bak", "manage.py", "admin/",
+    "static/admin/", "media/",
+]
+WL_API = [
+    "api/v1", "api/v2", "api/docs", "api-docs", "swagger", "swagger.json",
+    "openapi.json", "graphiql", "playground", "rest", "v1", "v2",
+    "api/users", "api/login", "api/health",
+]
+WL_BACKUP_SECRET = [
+    "backup.zip", "www.zip", "site.zip", "old.zip", "test.zip", "bak.zip",
+    "backup.tar.gz", "www.tar.gz", "db.sql", "dump.sql", "backup.sql",
+    "database.sql", "web.config", ".env.bak", ".env.old", "config.bak",
+]
+WL_TECHMAP = {
+    "wordpress": WL_WORDPRESS + WL_PHP,
+    "php": WL_PHP,
+    "node": WL_NODE,
+    "nextjs": WL_NODE,
+    "java": WL_JAVA,
+    "python": WL_PYTHON,
+}
+# kept for compatibility (unused now, --wordlist files take precedence)
+DIR_WORDLIST = WL_GENERAL
+
+
+def wordlist_for_techs(techs: list[str] | None) -> list[str]:
+    """Tech'e ozel + GENERAL + API + yedekler. Yuksek sinyal basa. Tekrarsiz."""
+    paths: list[str] = []
+    for t in techs or []:
+        paths += WL_TECHMAP.get(t, [])
+    paths += WL_GENERAL + WL_API + WL_BACKUP_SECRET
+    return list(dict.fromkeys(paths))
+
+HREF_RE = re.compile(r'href=["\']([^"\']+)["\']', re.I)
+FORM_RE = re.compile(r'<form[^>]*>(.*?)</form>', re.I | re.S)
+ACTION_RE = re.compile(r'action=["\']([^"\']*)["\']', re.I)
+METHOD_RE = re.compile(r'method=["\']([^"\']*)["\']', re.I)
+INPUT_RE = re.compile(r'<input[^>]*name=["\']([^"\']+)["\'][^>]*>', re.I)
+
+ADMIN_HINT = re.compile(r'admin|dashboard|giriş|login|wp-|panel|phpmyadmin', re.I)
+FILE_INPUT_HINT = re.compile(r'type\s*=\s*["\']?file["\']?', re.I)
+# Paths that look sensitive (MEDIUM). Ordinary pages (contact/about) stay INFO.
+# NOTE: no generic words like test/dev (so innocent paths like /latest
+# don't get flagged MEDIUM). api/db are kept narrow (word-boundaried).
+SENSITIVE_HINT = re.compile(
+    r"config|backup|\bapi\b|\bdb\b|\bsql\b|env|\.git|debug|console|manager|"
+    r"actuator|web-inf|swagger|graphql|upload|private|secret|token|\bauth\b|"
+    r"wp-|shell|phpinfo|server-status|health|metrics|bak|old",
+    re.I)
+
+
+# ---------- http helpers ----------
+
+def _session(timeout: int = 8, auth=None):
+    import requests
+    import urllib3
+    from core.net import proxies, user_agent, tls_verify
+    s = requests.Session()
+    s.headers.update({"User-Agent": user_agent()})
+    if proxies():
+        s.proxies.update(proxies())
+    if auth is not None:
+        cookies = getattr(auth, "cookies", None)
+        extra = getattr(auth, "headers", None)
+        if cookies:
+            s.cookies.update(cookies)
+        if extra:
+            s.headers.update(extra)
+    s.verify = tls_verify()
+    if not s.verify:
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    s.timeout = timeout  # unused on Session, passed to get() instead
+    return s
+
+
+_TLS_POOL: dict[int, dict[int, object]] = {}
+_TLS_LOCK = None  # lazy threading.Lock (see below)
+
+
+def _tls_session(template):
+    """One requests.Session per thread, cloned from the template.
+
+    requests Sessions are not thread-safe; every worker gets its own
+    connection pool. Non-requests sessions (test fakes) pass through.
+    """
+    import threading
+    import requests
+    if not isinstance(template, requests.Session):
+        return template
+    global _TLS_LOCK
+    if _TLS_LOCK is None:
+        _TLS_LOCK = threading.Lock()
+    tid = threading.get_ident()
+    key = id(template)
+    with _TLS_LOCK:
+        per_thread = _TLS_POOL.setdefault(tid, {})
+        s = per_thread.get(key)
+        if s is None:
+            s = requests.Session()
+            try:
+                s.headers.update(dict(template.headers))
+            except Exception:
+                pass
+            try:
+                s.cookies.update({c.name: c.value for c in template.cookies})
+            except Exception:
+                pass
+            s.verify = getattr(template, "verify", True)
+            try:
+                s.proxies.update(dict(getattr(template, "proxies", {}) or {}))
+            except Exception:
+                pass
+            per_thread[key] = s
+    return s
+
+
+def _calm_down(wait: float, where: str) -> None:
+    """After a 429: wait politely + throttle globally (max 10s)."""
+    wait = min(max(1.0, wait), 30.0)
+    ctx = get_context()
+    with ctx._lock:
+        ctx.delay = min(ctx.delay + 2.0, 10.0)
+    print(warn(f"  [!] 429 ({where}): waiting {wait:.0f}s, throttling down."))
+    time.sleep(wait)
+
+
+def _get(session, url: str, timeout: int, headers: dict | None = None):
+    """(status, text, final_url) or None. Never throws. Raises on budget."""
+    pace()
+    session = _tls_session(session)
+    try:
+        r = session.get(url, timeout=timeout, allow_redirects=True,
+                        headers=headers)
+        if r.status_code == 429:
+            _calm_down(float(r.headers.get("Retry-After", 5) or 5), "GET")
+            pace()
+            r = session.get(url, timeout=timeout, allow_redirects=True,
+                            headers=headers)
+        return r.status_code, r.text, r.url
+    except ScanBudgetExceeded:
+        raise
+    except Exception:
+        return None
+
+
+def _post(session, url: str, timeout: int, **kwargs):
+    """POST equivalent (response or None). Raises on budget overrun."""
+    pace()
+    session = _tls_session(session)
+    try:
+        r = session.post(url, timeout=timeout, allow_redirects=True, **kwargs)
+        if r.status_code == 429:
+            _calm_down(float(r.headers.get("Retry-After", 5) or 5), "POST")
+            pace()
+            r = session.post(url, timeout=timeout, allow_redirects=True, **kwargs)
+        return r
+    except ScanBudgetExceeded:
+        raise
+    except Exception:
+        return None
+
+
+def do_login(base_url: str, username: str, password: str, timeout: int = 8,
+             login_url: str | None = None,
+             auth=None) -> tuple[dict, bool]:
+    """Log in through the form.
+
+    Returns (session cookies, form_found). No form -> ({}, False);
+    form but no cookies -> ({}, True) — the caller fails closed.
+
+    Warns about cleartext passwords off-https but doesn't block
+    (could be a test environment).
+    """
+    from urllib.parse import urljoin
+    if base_url.startswith("http://") and not login_url:
+        print(warn("  [!] login over http: password goes over the wire (assumed test env)"))
+    s = _session(timeout, auth)
+    page_url = login_url or base_url
+    got = _get(s, page_url, timeout)
+    html = (got[1] if got else "") or ""
+    target = page_url
+    login_chunk = ""
+    for m in FORM_RE.finditer(html):
+        if "password" in m.group(0).lower():
+            am = ACTION_RE.search(m.group(0))
+            target = urljoin(base_url + "/", (am.group(1) if am else "") or "/")
+            login_chunk = m.group(0)
+            break
+    if not login_chunk:
+        print(warn("  [!] No login form found, continuing anonymously."))
+        return {}, False
+    pm = re.search(r'<input[^>]*type=["\']?password["\']?[^>]*name=["\']([^"\']+)["\']',
+                   login_chunk, re.I)
+    pass_name = pm.group(1) if pm else "password"
+    user_name = None
+    for n in INPUT_RE.findall(login_chunk):
+        if n != pass_name:
+            user_name = user_name or n
+    if not user_name:
+        print(warn("  [!] No username field found, continuing anonymously."))
+        return {}, True
+    data = {n: "1" for n in INPUT_RE.findall(login_chunk)}
+    data[user_name] = username
+    data[pass_name] = password
+    r = _post(s, target, timeout, data=data)
+    if not r:
+        return {}, True
+    try:
+        return {c.name: c.value for c in s.cookies}, True
+    except Exception:
+        return {}, True
+
+
+def _fetch_base(session, base_url: str, timeout: int,
+                scope_hosts: set[str] | None = None) -> tuple[str, str, dict]:
+    """Fetch the base page, with https fallback. (html, effective_base, headers).
+
+    A redirect landing outside scope_hosts is refused (scope enforcement
+    starts at the very first request).
+    """
+    from urllib.parse import urlparse
+    cands = [base_url]
+    if base_url.startswith("http://"):
+        cands.append(base_url.replace("http://", "https://", 1))
+    for u in cands:
+        try:
+            pace()
+            r = session.get(u, timeout=timeout, allow_redirects=True)
+            if r.status_code:
+                if scope_hosts:
+                    try:
+                        final = (urlparse(r.url or u).hostname or "").lower()
+                    except Exception:
+                        final = ""
+                    if final not in scope_hosts:
+                        continue
+                return r.text, u.rstrip("/"), dict(r.headers)
+        except ScanBudgetExceeded:
+            raise
+        except Exception:
+            continue
+    return "", base_url.rstrip("/"), {}
+
+
+# ---------- discovery: params & forms ----------
+
+def discover_test_urls(html: str, base: str) -> list[str]:
+    """Form actions (real input names, high signal) + page links. Max 15."""
+    urls: list[str] = []
+    # form actions FIRST (with their REAL input names — e.g. search.jsp?query=gash)
+    # NOTE: findall returns group contents; the action sits in the tag -> finditer + group(0)
+    for m in FORM_RE.finditer(html or ""):
+        am = ACTION_RE.search(m.group(0))
+        if am:
+            full = urljoin(base + "/", am.group(1) or "/")
+            names = INPUT_RE.findall(m.group(1)) or ["q"]
+            if "?" not in full:
+                full += "?" + urlencode({names[0]: "gash"})
+            urls.append(full)
+    for m in HREF_RE.findall(html or ""):
+        if "?" in m and "=" in m:
+            full = urljoin(base + "/", m)
+            # stay on the same host
+            if urlparse(full).hostname == urlparse(base).hostname:
+                urls.append(full)
+    # dedupe, keep order
+    uniq = list(dict.fromkeys(urls))[:15]
+    # few links on the page: also fuzz common params (same host only)
+    if len(uniq) < 12:
+        have = set()
+        for u in uniq:
+            try:
+                have.update(parse_qs(urlparse(u).query).keys())
+            except Exception:
+                pass
+        for p in FUZZ_PARAMS:
+            if p not in have:
+                uniq.append(f"{base}/?{p}=1")
+            if len(uniq) >= 12:
+                break
+    if not uniq:
+        # synthetic params for the base probe pool, even on static sites
+        uniq = [f"{base}/?id=1", f"{base}/?q=1", f"{base}/?search=1"]
+    return uniq[:15]
+
+
+def _inject(url: str, payload: str) -> str:
+    """Append the payload to every query value (quote-breaking test)."""
+    p = urlparse(url)
+    qs = parse_qs(p.query, keep_blank_values=True)
+    if not qs:
+        return url + payload
+    # parse_qs returns lists; flatten with the payload appended
+    flat = {k: v[0] for k, v in
+            {k: ([x + payload for x in v] if v else [payload])
+             for k, v in qs.items()}.items()}
+    return urlunparse((p.scheme, p.netloc, p.path, p.params, urlencode(flat), p.fragment))
+
+
+# ---------- testler ----------
+
+@register_check("sqli-error", "Error-based SQLi (DB error signature)", order=10)
+def test_sqli(session, urls: list[str], timeout: int, verbose: bool,
+              threads: int = 10) -> list[Finding]:
+    from concurrent.futures import ThreadPoolExecutor
+    out: list[Finding] = []
+
+    def _probe(u: str) -> Finding | None:
+        base_got = _get(session, u, timeout)
+        base_body = (base_got[1] if base_got else "").lower()
+        base_has_err = any(e in base_body for e in SQL_ERRORS)
+        for p in SQLI_PAYLOADS:
+            inj = _inject(u, p)
+            got = _get(session, inj, timeout)
+            if not got:
+                continue
+            _, body, _ = got
+            low = body.lower()
+            hit = next((e for e in SQL_ERRORS if e in low), None)
+            if hit and not base_has_err:
+                if verbose:
+                    print(warn(f"    [!] SQLi: {inj}"))
+                return Finding(
+                    title="Possible SQL Injection",
+                    severity="CRITICAL",
+                    url=inj,
+                    detail=f"DB error signature returned: '{hit}'",
+                    evidence=body[max(0, low.find(hit) - 40):low.find(hit) + 80].strip(),
+                    confidence="High",
+                )
+        return None  # one finding per URL is enough
+
+    with ThreadPoolExecutor(max_workers=max(1, min(threads, len(urls) or 1))) as ex:
+        for f in ex.map(_probe, urls):
+            if f:
+                out.append(f)
+    return out
+
+
+def _raw_reflected(body: str | None, marker: str) -> bool:
+    """Marker ham (encode'siz) yansidi mi? Entity/unicode kacis varsa False."""
+    if not body or marker not in body:
+        return False
+    low = body.lower()
+    i = low.find(marker.lower())
+    window = low[max(0, i - 120):i + len(marker) + 120]
+    return not any(h in window for h in ESCAPED_HINTS)
+
+
+@register_check("xss-reflected", "Reflected XSS (3 contexts + escape filter)", order=10)
+def test_xss(session, urls: list[str], timeout: int, verbose: bool,
+             threads: int = 10) -> list[Finding]:
+    from concurrent.futures import ThreadPoolExecutor
+    out: list[Finding] = []
+
+    def _probe(u: str) -> Finding | None:
+        partial = False
+        for ctx, marker, payload in XSS_PROBES:
+            inj = _inject(u, payload)
+            got = _get(session, inj, timeout)
+            if not got:
+                continue
+            _, body, _ = got
+            if _raw_reflected(body, marker):
+                if verbose:
+                    print(warn(f"    [!] XSS({ctx}): {inj}"))
+                return Finding(
+                    title="Possible Reflected XSS",
+                    severity="MEDIUM",
+                    url=inj,
+                    detail=f"Payload reflected raw in '{ctx}' context",
+                    evidence=payload,
+                    confidence="High",
+                )
+            if marker in (body or ""):
+                partial = True  # reflected but encoded -> inconclusive
+        if partial:
+            return Finding(
+                title="Partially encoded reflection (review manually)",
+                severity="LOW",
+                url=u,
+                detail="Input reflects encoded; bypass may be possible depending on context",
+                evidence="encoded reflection",
+                confidence="Low",
+            )
+        return None  # one finding per URL is enough
+
+    with ThreadPoolExecutor(max_workers=max(1, min(threads, len(urls) or 1))) as ex:
+        for f in ex.map(_probe, urls):
+            if f:
+                out.append(f)
+    # keep info notes from spamming: max 3
+    hits = [f for f in out if f.severity != "LOW"]
+    infos = [f for f in out if f.severity == "LOW"][:3]
+    return hits + infos
+
+
+@register_check("xss-errpage", "404 + header reflection", order=10)
+def test_xss_errpage(session, base: str, timeout: int, verbose: bool) -> list[Finding]:
+    """404 pages + header reflection. Single requests, high yield."""
+    out: list[Finding] = []
+    # 1) does a missing path echo back on the 404 page?
+    probe = base + "/gash404gx9yolu"
+    got = _get(session, probe, timeout)
+    if got and _raw_reflected(got[1], "gash404gx9yolu"):
+        out.append(Finding(
+            title="Possible Reflected XSS (404 page)", severity="MEDIUM",
+            url=probe,
+            detail="404 page reflects the requested path raw",
+            evidence="gash404gx9yolu",
+            confidence="Medium",))
+        if verbose:
+            print(warn(f"    [!] XSS(404): {probe}"))
+    # 2) header reflection (UA + Referer in one request)
+    got = _get(session, base + "/gash_nope_987654321", timeout,
+               headers={"User-Agent": "gxua8marker",
+                        "Referer": "https://x/gxref7marker"})
+    if got:
+        body = got[1] or ""
+        for marker, src in (("gxua8marker", "User-Agent"),
+                            ("gxref7marker", "Referer")):
+            if _raw_reflected(body, marker):
+                out.append(Finding(
+                    title=f"Header reflection XSS surface ({src})", severity="MEDIUM",
+                    url=base + "/<404>",
+                    detail=f"{src} header reflects raw into the error page (verify manually)",
+                    evidence=marker,
+                    confidence="Medium",))
+                if verbose:
+                    print(warn(f"    [!] XSS(header:{src})"))
+    return out
+
+
+@register_check("upload-form", "Upload form detection (passive)", order=10)
+def check_upload(session, base: str, timeout: int, verbose: bool) -> list[Finding]:
+    out: list[Finding] = []
+    for path in UPLOAD_PATHS:
+        url = base + path
+        got = _get(session, url, timeout)
+        if not got:
+            continue
+        status, body, _ = got
+        if status == 200 and FILE_INPUT_HINT.search(body or ""):
+            out.append(Finding(
+                title="Upload form detected",
+                severity="INFO",
+                url=url,
+                detail=f"Form with <input type=file> at {path} (passive discovery, "
+                       "not a vulnerability — run --deep to test it)",
+                evidence='<input type=file...>',
+                confidence="High",
+            ))
+            if verbose:
+                print(warn(f"    [!] Upload form: {url}"))
+    return out
+
+
+def _baseline_404(session, base: str, timeout: int) -> tuple[int, int, str]:
+    """Baseline for the soft-404 filter: (status, size, sample text)."""
+    got = _get(session, base + "/gash_nope_987654321", timeout)
+    if not got:
+        return 404, 0, ""
+    return got[0], len(got[1] or ""), (got[1] or "")[:4000]
+
+
+def _looks_like_baseline(status: int, body: str, base_status: int,
+                         base_len: int, base_text: str) -> bool:
+    """Combined signal: status + size + content similarity (difflib)."""
+    if status != base_status or not base_text:
+        return False
+    blen = len(body or "")
+    if abs(blen - base_len) > max(80, base_len // 10):
+        return False
+    import difflib
+    ratio = difflib.SequenceMatcher(None, base_text, (body or "")[:4000]).ratio()
+    return ratio > 0.9
+
+
+def _probe_dir(session, base: str, path: str, timeout: int,
+               base_status: int, base_len: int, base_text: str = "") -> Finding | None:
+    url = base + "/" + path.lstrip("/")
+    got = _get(session, url, timeout)
+    if not got:
+        return None
+    status, body, _ = got
+    if status == 404:
+        return None
+    # soft-404: same as baseline means filtered (status + size + similarity)
+    if status == 200 and _looks_like_baseline(status, body or "", base_status,
+                                             base_len, base_text):
+        return None
+    if status in (200, 301, 302, 307, 308, 401, 403):
+        is_admin = bool(ADMIN_HINT.search(path) or (body and ADMIN_HINT.search(body[:2000] or "")))
+        pl = path.lower()
+        seg = pl.rsplit("/", 1)[-1]  # nested paths like /admin/web.config
+        if path in (".git/HEAD", ".env") or (body and "ref: refs/heads" in (body[:500] or "")):
+            return Finding(title=f"Critical File Exposure: {path}", severity="CRITICAL",
+                           detail=f"HTTP {status}", url=url,
+                           confidence="High")
+        # smart-tech: sir/konfig/yedek dosyalari kritik (basename bak!)
+        if (seg.endswith((".env", ".sql", ".bak", ".old", ".zip", ".tar.gz"))
+                or seg in ("package.json", "composer.json", ".npmrc", "web.config",
+                           ".htaccess", ".htpasswd", ".git", "head", "config")
+                or "wp-config" in seg or seg == "web.xml" or seg == "env"):
+            return Finding(title=f"Critical File Exposure: {path}", severity="CRITICAL",
+                           detail=f"HTTP {status}", url=url,
+                           confidence="High")
+        # admin / login / dashboard variants (incl. TR paths, matched literally)
+        if ("admin" in pl or "login" in pl or "dashboard" in pl or "panel" in pl
+                or "phpmyadmin" in pl or "yonetim" in pl or "giris" in pl):
+            if status in (200, 401, 403) or is_admin:
+                return Finding(title="Admin Panel discovered", severity="INFO",
+                               detail=f"HTTP {status}" + (" (login form)" if is_admin else ""),
+                               url=url,
+                               confidence="High")
+        # forbidden but confirmed present: medium
+        if status in (401, 403):
+            return Finding(title=f"Restricted Area: {path}", severity="INFO",
+                           detail=f"HTTP {status} (access controlled, path exists)", url=url,
+                           confidence="Medium")
+        # hassas gorunumlu yol: orta
+        if SENSITIVE_HINT.search(pl):
+            return Finding(title=f"Sensitive Directory: {path}", severity="MEDIUM",
+                           detail=f"HTTP {status}", url=url,
+                           confidence="Medium")
+        # siradan sayfa / yonlendirme: dusuk bilgi (gurultu degil)
+        if status == 200:
+            return Finding(title=f"General Page: {path}", severity="INFO",
+                           detail=f"HTTP {status}", url=url,
+                           confidence="High")
+        return Finding(title=f"Redirect: {path}", severity="INFO",
+                       detail=f"HTTP {status}", url=url,
+                       confidence="High")
+    return None
+
+
+@register_check("robots", "robots.txt + Disallow harvesting", order=20)
+def check_robots(session, base: str, timeout: int) -> tuple[list[Finding], list[str]]:
+    """Return robots.txt + Disallows (fed into dir-brute)."""
+    got = _get(session, base + "/robots.txt", timeout)
+    if not got or got[0] != 200 or "disallow" not in (got[1] or "").lower():
+        return [], []
+    body = got[1]
+    disallows = re.findall(r'Disallow:\s*(\S+)', body, re.I)[:20]
+    f = Finding(title="robots.txt Found", severity="INFO",
+                detail=f"{len(disallows)} disallows: {', '.join(disallows[:8])}",
+                url=base + "/robots.txt", evidence=body[:200],
+                confidence="High")
+    extra = [d for d in disallows if d.startswith("/") and len(d) > 1]
+    return [f], extra
+
+
+@register_check("smart-dirs", "Smart dir-brute (tech wordlist)", order=30)
+def dir_brute(session, base: str, timeout: int, threads: int,
+              extra_paths: list[str] | None = None, verbose: bool = False,
+              wordlist: list[str] | None = None,
+              techs: list[str] | None = None,
+              ctx: dict | None = None) -> list[Finding]:
+    base_list = wordlist or wordlist_for_techs(techs)
+    paths = list(dict.fromkeys(base_list + (extra_paths or [])))[:80]
+    bs, bl, bt = _baseline_404(session, base, timeout)
+    out: list[Finding] = []
+    with ThreadPoolExecutor(max_workers=max(1, threads)) as ex:
+        fut = {ex.submit(_probe_dir, session, base, p, timeout, bs, bl, bt): p
+               for p in paths}
+        for f in as_completed(fut):
+            try:
+                r = f.result()
+                if r:
+                    out.append(r)
+                    if ctx is not None:
+                        ctx.setdefault("found_paths", []).append(r.url)
+                    if verbose:
+                        print(warn(f"    [!] {r.severity}: {r.title} -> {r.url}"))
+            except Exception:
+                pass
+    return out
+
+
+RECURSE_FILE_SUFFIX = [".bak", ".old", "~", ".swp", ".save"]
+RECURSE_DIR_EXTRA = ["backup.zip", ".git/HEAD", "index.php.bak", "web.config"]
+
+
+@register_check("smart-recurse", "Recurse under found paths + backup extensions", order=31)
+def smart_recurse(session, base: str, timeout: int, threads: int = 10,
+                 ctx: dict | None = None, verbose: bool = False) -> list[Finding]:
+    """Parent paths of dir-brute hits: suffixes for files, extra paths for dirs."""
+    from urllib.parse import urlparse
+    all_found = list(dict.fromkeys((ctx or {}).get("found_paths", [])))
+
+    def _prio(u: str) -> int:
+        seg = urlparse(u).path.rsplit("/", 1)[-1].lower()
+        if "." not in seg:
+            return 0  # dirs first (keeps thread order stable)
+        if seg.endswith((".php", ".js", ".env", ".json", ".config")):
+            return 1
+        return 2
+
+    found = sorted(all_found, key=_prio)[:6]
+    if not found:
+        return []
+    probes: list[str] = []
+    for u in found:
+        path = urlparse(u).path
+        seg = path.rsplit("/", 1)[-1]
+        if "." in seg:  # dosya -> yedek varyantlari
+            probes += [path + s for s in RECURSE_FILE_SUFFIX]
+        else:  # dir -> go deeper
+            d = path if path.endswith("/") else path + "/"
+            probes += [d + x for x in RECURSE_DIR_EXTRA]
+    probes = list(dict.fromkeys(probes))[:15]
+    if not probes:
+        return []
+    out: list[Finding] = []
+    bs, bl, bt = _baseline_404(session, base, timeout)
+    with ThreadPoolExecutor(max_workers=max(1, min(threads, len(probes)))) as ex:
+        fut = {ex.submit(_probe_dir, session, base, p.lstrip("/"),
+                         timeout, bs, bl, bt): p for p in probes}
+        for f in as_completed(fut):
+            try:
+                r = f.result()
+                if r and "RECURSE" not in r.title:
+                    r.title = f"{r.title} (recursive)"
+                    out.append(r)
+                    if verbose:
+                        print(warn(f"    [!] recurse: {r.title} -> {r.url}"))
+            except Exception:
+                pass
+    return out
+
+
+# ---------- ana motor ----------
+
+def load_wordlist(path: str | None) -> list[str] | None:
+    """Read a wordlist file. None when missing/empty (built-in list is used)."""
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            items = [l.strip().lstrip("/") for l in f if l.strip() and not l.startswith("#")]
+        return items[:200] or None
+    except OSError:
+        return None
+
+
+def run_scan(target: str, threads: int = 20, timeout: int = 8,
+              verbose: bool = False, wordlist: list[str] | None = None,
+              deep: bool = True, auth=None,
+              skip_checks: set[str] | None = None,
+              max_pages: int = 8, crawl_depth: int = 2,
+              no_crawl: bool = False, dom: bool = False,
+              blind_callback: str | None = None,
+              scope_hosts: set[str] | None = None,
+              oob=None) -> list[Finding]:
+    import core.advanced  # noqa: F401 — registers checks with the registry
+    import core.domxss  # noqa: F401 — registers the dom-xss check
+    import core.webchecks  # noqa: F401 — registers modern web checks
+    from core.registry import run_checks
+    from core.crawler import crawl
+    from core.net import enter_scan_scope, exit_scan_scope
+    _scope_token = enter_scan_scope()
+    try:
+        t0 = time.time()
+        _, base0 = normalize_target(target)
+        session = _session(timeout, auth)
+
+        html, base, headers = _fetch_base(session, base0, timeout, scope_hosts)
+        if not html and verbose:
+            print(warn("    [i] base page unreachable, scanning blind"))
+
+        # --- light crawler (same-origin BFS) ---
+        if no_crawl:
+            pages = {base + "/": html or ""}
+        else:
+            print(info(f"  [*] Crawling (max {max_pages} pages, depth {crawl_depth})..."))
+            try:
+                pages = crawl(session, base, html, timeout, max_pages, crawl_depth,
+                              scope_hosts=scope_hosts)
+            except ScanBudgetExceeded as e:
+                print(warn(f"  [!] {e}"))
+                pages = {base + "/": html or ""}
+            if verbose:
+                print(f"    {DIM}{len(pages)} pages collected{RESET}")
+
+        urls: list[str] = []
+        for purl, phtml in pages.items():
+            for u in discover_test_urls(phtml, base):
+                if u not in urls:
+                    urls.append(u)
+                if len(urls) >= 25:
+                    break
+            # the query-less page itself joins the probe pool (?id=1)
+            if "?" not in purl and purl.rstrip("/") != base.rstrip("/"):
+                probe = purl + "?id=1"
+                if probe not in urls and len(urls) < 25:
+                    urls.append(probe)
+            if len(urls) >= 25:
+                break
+        if verbose:
+            print(f"    {DIM}{len(urls)} test URLs{RESET}")
+
+        ctx = {"urls": urls, "pages": pages, "html": html, "base": base,
+               "headers": headers, "timeout": timeout, "threads": threads,
+               "verbose": verbose, "deep": deep, "wordlist": wordlist,
+               "techs": [], "extra_paths": [], "dom": dom,
+               "blind_callback": blind_callback, "oob": oob}
+        findings: list[Finding] = []
+        try:
+            findings += run_checks(session, ctx, skip=skip_checks or set(),
+                                   deep=deep, verbose=verbose)
+        except ScanBudgetExceeded as e:
+            print(warn(f"  [!] {e}"))
+        if oob is not None:
+            try:
+                from core.oob import drain
+                findings += drain(oob, verbose)
+            except Exception as e:
+                if verbose:
+                    print(warn(f"  [!] OOB drain failed: {e}"))
+
+        # robots Disallow + wordlist overlap can find the same URL twice -> dedupe
+        seen, uniq = set(), []
+        for f in findings:
+            key = (f.title, f.url)
+            if key not in seen:
+                seen.add(key)
+                uniq.append(f)
+        findings = uniq
+
+        for f in findings:
+            enrich(f)
+
+        elapsed = round(time.time() - t0, 2)
+        print(success(f"  [+] SCAN done: {len(findings)} findings ({elapsed}s)"))
+        return findings
+    finally:
+        exit_scan_scope(_scope_token)
