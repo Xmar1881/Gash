@@ -36,6 +36,13 @@ KB: list[tuple[str, dict]] = [
         remediation="Encode output for its context (HTML/JS/attribute), enforce CSP "
                     "(script-src, Trusted Types), sanitize stored content with an "
                     "allowlist HTML sanitizer (DOMPurify).")),
+    ("Stored reflection", dict(
+        cwe="CWE-79", owasp="A03:2021 – Injection",
+        cvss="no estimate",
+        remediation="Unconfirmed persistence: the value is stored and "
+                     "re-rendered but no script breaker was observed. Confirm "
+                     "the render context (and browser execution) before "
+                     "calling it Stored XSS; encode stored output + CSP.")),
     ("Possible Reflected XSS", dict(
         cwe="CWE-79", owasp="A03:2021 – Injection",
         cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N (6.1)",
@@ -50,7 +57,14 @@ KB: list[tuple[str, dict]] = [
         cwe="CWE-79", owasp="A03:2021 – Injection",
         cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:C/C:L/I:L/A:N (5.4)",
         remediation="Partial encoding can be bypassed per context (URI/event "
-                    "handlers). Bind every output to one encoding policy, add CSP.")),
+                     "handlers). Bind every output to one encoding policy, add CSP.")),
+    ("Reflected input", dict(
+        cwe="CWE-79", owasp="A03:2021 – Injection",
+        cvss="no estimate",
+        remediation="Unconfirmed reflection: the marker echoes but breaker "
+                     "characters were not observed. Confirm per context "
+                     "(attribute/JS) before calling it XSS; add "
+                     "context-aware encoding + CSP.")),
     ("Blind XSS canary", dict(
         cwe="CWE-79", owasp="A03:2021 – Injection",
         cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N (6.1)",
@@ -122,6 +136,24 @@ KB: list[tuple[str, dict]] = [
         remediation="PROVEN: a second user reads another user's object. Enforce "
                     "object-level authorization immediately, audit access logs "
                     "for exploitation, prefer unguessable references.")),
+    ("Missing authentication on object endpoint", dict(
+        cwe="CWE-306", owasp="A01:2021 – Broken Access Control",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N (7.5)",
+        remediation="PROVEN: no session needed. Require authentication on "
+                    "every object endpoint, then add object-level checks; "
+                    "audit logs for anonymous reads.")),
+    ("Direct object reference reachable anonymously", dict(
+        cwe="CWE-639", owasp="A01:2021 – Broken Access Control",
+        cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N (6.8)",
+        remediation="Unguessable IDs are not access control: gate the object "
+                    "behind session + ownership checks even when the URL "
+                    "cannot be guessed.")),
+    ("Possible missing authorization (admin surface)", dict(
+        cwe="CWE-862", owasp="A01:2021 – Broken Access Control",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:L/I:N/A:N (4.3)",
+        remediation="Unproven boundary: replay the request as anonymous and "
+                    "as a low-privilege user; enforce role checks server-side "
+                    "on every admin path, not just by hiding links.")),
     ("Possible SQLi Auth Bypass", dict(
         cwe="CWE-89", owasp="A03:2021 – Injection",
         cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N (9.1)",
@@ -139,6 +171,24 @@ KB: list[tuple[str, dict]] = [
         cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H (9.8)",
         remediation="The filter was bypassed: allowlist (.png/.jpg…) instead of "
                     "blocklist, content validation + non-executable storage.")),
+    ("Stored file via JSON upload", dict(
+        cwe="CWE-434", owasp="A08:2021 – Integrity Failures",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N (9.1)",
+        remediation="Base64/file fields are decoded and served: validate "
+                    "content server-side, store outside the web root, serve "
+                    "with safe Content-Type/Disposition.")),
+    ("Upload content-type not validated", dict(
+        cwe="CWE-436", owasp="A08:2021 – Integrity Failures",
+        cvss="no estimate",
+        remediation="Hygiene note: extension and Content-Type disagree yet "
+                    "both pass. Validate magic bytes + allowlisted "
+                    "extensions together.")),
+    ("Upload filename handling", dict(
+        cwe="CWE-22", owasp="A01:2021 – Broken Access Control",
+        cvss="no estimate",
+        remediation="Reflection only, not a write proof: sanitize filenames "
+                    "(basename, allowlist charset), store under UUIDs, never "
+                    "concatenate user names into paths.")),
     ("Admin Panel", dict(
         cwe="CWE-552", owasp="A05:2021 – Security Misconfiguration",
         cvss="no estimate",
@@ -193,6 +243,13 @@ KB: list[tuple[str, dict]] = [
         remediation="Headless-confirmed DOM XSS: don't flow location/hash/postMessage "
                     "sources into innerHTML/eval/document.write sinks; use "
                     "textContent + DOMPurify + Trusted Types + CSP.")),
+    ("DOM XSS (suspected", dict(
+        cwe="CWE-79", owasp="A03:2021 – Injection",
+        cvss="no estimate",
+        remediation="Controllable sink but no executable content observed: "
+                     "craft a context PoC (event/js-url for the sink) before "
+                     "calling it DOM XSS; route the source through "
+                     "textContent/DOMPurify.")),
     ("JS DOM write", dict(
         cwe="CWE-79", owasp="A03:2021 – Injection",
         cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:C/C:L/I:L/A:N (5.4)",
@@ -260,6 +317,18 @@ KB: list[tuple[str, dict]] = [
         cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N (5.3)",
         remediation="Disable introspection in production; gate the endpoint "
                     "behind auth and depth/complexity limits.")),
+    ("GraphQL mutations exposed", dict(
+        cwe="CWE-?", owasp="—",
+        cvss="no estimate",
+        remediation="Informational surface map (never executed): review every "
+                    "mutation's input validation and auth; hide admin-only "
+                    "mutations behind roles.")),
+    ("Exposed sensitive GraphQL field", dict(
+        cwe="CWE-200", owasp="A01:2021 – Broken Access Control",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N (7.5)",
+        remediation="Field-level auth is missing: require ownership/role "
+                    "checks per field, stop returning secrets (hashes, "
+                    "tokens) to low-privilege callers.")),
     ("Host header reflected", dict(
         cwe="CWE-640", owasp="A01:2021 – Broken Access Control",
         cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:L/A:N (5.4)",
@@ -322,6 +391,71 @@ KB: list[tuple[str, dict]] = [
         cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:N/I:L/A:N (3.1)",
         remediation="Block __proto__/constructor keys in merges, upgrade to a safe "
                     "library version, use Object.freeze / Map.")),
+    ("TLS certificate expired", dict(
+        cwe="CWE-298", owasp="A02:2021 – Cryptographic Failures",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N (7.5)",
+        remediation="Expired trust is broken trust: renew from a public CA "
+                    "immediately, automate renewal (ACME), monitor expiry.")),
+    ("TLS hostname mismatch", dict(
+        cwe="CWE-297", owasp="A02:2021 – Cryptographic Failures",
+        cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:H/I:H/A:N (8.1)",
+        remediation="Serve the certificate whose SAN covers this hostname "
+                    "(or add the SAN); never train users to click through "
+                    "name warnings.")),
+    ("Self-signed TLS certificate", dict(
+        cwe="CWE-296", owasp="A02:2021 – Cryptographic Failures",
+        cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:L/A:N (5.4)",
+        remediation="Fine for loopback labs; on any real host, terminate TLS "
+                    "with a publicly trusted certificate.")),
+    ("TLS certificate expires soon", dict(
+        cwe="CWE-298", owasp="A02:2021 – Cryptographic Failures",
+        cvss="no estimate",
+        remediation="Informational: rotation due within 30 days — renew now, "
+                    "then automate it.")),
+    ("TLS certificate not yet valid", dict(
+        cwe="CWE-298", owasp="A02:2021 – Cryptographic Failures",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N (3.7)",
+        remediation="Check the server clock (NTP) and the deployment window; "
+                    "the certificate is from the future.")),
+    ("Weak TLS protocol enabled", dict(
+        cwe="CWE-326", owasp="A02:2021 – Cryptographic Failures",
+        cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N (5.9)",
+        remediation="Set the TLS minimum to 1.2 (1.3 preferred) on the "
+                    "terminator and re-test; old clients must upgrade.")),
+    ("Weak TLS cipher negotiated", dict(
+        cwe="CWE-327", owasp="A02:2021 – Cryptographic Failures",
+        cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N (5.9)",
+        remediation="Prefer AES-GCM/ChaCha20-Poly1305, drop RC4/3DES/MD5/ "
+                    "export suites in the cipher string.")),
+    ("Exposed development server", dict(
+        cwe="CWE-668", owasp="A05:2021 – Security Misconfiguration",
+        cvss="CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N (5.4)",
+        remediation="Dev servers bind to 127.0.0.1 only (or gate with auth/"
+                    "VPN); 0.0.0.0 publishes HMR/debug endpoints to the LAN.")),
+    ("Local development server", dict(
+        cwe="CWE-?", owasp="—",
+        cvss="no estimate",
+        remediation="Informational: correctly loopback-bound, no action.")),
+    ("Overly broad secret file permissions", dict(
+        cwe="CWE-732", owasp="A01:2021 – Broken Access Control",
+        cvss="CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N (5.5)",
+        remediation="chmod 0600 secret files (.env, keys, cloud credentials); "
+                    "content was not read, fix the bits.")),
+    ("Secret file present", dict(
+        cwe="CWE-?", owasp="—",
+        cvss="no estimate",
+        remediation="Informational: exists with sane permissions; content "
+                    "was not read.")),
+    ("Host firewall disabled", dict(
+        cwe="CWE-693", owasp="A05:2021 – Security Misconfiguration",
+        cvss="no estimate",
+        remediation="Informational posture note: re-enable the host firewall "
+                    "or document why this host runs without one.")),
+    ("Container/VM network present", dict(
+        cwe="CWE-?", owasp="—",
+        cvss="no estimate",
+        remediation="Informational: virtual interfaces exist; audit "
+                    "container/WSL guests separately.")),
 ]
 
 

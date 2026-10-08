@@ -59,7 +59,9 @@ def test_knowledge_coverage():
         "Possible SQL Injection", "Possible Blind SQL Injection (boolean)",
         "Possible Time-Based Blind SQLi", "Possible SQLi WAF Bypass (encoding)",
         "Possible SQLi Auth Bypass (login)", "Possible Stored XSS",
+        "Stored reflection (unconfirmed)",
         "Possible Reflected XSS", "Possible Reflected XSS (404 page)",
+        "Reflected input (unconfirmed)",
         "Header reflection XSS surface (User-Agent)",
         "Partially encoded reflection (review manually)",
         "Blind XSS canary placed (unverified)",
@@ -67,11 +69,27 @@ def test_knowledge_coverage():
         "SSRF surface (manual testing advised)",
         "Possible IDOR / BOLA (single session)",
         "Confirmed IDOR / BOLA (cross-session)",
+        "Missing authentication on object endpoint",
+        "Direct object reference reachable anonymously",
+        "Possible missing authorization (admin surface)",
+        "TLS certificate expired", "TLS hostname mismatch",
+        "Self-signed TLS certificate", "TLS certificate expires soon",
+        "TLS certificate not yet valid", "Weak TLS protocol enabled",
+        "Weak TLS cipher negotiated",
+        "GraphQL mutations exposed", "Exposed sensitive GraphQL field",
+        "Exposed development server", "Local development server",
+        "Overly broad secret file permissions", "Secret file present",
+        "Host firewall disabled", "Container/VM network present",
         "Possible Unrestricted File Upload (confirmed)",
         "Upload Filter Bypass (RCE vector)",
+        "Stored file via JSON upload",
+        "Upload content-type not validated",
+        "Upload filename handling (path reflection)",
         "Admin Panel", "Critical File Exposure: x", "Sensitive Directory: y",
         "robots.txt Found", "Prototype Pollution Reflection Surface",
         "DOM XSS (confirmed — alert fired)",
+        "DOM XSS (confirmed — executable sink)",
+        "DOM XSS (suspected — controllable sink)",
         "JS DOM write (review manually)", "Weak cookie flags",
         "Missing Security Header: X", "Possible Open Redirect",
         "Possible Path Traversal", "Permissive CORS (origin reflected)",
@@ -1302,3 +1320,1479 @@ def test_countdown_tty(monkeypatch, capsys):
     SP.countdown("waiting", 3)
     assert slept == [1, 1, 1]
     assert "waiting" in capsys.readouterr().out
+
+
+def test_xss_context_breakout_vs_unconfirmed():
+    from core.xss_context import classify_reflection, find_marker_contexts
+    # full payload echoes raw -> breakout, context detected
+    body = '<html><p>gx1"><svg onload=alert(1)></p></html>'
+    v = classify_reflection(body, "gx1", 'gx1"><svg onload=alert(1)>')
+    assert v["status"] == "breakout"
+    assert v["context"] == "html-text"
+    # marker only, breaker stripped -> unconfirmed, never High/CRITICAL
+    v2 = classify_reflection("<html><p>gx1</p></html>", "gx1",
+                             'gx1"><svg onload=alert(1)>')
+    assert v2["status"] == "raw-unconfirmed"
+    # encoded -> encoded
+    v3 = classify_reflection("<p>&lt;gx1&gt;</p>", "gx1",
+                             'gx1"><svg onload=alert(1)>')
+    assert v3["status"] == "encoded"
+    assert v3["encoded"] is True
+    assert classify_reflection("<p>hello</p>", "gx1")["status"] == "none"
+    assert find_marker_contexts(None, "gx1") == []
+
+
+def test_xss_context_attr_js_comment():
+    from core.xss_context import detect_context
+    b = '<input value="gx1">'
+    assert detect_context(b, b.find("gx1"), "gx1")["context"] == "attr-double-quoted"
+    b2 = "<input value='gx1'>"
+    assert detect_context(b2, b2.find("gx1"), "gx1")["context"] == "attr-single-quoted"
+    b3 = '<input value=gx1>'
+    assert detect_context(b3, b3.find("gx1"), "gx1")["context"] == "attr-unquoted"
+    b4 = '<div onclick="do(gx1)">'
+    d = detect_context(b4, b4.find("gx1"), "gx1")
+    assert d["context"] == "event-handler"
+    b5 = '<script>var x=\'gx1\';</script>'
+    assert detect_context(b5, b5.find("gx1"), "gx1")["context"] == "js-string-single"
+    b6 = '<!-- gx1 -->'
+    assert detect_context(b6, b6.find("gx1"), "gx1")["context"] == "html-comment"
+    b7 = '<a href="gx1">x</a>'
+    assert detect_context(b7, b7.find("gx1"), "gx1")["context"] == "url-attr"
+
+
+def test_xss_reflected_confidence_downgrade():
+    """Raw reflection alone must not yield High confidence anymore."""
+    import core.scanner as SC
+
+    class Resp:
+        def __init__(self, text=""):
+            self.status_code = 200
+            self.text = text
+            self.url = "http://h.test/?q=1"
+            self.headers = {}
+
+    class S:
+        def __init__(self, body_fn):
+            self._fn = body_fn
+
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp(self._fn(url))
+
+    # full echo incl. breaker -> Possible Reflected XSS, Medium/Medium
+    from urllib.parse import urlparse as _up, parse_qs as _pqs
+
+    def _echo(url: str) -> str:
+        try:
+            q = _pqs(_up(url).query, keep_blank_values=True)
+            vals = " ".join(sum(q.values(), []))  # server decodes %XX
+        except Exception:
+            vals = url
+        return f"<html>{vals}</html>"
+
+    s = S(_echo)
+    out = SC.test_xss(s, ["http://h.test/?q=1"], 3, False, deep=False)
+    hit = next(f for f in out if f.title == "Possible Reflected XSS")
+    assert hit.severity == "MEDIUM" and hit.confidence == "Medium"
+    # breaker stripped, marker only -> unconfirmed LOW/Low, no High anywhere
+    s2 = S(lambda u: "<html><p>gx1</p><p>gx2</p><p>gx3</p></html>")
+    out2 = SC.test_xss(s2, ["http://h.test/?q=1"], 3, False, deep=False)
+    assert any(f.title == "Reflected input (unconfirmed)" for f in out2)
+    assert all(f.confidence != "High" for f in out2
+               if "XSS" in f.title or "Reflected" in f.title)
+
+
+def test_xss_payload_generator_contexts():
+    from core.xss_payloads import (generate_for_context, mutate_payload,
+                                   filter_probe_strings)
+    assert len(filter_probe_strings("gx1")) >= 10
+    assert filter_probe_strings("") == []
+    for ctx in ("html-text", "attr-double-quoted", "attr-single-quoted",
+                "attr-unquoted", "event-handler", "url-attr",
+                "js-string-single", "js-string-double",
+                "js-template-literal", "js-expression", "html-comment",
+                "style-css", "svg-text", "json-string", "nope-unknown"):
+        vecs = generate_for_context(ctx, "gx9")
+        assert 1 <= len(vecs) <= 8, ctx
+        assert all(v[0].startswith("gx9") or "gx9" in v[0] for v in vecs)
+        assert all(1 <= v[1] <= 10 for v in vecs)
+        assert len({v[0] for v in vecs}) == len(vecs)  # deduped
+    assert generate_for_context("html-text", "") == []
+    muts = mutate_payload('gx1"><svg onload=alert(1)>')
+    assert 2 <= len(muts) <= 4 and muts[0].startswith("gx1")
+    assert len(set(muts)) == len(muts)
+
+
+def test_xss_stage2_generator_breakout():
+    """Stage-1 misses (encoded-looking first hit), generator finds it."""
+    import core.scanner as SC
+    from urllib.parse import urlparse as _up, parse_qs as _pqs, unquote as _uq
+
+    class Resp:
+        def __init__(self, text=""):
+            self.status_code = 200
+            self.text = text
+            self.url = "http://h.test/?q=1"
+            self.headers = {}
+
+    def body_for(url: str) -> str:
+        from core.scanner import XSS_PROBES
+        try:
+            q = _pqs(_up(url).query, keep_blank_values=True)
+            vals = sum(q.values(), [])
+            val = _uq(vals[0] if vals else "")
+        except Exception:
+            val = ""
+        # naive filter: eats exactly the 3 stock probes (appended after the
+        # original value by _inject), keeps generator alternatives.
+        for _ctx, _marker, _stock in XSS_PROBES:
+            if _stock in val:
+                return f"<html><p>{_marker}</p></html>"
+        return f"<html><p>{val}</p></html>"
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp(body_for(url))
+
+    out = SC.test_xss(S(), ["http://h.test/?q=1"], 3, False, deep=False)
+    assert any(f.title == "Possible Reflected XSS"
+               and "Generated payload" in f.detail for f in out)
+
+
+def _stored_state_session(store: dict, requested: list):
+    class Resp:
+        def __init__(self, text="", url=""):
+            self.text = text
+            self.status_code = 200
+            self.url = url
+            self.headers = {}
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            from urllib.parse import urlparse as _up, parse_qs as _pqs
+            try:
+                q = _pqs(_up(url).query, keep_blank_values=True)
+                for vals in q.values():
+                    for v in vals:
+                        if v.startswith("gashstored"):
+                            store.setdefault("saved", {})["q"] = v
+            except Exception:
+                pass
+            requested.append(url)
+            saved = (store.get("saved") or {}).get("q", "")
+            mode = store.get("mode", "persist")
+            if saved:
+                if mode == "persist":
+                    # persistence WITHOUT breaker: strip <>"'`
+                    import re as _re
+                    clean = _re.sub(r'[<>"\'`]', "", saved)
+                    return Resp(f"<html><p>{clean}</p></html>", url=url)
+                return Resp(f"<html><p>{saved}</p></html>", url=url)
+            return Resp("<html>ok</html>", url=url)
+
+        def post(self, url, timeout=None, allow_redirects=True, **kw):
+            return Resp("ok", url=url)
+
+    return S()
+
+
+def test_stored_persistence_only_is_unconfirmed():
+    import core.advanced as A
+    store, requested = {"mode": "persist"}, []
+    pages = {"http://h.test/":
+             "<form method='get' action='/go'><input name='q'></form>"}
+    out = A.test_stored_xss(_stored_state_session(store, requested),
+                            pages, "http://h.test", 3)
+    assert any(f.title == "Stored reflection (unconfirmed)"
+               and f.severity == "LOW" and f.confidence == "Low" for f in out)
+    assert all(f.title != "Possible Stored XSS" for f in out)
+
+
+def test_stored_breakout_is_possible_not_critical():
+    import core.advanced as A
+    store, requested = {"mode": "breakout"}, []
+    pages = {"http://h.test/":
+             "<form method='get' action='/go'><input name='q'></form>"}
+    out = A.test_stored_xss(_stored_state_session(store, requested),
+                            pages, "http://h.test", 3)
+    hit = next(f for f in out if f.title == "Possible Stored XSS")
+    assert hit.severity == "MEDIUM" and hit.confidence == "Medium"
+    assert "q" in hit.detail and "context" in hit.detail
+
+
+def test_dom_classify_sink():
+    from core.domxss import classify_sink
+    assert classify_sink("eval", "x gxdom y")["verdict"] == "confirmed"
+    assert classify_sink("Function", "gxdom+''")["verdict"] == "confirmed"
+    assert classify_sink("setTimeout", "gxdom;foo")["verdict"] == "confirmed"
+    v = classify_sink("innerHTML", 'hi gxdom"><svg onload=alert(1)>')
+    assert v["verdict"] == "confirmed"
+    v = classify_sink("innerHTML", "hello gxdom plain text")
+    assert v["verdict"] == "suspected"
+    v = classify_sink("document.write", "gxdom &lt;svg&gt;")
+    assert v["verdict"] == "suspected"  # encoded, not executable
+    v = classify_sink("setAttribute:onclick", "do(gxdom)")
+    assert v["verdict"] == "confirmed"
+    v = classify_sink("setAttribute:href", "page gxdom info")
+    assert v["verdict"] == "suspected"
+    v = classify_sink("setAttribute:href", "javascript:alert(gxdom)")
+    assert v["verdict"] == "confirmed"
+    assert classify_sink("innerHTML", "no marker here")["verdict"] == "safe"
+    assert classify_sink("", "gxdom")["verdict"] == "safe"
+    assert "executable" in classify_sink(
+        "createContextualFragment", "gxdom<img src=x>").get("reason", "") \
+        or classify_sink(
+            "createContextualFragment", "gxdom<img src=x>")["verdict"] == "confirmed"
+
+
+def _fake_dom_browser(sinks=None, samples=None, dialogs=None,
+                       alerted=None, dom_html="<html>clean</html>",
+                       pm_effect=None, st_effect=None, ref_effect=None):
+    """Staged fake: postMessage/storage/referrer effects merge on use.
+
+    Each effect is (sinks, samples). browser.calls records which stages
+    ran (proves tiered early-exit).
+    """
+
+    class FakeDialog:
+        def __init__(self, message):
+            self.message = message
+
+        def dismiss(self):
+            pass
+
+    calls = {"postMessage": 0, "storage": 0, "referer": 0,
+             "goto": 0, "reload": 0}
+    state = {"sinks": list(sinks or []),
+             "samples": dict(samples or {}),
+             "fired": list(alerted or [])}
+    used = {"pm": False, "st": False, "ref": False}
+
+    class FakePage:
+        def on(self, ev, cb):
+            if ev == "dialog":
+                for m in (dialogs or []):
+                    cb(FakeDialog(m))
+
+        def add_init_script(self, js):
+            pass
+
+        def goto(self, url, timeout=None, wait_until=None, referer=None):
+            calls["goto"] += 1
+            if referer:
+                calls["referer"] += 1
+                if ref_effect and not used["ref"]:
+                    used["ref"] = True
+                    state["sinks"] += ref_effect[0]
+                    state["samples"].update(ref_effect[1])
+
+        def reload(self, wait_until=None):
+            calls["reload"] += 1
+
+        def wait_for_timeout(self, ms):
+            pass
+
+        def evaluate(self, script):
+            if "postMessage" in script:
+                calls["postMessage"] += 1
+                if pm_effect and not used["pm"]:
+                    used["pm"] = True
+                    state["sinks"] += pm_effect[0]
+                    state["samples"].update(pm_effect[1])
+                return None
+            if "setItem" in script:
+                calls["storage"] += 1
+                if st_effect and not used["st"]:
+                    used["st"] = True
+                    state["sinks"] += st_effect[0]
+                    state["samples"].update(st_effect[1])
+                return None
+            if "__gash_sink_samples" in script:
+                return dict(state["samples"])
+            if "__gash_fired" in script:
+                return list(state["fired"])
+            if "__gash_sinks" in script:
+                return list(state["sinks"])
+            return None
+
+        def content(self):
+            return dom_html
+
+        def close(self):
+            pass
+
+    class FakeBrowser:
+        def __init__(self):
+            self.calls = calls
+
+        def new_page(self, ignore_https_errors=True):
+            return FakePage()
+
+    return FakeBrowser()
+
+
+def test_dom_probe_executable_sink():
+    from core.domxss import _probe_page
+    b = _fake_dom_browser(sinks=["innerHTML"],
+                          samples={"innerHTML": 'hi gxdom"><svg onload=alert(1)>'})
+    f = _probe_page(b, "http://h.test/?gxdomq=1", "http://h.test", 3, {})
+    assert f is not None
+    assert f.title == "DOM XSS (confirmed — executable sink)"
+    assert f.severity == "CRITICAL" and f.confidence == "High"
+
+
+def test_dom_probe_suspected_not_confirmed():
+    from core.domxss import _probe_page
+    b = _fake_dom_browser(sinks=["innerHTML"],
+                          samples={"innerHTML": "hello gxdom plain text"})
+    f = _probe_page(b, "http://h.test/?gxdomq=1", "http://h.test", 3, {})
+    assert f is not None
+    assert f.title == "DOM XSS (suspected — controllable sink)"
+    assert f.severity == "LOW" and f.confidence == "Medium"
+
+
+def test_dom_probe_alert_and_info_paths():
+    from core.domxss import _probe_page
+    b = _fake_dom_browser(dialogs=["boom gxdom"])
+    f = _probe_page(b, "http://h.test/", "http://h.test", 3, {})
+    assert f is not None and f.title == "DOM XSS (confirmed — alert fired)"
+    b2 = _fake_dom_browser(dom_html="<html>rendered gxdom here</html>")
+    f2 = _probe_page(b2, "http://h.test/", "http://h.test", 3,
+                     {"http://h.test/": "<html>raw without marker</html>"})
+    assert f2 is not None and f2.title == "JS DOM write (review manually)"
+    assert f2.severity == "INFO"
+    b3 = _fake_dom_browser()
+    assert _probe_page(b3, "http://h.test/", "http://h.test", 3, {}) is None
+
+
+def test_dom_source_postmessage_chain():
+    from core.domxss import _probe_page
+    b = _fake_dom_browser(
+        pm_effect=(["innerHTML"],
+                   {"innerHTML": 'gxdom-pm"><svg onload=alert(1)>'}))
+    f = _probe_page(b, "http://h.test/?gxdomq=1", "http://h.test", 3, {})
+    assert f is not None
+    assert f.title == "DOM XSS (confirmed — executable sink)"
+    assert "postMessage" in f.detail and "innerHTML" in f.detail
+    assert "raw" in f.detail
+
+
+def test_dom_source_storage_suspected_and_tiering():
+    from core.domxss import _probe_page
+    b = _fake_dom_browser(
+        st_effect=(["outerHTML"], {"outerHTML": "hello gxdom-st plain"}))
+    f = _probe_page(b, "http://h.test/", "http://h.test", 3, {})
+    assert f is not None
+    assert f.title == "DOM XSS (suspected — controllable sink)"
+    assert "ocalStorage" in f.detail  # source chain recorded
+    # tiered: load found nothing executable, so later stages ran…
+    assert b.calls["postMessage"] == 1 and b.calls["storage"] == 1
+    # …but an early confirm skips the rest (no referrer navigation here
+    # would change the verdict; suspected waits for all stages)
+    b2 = _fake_dom_browser(
+        sinks=["innerHTML"],
+        samples={"innerHTML": 'hi gxdom"><svg onload=alert(1)>'})
+    f2 = _probe_page(b2, "http://h.test/", "http://h.test", 3, {})
+    assert f2.title == "DOM XSS (confirmed — executable sink)"
+    assert b2.calls["postMessage"] == 0 and b2.calls["storage"] == 0 \
+        and b2.calls["referer"] == 0  # early exit saves ~6s
+
+
+def test_dom_referrer_and_new_sinks():
+    from core.domxss import classify_sink, _transform_note
+    assert classify_sink("location.assign",
+                         "x javascript:alert(gxdom)")["verdict"] == "confirmed"
+    assert classify_sink("location.assign",
+                         "http://h.test/?a=gxdom")["verdict"] == "suspected"
+    assert classify_sink("srcdoc",
+                         'gxdom"><svg onload=x>')["verdict"] == "confirmed"
+    assert classify_sink("src",
+                         "http://cdn.test/lib.js?x=gxdom")["verdict"] == "suspected"
+    assert classify_sink("script.src",
+                         "javascript:alert(gxdom)")["verdict"] == "confirmed"
+    assert classify_sink("domain", "evil-gxdom-test")["verdict"] == "suspected"
+    assert _transform_note('a"><svg onload=x>') == "raw"
+    assert _transform_note("plain gxdom text") == "filtered-or-text"
+    from core.domxss import _probe_page
+    b = _fake_dom_browser(
+        ref_effect=(["location.assign"],
+                    {"location.assign": "javascript:alert(gxdom)"}))
+    f = _probe_page(b, "http://h.test/", "http://h.test", 3, {})
+    assert f is not None
+    assert f.title == "DOM XSS (confirmed — executable sink)"
+    assert "document.referrer" in f.detail
+
+
+def test_finding_new_fields_roundtrip():
+    from core.scanner import Finding
+    f = Finding(title="T", severity="MEDIUM", url="http://h.test/?q=1",
+                method="PUT", param="user.role", location="body",
+                auth_context="user", fingerprint="x" * 500,
+                confirm="breakout", check="xss-reflected")
+    d = f.to_dict()
+    assert d["method"] == "PUT" and d["param"] == "user.role"
+    assert d["location"] == "body" and d["confirm"] == "breakout"
+    assert d["check"] == "xss-reflected" and len(d["fingerprint"]) == 120
+    g = Finding(title="T", severity="LOW", url="http://h/")
+    d2 = g.to_dict()
+    assert d2["method"] == "" and d2["check"] == ""
+
+
+def test_registry_stamps_check_name():
+    import core.scanner  # noqa: F401
+    import core.advanced  # noqa: F401
+    import core.domxss  # noqa: F401
+    import core.webchecks  # noqa: F401
+    from core.registry import REGISTRY, run_checks
+    from core.scanner import Finding
+
+    def _one(session):
+        return [Finding(title="ZZ", severity="LOW", url="http://h.test/")]
+
+    REGISTRY["zz-stamp"] = {"fn": _one, "desc": "stamp",
+                            "deep_only": False, "order": 999, "seq": 9999}
+    try:
+        ctx = {"headers": {}, "base": "http://h.test"}
+        out = run_checks(object(), ctx, skip=set(REGISTRY) - {"zz-stamp"})
+    finally:
+        del REGISTRY["zz-stamp"]
+    assert len(out) == 1 and out[0].check == "zz-stamp"
+
+
+def test_report_sarif_and_junit(tmp_path):
+    from core.reporter import build_report, save_report
+    from core.scanner import Finding
+    vuln = Finding(title="Possible Reflected XSS", severity="MEDIUM",
+                   url="http://h.test/?q=1", detail="breaker here",
+                   evidence="gx1", confidence="Medium", cwe="CWE-79",
+                   check="xss-reflected")
+    obs = Finding(title="robots.txt Found", severity="INFO",
+                  url="http://h.test/robots.txt", detail="note")
+    rep = build_report("http://h.test", "full", "9.9", findings=[vuln, obs])
+    sp = save_report(rep, str(tmp_path / "r.sarif"))
+    import json as _json
+    sarif = _json.loads(open(sp, encoding="utf-8").read())
+    assert sarif["version"] == "2.1.0"
+    rules = {r["id"]: r for r in
+             sarif["runs"][0]["tool"]["driver"]["rules"]}
+    assert "gash/possible-reflected-xss" in rules
+    by_rule = {r["ruleId"]: r for r in sarif["runs"][0]["results"]}
+    assert by_rule["gash/possible-reflected-xss"]["level"] == "error"
+    assert by_rule["gash/robots-txt-found"]["level"] == "note"
+    xp = save_report(rep, str(tmp_path / "r.xml"))
+    import xml.etree.ElementTree as _et
+    root = _et.parse(xp).getroot()
+    assert root.tag == "testsuite" and root.attrib["failures"] == "1"
+    cases = root.findall("testcase")
+    assert any(c.find("failure") is not None for c in cases)
+    assert any(c.find("skipped") is not None for c in cases)
+
+
+def test_spa_extract_routes():
+    from core.xss_spa import extract_spa_routes
+    html = ('<script>fetch("/api/users");'
+            'router.push("/dashboard");'
+            'axios.get("/v1/orders")</script>'
+            '<a href="https://evil.com/x">out</a>')
+    routes = extract_spa_routes(html, "http://h.test")
+    assert "http://h.test/api/users" in routes
+    assert "http://h.test/dashboard" in routes
+    assert "http://h.test/v1/orders" in routes
+    assert all("evil.com" not in r for r in routes)
+    nd = '{"buildId":"x","pages":["/","/admin","/user/[id]"]}'
+    routes2 = extract_spa_routes(
+        f'<script id="__NEXT_DATA__">{nd}</script>', "http://h.test")
+    assert "http://h.test/admin" in routes2
+    assert extract_spa_routes("", "http://h.test") == []
+
+
+def test_spa_extract_params():
+    from core.xss_spa import extract_param_names
+    names = extract_param_names('{"sort":"asc","order":"desc","filter":1}',
+                                'var x={"callback":"y","z":1}')
+    assert "sort" in names and "callback" in names
+    assert "true" not in names  # stoplist
+    assert names == list(dict.fromkeys(names))  # deduped
+    assert len(extract_param_names("{\"a1\":1}" * 200)) <= 40
+    assert extract_param_names(None, "") == []
+
+
+def test_prioritize_urls():
+    from core.xss_spa import prioritize_urls
+    urls = ["http://h.test/static",
+            "http://h.test/api/users",
+            "http://h.test/go?q=gash",
+            "http://h.test/view?callback=1",
+            "http://h.test/go?q=gash"]  # dupe
+    ranked = prioritize_urls(urls)
+    assert len(ranked) == 4  # deduped
+    assert ranked.index("http://h.test/go?q=gash") < \
+        ranked.index("http://h.test/static")
+    assert ranked.index("http://h.test/view?callback=1") < \
+        ranked.index("http://h.test/static")
+
+
+def test_runtime_discover_without_playwright(monkeypatch):
+    import importlib.util
+    from core import xss_spa
+    monkeypatch.setattr(importlib.util, "find_spec", lambda *a, **k: None)
+    out = xss_spa.runtime_discover("http://h.test", 3, verbose=False)
+    assert out == {"urls": [], "api": [], "params": []}
+
+
+def test_build_probe_pool_cap_and_spa():
+    from core.scanner import _build_probe_pool
+    pages = {f"http://h.test/p{i}": "" for i in range(10)}
+    pool = _build_probe_pool(pages, "http://h.test", limit=5)
+    assert len(pool) <= 5
+    pool2 = _build_probe_pool({"http://h.test/": ""}, "http://h.test",
+                              spa_urls=["http://h.test/api/users",
+                                        "http://h.test/app"],
+                              limit=25)
+    assert any("api/users" in u for u in pool2)
+    assert any("id=1" in u for u in pool2)  # query-less SPA -> probe
+
+
+def test_discover_fallback_uses_hidden_params():
+    from core.scanner import discover_test_urls, FUZZ_PARAMS
+    assert FUZZ_PARAMS[:16] == ["id", "q", "query", "s", "search",
+                                "keyword", "name", "term", "file", "page",
+                                "lang", "redirect", "next", "preview",
+                                "template", "theme"]
+    urls = discover_test_urls("<html>empty</html>", "http://h.test")
+    blob = " ".join(urls)
+    assert "?redirect=1" in blob  # historic fallback order kept (cap 12)
+    assert len(FUZZ_PARAMS) > 40  # P3 hidden set ships with the scanner
+    assert "callback" in FUZZ_PARAMS and "sort" in FUZZ_PARAMS
+    urls2 = discover_test_urls("<html>empty</html>", "http://h.test",
+                               extra_params=["mycustomparam"])
+    assert any("mycustomparam" in u for u in urls2)
+
+
+def test_run_checks_records_error_skipped_and_continues(monkeypatch, capsys):
+    import core.scanner  # noqa: F401
+    import core.advanced  # noqa: F401
+    import core.domxss  # noqa: F401
+    import core.webchecks  # noqa: F401
+    from core.registry import REGISTRY, run_checks
+
+    def _boom(session):
+        raise RuntimeError("kaboom")
+
+    REGISTRY["zz-boom"] = {"fn": _boom, "desc": "boom",
+                           "deep_only": False, "order": 999, "seq": 9999}
+    try:
+        keep = {"zz-boom", "waf-detect", "upload-rce"}
+        ctx = {"headers": {}, "base": "http://h.test"}
+        out = run_checks(object(), ctx, skip=set(REGISTRY) - keep,
+                         deep=False)
+    finally:
+        del REGISTRY["zz-boom"]
+    assert out == []
+    by_name = {r["check"]: r for r in ctx["check_status"]}
+    err = by_name["zz-boom"]
+    assert err["status"] == "error"
+    assert err["error_type"] == "RuntimeError" and "kaboom" in err["error"]
+    assert by_name["waf-detect"]["status"] == "passed"  # others still ran
+    assert by_name["upload-rce"]["status"] == "skipped"
+    assert by_name["upload-rce"]["reason"] == "deep-only (needs --deep)"
+    assert by_name["sqli-blind"]["reason"] == "skip-checks"
+    assert "check error (zz-boom)" in capsys.readouterr().out
+
+
+def test_degraded_report_never_clean(capsys):
+    from core.reporter import build_report, print_findings
+    rec = {"check": "zz-boom", "status": "error",
+           "error_type": "RuntimeError", "error": "kaboom",
+           "elapsed_ms": 1, "findings": 0}
+    rep = build_report("http://h.test", "full", "0.0",
+                       check_status=[rec])
+    assert rep["scan_health"]["degraded"] is True
+    assert rep["scan_health"]["errors"][0]["check"] == "zz-boom"
+    print_findings([], check_status=[rec])
+    out = capsys.readouterr().out
+    assert "SCAN DEGRADED" in out and "Clean" not in out
+    rep2 = build_report("http://h.test", "full", "0.0", check_status=[])
+    assert rep2["scan_health"] == {"degraded": False, "errors": [],
+                                   "skipped": [], "ran": 0}
+
+
+def test_run_scan_exposes_check_health(monkeypatch):
+    import core.scanner as S
+    import core.advanced  # noqa: F401
+    import core.domxss  # noqa: F401
+    import core.webchecks  # noqa: F401
+    from core.registry import REGISTRY
+    monkeypatch.setattr(S, "_fetch_base",
+                        lambda *a, **k: ("", "http://h.test", {}))
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class FakeSession:
+        cookies = []
+        headers = {}
+
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("<html>ok</html>", 200, url)
+
+    monkeypatch.setattr(S, "_session", lambda timeout, auth=None: FakeSession())
+    from core.net import configure_net
+    configure_net()
+    health: dict = {}
+    out = S.run_scan("http://h.test", threads=1, timeout=3, verbose=False,
+                     deep=False, no_crawl=True,
+                     skip_checks=set(REGISTRY) - {"waf-detect"},
+                     health=health)
+    assert out == []
+    by_name = {r["check"]: r for r in health["checks"]}
+    assert by_name["waf-detect"]["status"] == "passed"
+    assert by_name["sqli-login"]["status"] == "skipped"
+
+
+def test_canonicalize_url():
+    from core.discovery import canonicalize_url
+    assert canonicalize_url("http://H.TEST/?b=1&a=2") == \
+        canonicalize_url("http://h.test/?a=2&b=1")
+    assert canonicalize_url("http://h.test:80/a/") == "http://h.test/a"
+    assert canonicalize_url("http://h.test/a#f") == "http://h.test/a"
+    assert canonicalize_url("HTTP://H.TEST/") == "http://h.test/"
+
+
+def test_concretize_rest_path():
+    from core.discovery import concretize_rest_path
+    u, p = concretize_rest_path("/users/{id}")
+    assert u == "/users/1" and p == ["id"]
+    u, p = concretize_rest_path("/orders/:uuid/items")
+    assert u == "/orders/1/items" and p == ["uuid"]
+    u, p = concretize_rest_path("/profile/[slug]")
+    assert u == "/profile/1" and p == ["slug"]
+    u, p = concretize_rest_path("/static/about")
+    assert u == "/static/about" and p == []
+
+
+def test_extract_js_endpoints_shapes():
+    from core.discovery import extract_js_endpoints
+    js = ('fetch("/api/users"); axios.post("/v1/orders"); '
+          'x.open("GET","/rest/items"); '
+          'new WebSocket("wss://h.test/ws"); '
+          'new EventSource("/sse/feed"); '
+          '$.ajax({url:"/legacy/go"}); '
+          'router.push("/dashboard"); '
+          'const u="https://evil.com/x";')
+    found = dict(extract_js_endpoints(js, "http://h.test"))
+    for want in ("/api/users", "/v1/orders", "/rest/items", "/sse/feed",
+                 "/legacy/go", "/dashboard"):
+        assert f"http://h.test{want}" in found, want
+    assert not any("evil.com" in u for u in found)
+    assert not any("ws" in u for u in found)  # sockets noted, not crawled
+    assert found["http://h.test/api/users"] == "api"
+    assert found["http://h.test/dashboard"] == "page"
+
+
+def test_extract_html_refs_unified():
+    from core.discovery import extract_html_refs
+    refs = extract_html_refs(
+        '<a href="/go?q=1">x</a>'
+        '<script>fetch("/api/hits")</script>'
+        '<script>var C="/static/config.json";</script>',
+        "http://h.test")
+    assert "http://h.test/go?q=1" in refs["urls"]
+    assert "http://h.test/api/hits" in refs["api"]
+    assert "http://h.test/static/config.json" in refs["configs"]
+
+
+def test_resolve_coverage_profiles():
+    from types import SimpleNamespace
+    from core.discovery import resolve_coverage, PROFILES
+    assert PROFILES["balanced"]["max_pages"] == 8  # historic defaults kept
+    b = resolve_coverage(SimpleNamespace())
+    assert (b["max_pages"], b["crawl_depth"], b["max_xss_urls"]) == (8, 2, 25)
+    q = resolve_coverage(SimpleNamespace(profile="quick"))
+    assert q["max_pages"] == 4 and q["max_xss_urls"] == 12
+    t = resolve_coverage(SimpleNamespace(profile="thorough"))
+    assert t["max_pages"] == 30 and t["crawl_depth"] == 4
+    over = resolve_coverage(SimpleNamespace(profile="thorough",
+                                             max_pages=5, depth=None,
+                                             max_xss_urls=None))
+    assert over["max_pages"] == 5  # explicit flag wins
+    assert over["crawl_depth"] == 4
+    bad = resolve_coverage(SimpleNamespace(profile="nope"))
+    assert bad["max_pages"] == 8  # unknown -> balanced
+
+
+def test_probe_pool_canonical_dedupe():
+    from core.scanner import _build_probe_pool
+    pages = {"http://h.test/": (
+        '<a href="/s?b=1&a=2">1</a><a href="/s?a=2&b=1">2</a>')}
+    pool = _build_probe_pool(pages, "http://h.test", limit=25)
+    assert sum(1 for u in pool if "/s?" in u) == 1  # query-order variant once
+
+
+def test_flatten_json_nested():
+    from core.api_params import flatten_json
+    leaves = dict(flatten_json({"user": {"id": 123, "role": "user"},
+                                "tags": ["a", "b"]}))
+    assert leaves["user.id"] == "123"
+    assert leaves["user.role"] == "user"
+    assert leaves["tags[0]"] == "a"
+    big = flatten_json({f"k{i}": i for i in range(100)})
+    assert len(big) <= 40  # capped
+    assert flatten_json("x") == [("", "x")]
+
+
+def test_mutate_json_body_roundtrip():
+    import json
+    from core.api_params import mutate_json_body
+    tpl = json.dumps({"user": {"id": 123, "role": "user"}})
+    new = mutate_json_body(tpl, "user.role", "GX")
+    assert new is not None
+    obj = json.loads(new)
+    assert obj["user"]["role"] == "GX" and obj["user"]["id"] == 123
+    assert mutate_json_body(tpl, "user.missing", "GX") is None
+    assert mutate_json_body("not-json", "a", "GX") is None
+
+
+def test_xml_and_graphql_params():
+    from core.api_params import (extract_xml_params, mutate_xml_body,
+                                 extract_graphql_params)
+    ps = extract_xml_params("<user><id>1</id><role>user</role></user>")
+    assert {p.name for p in ps} >= {"id", "role"}
+    assert all(p.location == "xml" for p in ps)
+    assert mutate_xml_body("<id>1</id>", "id", "GX") == "<id>GX</id>"
+    assert mutate_xml_body("<id>1</id>", "nope", "GX") is None
+    gq = extract_graphql_params("query($q:String){x}",
+                                '{"q":"hello","n":2}')
+    assert ("q", "graphql") in [(p.name, p.location) for p in gq]
+
+
+def test_extract_request_params_all_types():
+    from core.api_params import extract_request_params
+    ps = extract_request_params("http://h.test/s?q=1",
+                                {"X-Forwarded-Host": "e.test"},
+                                "application/json",
+                                '{"user":{"role":"user"}}')
+    by_loc = {}
+    for p in ps:
+        by_loc.setdefault(p.location, []).append(p.name)
+    assert by_loc["query"] == ["q"]
+    assert "X-Forwarded-Host" in by_loc["header"]
+    assert "user.role" in by_loc["json"]
+    form = extract_request_params("", {}, "application/x-www-form-urlencoded",
+                                  "a=1&b=2")
+    assert [p.name for p in form] == ["a", "b"]
+    assert extract_request_params("", {}, "text/plain", "x") == []
+
+
+def test_safe_mode_gate():
+    from core.api_params import allowed_in_safe_mode
+    assert allowed_in_safe_mode("GET", "query") is True
+    assert allowed_in_safe_mode("POST", "query") is False
+    assert allowed_in_safe_mode("GET", "json") is False
+    assert allowed_in_safe_mode("PUT", "path") is False
+    assert allowed_in_safe_mode("DELETE", "header") is False
+
+
+def test_swagger_api_targets():
+    from core.api_params import swagger_api_targets
+    spec = {"paths": {
+        "/users/{id}": {
+            "get": {"parameters": [
+                {"name": "id", "in": "path"},
+                {"name": "verbose", "in": "query"}]},
+            "put": {"parameters": [{"name": "id", "in": "path"}],
+                    "requestBody": {"content": {"application/json": {
+                        "schema": {"type": "object", "properties": {
+                            "user": {"type": "object", "properties": {
+                                "role": {"type": "string"}}}}}}}}}}}}
+    targets = swagger_api_targets(spec, "http://h.test")
+    assert len(targets) == 2
+    put = next(t for t in targets if t.method == "PUT")
+    assert put.url == "http://h.test/users/1"
+    assert "user.role" in [p.name for p in put.params]
+    assert put.content_type == "application/json" and put.template
+    assert swagger_api_targets({}, "http://h.test") == []
+
+
+def _api_echo_session(captured, mode="raw"):
+    import json as _json
+    import re as _re
+
+    class Resp:
+        def __init__(self, text=""):
+            self.text = text
+            self.status_code = 200
+            self.url = "http://h.test/api/users"
+            self.headers = {}
+
+    class S:
+        def post(self, url, timeout=None, allow_redirects=True, **kw):
+            captured.append((url, kw))
+            body = _json.dumps(kw.get("json", kw.get("data", "")))
+            if mode == "filtered":
+                body = _re.sub(r'[<>"\'`]', "", body)
+            return Resp(body)
+
+        def request(self, method, url, timeout=None, allow_redirects=True,
+                    **kw):
+            return self.post(url, timeout=timeout,
+                             allow_redirects=allow_redirects, **kw)
+
+    return S()
+
+
+def test_api_body_xss_breakout_and_filtered():
+    from core.api_params import ApiTarget, ApiParam
+    from core.scanner import _api_body_xss
+    import json
+    tpl = json.dumps({"user": {"role": "user"}})
+    target = ApiTarget(url="http://h.test/api/users", method="POST",
+                       content_type="application/json",
+                       params=[ApiParam(name="user.role", location="json")],
+                       template=tpl)
+    cap = []
+    out = _api_body_xss(_api_echo_session(cap), [target], 3)
+    assert any(f.title == "Possible Reflected XSS"
+               and "user.role" in f.detail for f in out)
+    assert cap and cap[0][0] == "http://h.test/api/users"
+    cap2 = []
+    assert _api_body_xss(_api_echo_session(cap2, "filtered"), [target],
+                         3) == []
+    put = ApiTarget(url="http://h.test/api/users/1", method="PUT",
+                    content_type="application/json",
+                    params=[ApiParam(name="user.role", location="json")],
+                    template=tpl)
+    cap3 = []
+    assert any("PUT" in f.detail for f in
+               _api_body_xss(_api_echo_session(cap3), [put], 3))
+
+
+def test_diff_signals():
+    from core.diff import (ResponseSnap, compare, snap_response,
+                           canonical_json, title_of, visible_text,
+                           dom_structure, scrub_tokens)
+    a = ResponseSnap(status=200, url="http://h.test/a", requested="http://h.test/a",
+                     body="<html><title>T</title><p>hello</p></html>")
+    b = ResponseSnap(status=200, url="http://h.test/a", requested="http://h.test/a",
+                     body="<html><title>T</title><p>hello</p></html>")
+    c = compare(a, b)
+    assert c.verdict == "same" and c.html_ratio == 1.0
+    # status alone never decides
+    d = ResponseSnap(status=403, url=a.url, requested=a.requested, body=a.body)
+    assert compare(a, d).verdict == "same"
+    assert compare(a, d).same_status is False
+    # different content
+    e = ResponseSnap(status=200, url=a.url, requested=a.requested,
+                     body="<html><title>Other</title><div>" + "x" * 500 + "</div></html>")
+    ce = compare(a, e)
+    assert ce.verdict == "different" and ce.reasons
+    # JSON canonical: key order / spacing independent
+    assert canonical_json('{"b":1,"a":2}') == canonical_json('{"a": 2, "b": 1}')
+    assert canonical_json("<html>") is None
+    j1 = ResponseSnap(status=200, body='{"a":1}')
+    j2 = ResponseSnap(status=200, body='{"a": 1}')
+    assert compare(j1, j2).verdict == "same"
+    j3 = ResponseSnap(status=200, body='{"a":2}')
+    assert compare(j1, j3).verdict == "different"
+    # helpers
+    assert title_of("<title> Hi </title>") == "Hi"
+    assert "hello" in visible_text("<script>var x=1</script><p>hello</p>")
+    assert "var x" not in visible_text("<script>var x=1</script><p>hello</p>")
+    assert dom_structure("<div><p></p></div>") == ("div", "p", "p", "div")
+    assert scrub_tokens("tok=abcdefgh", ["abcdefgh"]) == "tok="
+    assert scrub_tokens("tok=abc", ["abc"]) == "tok=abc"  # short kept
+    # snap_response never raises, even on junk
+    s = snap_response(None)
+    assert s.status == 0 and s.body == ""
+    s2 = snap_response(object(), requested="http://h.test/")
+    assert s2.url == "http://h.test/"
+
+
+def test_diff_timing_helpers():
+    from core.diff import timing_stats, is_regressed
+    assert timing_stats([]) == (0.0, 0.0)
+    assert timing_stats([1.0]) == (1.0, 0.0)
+    mean, _sd = timing_stats([0.4, 0.5, 0.6])
+    assert abs(mean - 0.5) < 1e-9
+    assert is_regressed([0.4, 0.5], 3.2, 3.0) is True
+    assert is_regressed([0.4, 0.5], 1.0, 3.0) is False  # no sleep
+    assert is_regressed([3.5, 3.6], 6.5, 3.0) is False  # slow baseline
+    assert is_regressed([], 5.0, 3.0) is False
+
+
+def test_diff_legacy_parity():
+    """Adopted wrappers behave exactly like the old inline code."""
+    from core.diff import bodies_differ, looks_like_baseline
+    from core.advanced import _bodies_differ, _scrub_hidden
+    from core.scanner import _looks_like_baseline
+    assert _bodies_differ("q" * 300 + "id=5",
+                          "q" * 300 + "id=6" + "w" * 8) is False
+    assert bodies_differ("same", "same") is False
+    base = "<html>" + "y" * 500 + "</html>"
+    assert _looks_like_baseline(200, base, 200, len(base), base) is True
+    assert looks_like_baseline(404, base, 200, len(base), base) is False
+    assert _looks_like_baseline(200, base + "DIFFERENT" * 50, 200,
+                                 len(base), base) is False
+    assert _scrub_hidden("a=12345678", {"csrf": "12345678"}) == "a="
+
+
+def _tls_cert(**kw):
+    import time
+    fmt = "%b %d %H:%M:%S %Y GMT"
+    nb = time.strftime(fmt, time.gmtime(time.time() - 86400))
+    na = time.strftime(fmt, time.gmtime(time.time() + 86400 * 90))
+    subj = ((("commonName", kw.get("cn", "h.test")),),)
+    cert = {"subject": subj,
+            "issuer": subj if kw.get("self_signed", True) else
+            ((("commonName", "Test CA")),),
+            "subjectAltName": tuple(("DNS", s) for s in
+                                    kw.get("sans", [kw.get("cn", "h.test")])),
+            "notBefore": nb, "notAfter": kw.get("notAfter", na)}
+    return cert
+
+
+def test_tls_helpers():
+    from core.webchecks import (_hostname_matches, _is_self_signed,
+                                _cipher_is_weak, _cert_times)
+    cert = _tls_cert(cn="h.test", sans=["h.test"])
+    assert _hostname_matches(cert, "h.test") is True
+    assert _hostname_matches(cert, "other.test") is False
+    wild = _tls_cert(cn="x", sans=["*.h.test"])
+    assert _hostname_matches(wild, "a.h.test") is True
+    assert _hostname_matches(wild, "a.b.h.test") is False  # no deep wildcard
+    assert _is_self_signed(cert) is True
+    assert _is_self_signed(_tls_cert(self_signed=False)) is False
+    assert _cipher_is_weak("RC4-SHA") is True
+    assert _cipher_is_weak("ECDHE-RSA-AES128-GCM-SHA256") is False
+    nb, na = _cert_times(cert)
+    assert nb is not None and na is not None and na > nb
+    assert _cert_times({}) == (None, None)
+
+
+def test_tls_audit_findings(monkeypatch):
+    import core.webchecks as W
+    import time
+    fmt = "%b %d %H:%M:%S %Y GMT"
+    past = time.strftime(fmt, time.gmtime(time.time() - 86400))
+    bad = {"version": "TLSv1", "cipher": "RC4-SHA", "alpn": "",
+           "cert": _tls_cert(cn="other.test", sans=["other.test"],
+                             notAfter=past)}
+    monkeypatch.setattr(W, "_tls_handshake",
+                        lambda *a, **k: dict(bad))
+    out = W.test_tls_audit(object(), "https://h.test", 3)
+    titles = [f.title for f in out]
+    assert "TLS certificate expired" in titles
+    assert "TLS hostname mismatch" in titles
+    assert "Self-signed TLS certificate" in titles
+    assert "Weak TLS protocol enabled" in titles
+    assert "Weak TLS cipher negotiated" in titles
+    assert next(f for f in out
+                if f.title == "TLS certificate expired").severity == "CRITICAL"
+    # healthy host: silence
+    good = {"version": "TLSv1.3",
+            "cipher": "ECDHE-RSA-AES128-GCM-SHA256", "alpn": "h2",
+            "cert": _tls_cert(cn="h.test", sans=["h.test"],
+                              self_signed=False)}
+    monkeypatch.setattr(W, "_tls_handshake", lambda *a, **k: None
+                        if len(a) > 3 or k.get("tls_version") is not None
+                        else dict(good))
+    assert W.test_tls_audit(object(), "https://h.test", 3) == []
+    # plain http skips quietly; dead TLS skips quietly
+    assert W.test_tls_audit(object(), "http://h.test", 3) == []
+    monkeypatch.setattr(W, "_tls_handshake", lambda *a, **k: None)
+    assert W.test_tls_audit(object(), "https://h.test", 3) == []
+
+
+def _gql_schema():
+    def _f(name, args=None, kind="OBJECT", ret="User", oftype=None):
+        t = {"kind": kind, "name": ret}
+        if oftype is not None:
+            t["ofType"] = oftype
+        return {"name": name, "args": args or [], "type": t}
+    req_id = {"name": "id",
+              "type": {"kind": "NON_NULL",
+                       "ofType": {"kind": "SCALAR", "name": "ID"}}}
+    user_obj = {"kind": "OBJECT", "name": "User"}
+    return {"__schema": {
+        "queryType": {"name": "Query"},
+        "mutationType": {"name": "Mutation"},
+        "types": [
+            {"kind": "OBJECT", "name": "Query", "fields": [
+                _f("users", [], "LIST", "", user_obj),
+                _f("user", [req_id]),
+                _f("version", [], "SCALAR", "String"),
+            ]},
+            {"kind": "OBJECT", "name": "Mutation", "fields": [
+                _f("updateUser",
+                   [req_id, {"name": "role",
+                             "type": {"kind": "SCALAR", "name": "String"}}],
+                   "SCALAR", "Boolean"),
+            ]},
+            {"kind": "OBJECT", "name": "User", "fields": [
+                {"name": "email", "args": [],
+                 "type": {"kind": "SCALAR", "name": "String"}},
+                {"name": "name", "args": [],
+                 "type": {"kind": "SCALAR", "name": "String"}},
+            ]},
+        ]}}
+
+
+def test_graphql_schema_parse_and_builders():
+    from core.graphql import (parse_schema, sensitive_queries,
+                              build_selection, build_by_id_query, id_arg,
+                              has_sensitive_data)
+    parsed = parse_schema(_gql_schema())
+    assert [q["name"] for q in parsed["queries"]] == ["users", "user",
+                                                      "version"]
+    assert [m["name"] for m in parsed["mutations"]] == ["updateUser"]
+    assert parsed["objects"]["User"] == ["email", "name"]
+    users = next(q for q in parsed["queries"] if q["name"] == "users")
+    user = next(q for q in parsed["queries"] if q["name"] == "user")
+    assert users in sensitive_queries(parsed)  # returns email scalars
+    assert build_selection(parsed, users) == "{ users { email name } }"
+    assert build_selection(parsed, user) is None  # required id: no guessing
+    assert id_arg(user)["name"] == "id" and id_arg(users) is None
+    assert build_by_id_query(parsed, user, "2") == \
+        '{ user(id: "2") { email name } }'
+    assert has_sensitive_data({"users": [{"email": "a@b.c"}]}) == \
+        "users[0].email"
+    assert has_sensitive_data({"version": "1.0"}) is None
+    assert parse_schema({}) == {"queries": [], "mutations": [],
+                                "objects": {}}
+
+
+def _gql_session(intro_doc, data_doc):
+    import json as _json
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class S:
+        def post(self, url, timeout=None, json=None, **kw):
+            q = (json or {}).get("query", "")
+            if "__schema" in q or "__typename" in q:
+                return Resp(_json.dumps(intro_doc), 200, url)
+            if "users" in q or "user(" in q:
+                return Resp(_json.dumps(data_doc), 200, url)
+            return Resp('{"errors":[{"message":"bad"}]}', 200, url)
+
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("nope", 404, url)
+
+    return S()
+
+
+def test_graphql_check_full_chain():
+    import core.webchecks as W
+    from core.net import configure_net
+    configure_net()
+    schema = _gql_schema()
+    intro = {"data": {"__schema": schema["__schema"]}}
+    data = {"data": {"users": [{"email": "a@b.c", "name": "ann"}]}}
+    out = W.test_graphql_introspection(
+        _gql_session(intro, data), "http://h.test", {}, 3,
+        session_b=_gql_session(intro, data))
+    titles = [f.title for f in out]
+    assert "GraphQL introspection enabled" in titles
+    assert "GraphQL mutations exposed" in titles  # mapped, never executed
+    assert "Exposed sensitive GraphQL field" in titles
+    assert "Confirmed IDOR / BOLA (cross-session)" in titles
+    assert next(f for f in out
+                if f.title.startswith("Confirmed")).severity == "CRITICAL"
+
+
+def test_graphql_check_closed_quiet():
+    import core.webchecks as W
+    from core.net import configure_net
+    configure_net()
+
+    class Resp:
+        def __init__(self, text="", status_code=404, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class S:
+        def post(self, url, timeout=None, json=None, **kw):
+            return Resp("nope", 404, url)
+
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if "__typename" in url:
+                return Resp('{"data":{"__Schema":{"queryType":'
+                            '{"name":"Query"}}}}', 200, url)
+            return Resp("nope", 404, url)
+
+    out = W.test_graphql_introspection(S(), "http://h.test", {}, 3)
+    assert [f.title for f in out] == ["GraphQL introspection enabled"]
+    assert "GET" in out[0].detail
+
+
+def test_local_target_gate():
+    from core.localaudit import is_local_target
+    assert is_local_target("localhost") is True
+    assert is_local_target("127.0.0.1") is True
+    assert is_local_target("::1") is True
+    assert is_local_target("example.com") is False
+    assert is_local_target("example.com", force=True) is True
+    assert is_local_target("") is False
+
+
+def test_proc_net_tcp_parse():
+    from core.localaudit import parse_proc_net_tcp
+    text = ("  sl  local_address rem_address   st tx_queue rx_queue tr "
+            "tm->when retrnsmt   uid  timeout inode\n"
+            "   0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 "
+            "00000000     0        0 12345 1 0000000000000000 100 0 0 10 0\n"
+            "   1: 0100007F:0050 00000000:0000 01 00000000:00000000 00:00000000 "
+            "00000000     0        0 99999 1 0000000000000000 100 0 0 10 0\n")
+    rows = parse_proc_net_tcp(text)
+    assert len(rows) == 2
+    assert rows[0]["ip"] == "127.0.0.1" and rows[0]["port"] == 8080
+    assert rows[0]["state"] == "0A" and rows[0]["inode"] == "12345"
+    assert parse_proc_net_tcp("garbage") == []
+
+
+def test_windows_netstat_parse():
+    from core.localaudit import parse_windows_netstat
+    text = ("  TCP    127.0.0.1:3000         0.0.0.0:0              "
+            "LISTENING       4242\n"
+            "  UDP    0.0.0.0:5353           *:*                                    \n")
+    rows = parse_windows_netstat(text)
+    assert rows == [{"ip": "127.0.0.1", "port": 3000, "pid": "4242"}]
+
+
+def test_classify_dev_banner():
+    from core.localaudit import classify_dev_banner
+    assert classify_dev_banner("<script src='/@vite/client'></script>",
+                               {}) == "vite"
+    assert classify_dev_banner("__NEXT_DATA__ {}", {}) == "nextjs"
+    assert classify_dev_banner("<html>hello</html>", {}) == ""
+    assert classify_dev_banner("", {"Server": "webpack-dev-server"}) == "webpack"
+
+
+def test_secret_file_status_perms(tmp_path):
+    import sys
+    from core.localaudit import secret_file_status
+    env = tmp_path / ".env"
+    env.write_text("K=V", encoding="utf-8")
+    try:
+        env.chmod(0o644)
+    except Exception:
+        pass
+    recs = secret_file_status(home=str(tmp_path), cwd=str(tmp_path))
+    rec = next(r for r in recs if r["path"].endswith(".env"))
+    assert rec["kind"] == "environment file"
+    if sys.platform.startswith("win"):
+        assert rec["broad"] is False  # no POSIX bits on Windows
+    else:
+        assert rec["broad"] is True
+    env.chmod(0o600)
+    recs2 = secret_file_status(home=str(tmp_path), cwd=str(tmp_path))
+    rec2 = next(r for r in recs2 if r["path"].endswith(".env"))
+    assert rec2["broad"] is False
+
+
+def test_run_local_audit_orchestration(monkeypatch):
+    import core.localaudit as L
+    monkeypatch.setattr(L, "collect_listening", lambda timeout=3.0: [
+        {"ip": "0.0.0.0", "port": 5173, "process": "node/vite"},
+        {"ip": "127.0.0.1", "port": 8000, "process": "python/app"},
+        {"ip": "127.0.0.1", "port": 9000, "process": "?"},
+    ])
+    monkeypatch.setattr(L, "probe_local_http", lambda port, timeout=3.0: (
+        ("<script src='/@vite/client'></script>", {}) if port == 5173 else
+        ("<div>vite app</div>", {}) if port == 8000 else
+        ("<html>ok</html>", {})))
+    monkeypatch.setattr(L, "secret_file_status", lambda **k: [
+        {"path": "/home/u/.env", "kind": "environment file", "broad": True}])
+    monkeypatch.setattr(L, "firewall_status", lambda: "off")
+    monkeypatch.setattr(L, "container_interfaces", lambda: ["docker0"])
+    out = L.run_local_audit()
+    by_title = {f.title: f for f in out}
+    assert by_title["Exposed development server"].severity == "MEDIUM"
+    assert by_title["Local development server (loopback-bound)"].severity == "INFO"
+    assert by_title["Overly broad secret file permissions"].severity == "MEDIUM"
+    assert by_title["Host firewall disabled"].severity == "LOW"
+    assert by_title["Container/VM network present"].severity == "INFO"
+    assert not any("9000" in f.url for f in out)  # plain ports stay quiet
+
+
+def test_scan_target_local_gate(monkeypatch, tmp_path):
+    import gash
+    from types import SimpleNamespace
+    monkeypatch.chdir(tmp_path)
+    calls = []
+
+    def fake_audit(timeout=3.0):
+        calls.append(timeout)
+        from core.scanner import Finding
+        return [Finding(title="Local development server (loopback-bound)",
+                        severity="INFO", url="http://127.0.0.1:8000/",
+                        evidence="x", confidence="High")]
+
+    monkeypatch.setattr("core.localaudit.run_local_audit", fake_audit)
+    monkeypatch.setattr(gash, "run_scan", lambda *a, **k: [])
+    base = dict(delay=0.0, max_requests=0, cookie=None, header=None,
+                login_user=None, login_pass=None, login_url=None,
+                timeout=3, skip_ports=True, ports=None, threads=5,
+                verbose=False, wordlist=None, quick=False, deep=False,
+                skip_checks=None, no_crawl=True, dom=False,
+                blind_callback=None, scope=None, fail_on=None, oob=False,
+                proxy=None, user_agent=None, insecure=False, cookie_b=None,
+                header_b=None, output=None)
+    res = gash._scan_target("http://127.0.0.1:8000", SimpleNamespace(**base),
+                            "scan", None)
+    assert calls == [3]
+    assert any("Local development server" in f.title for f in res.findings)
+    calls.clear()
+    res2 = gash._scan_target("http://example.com", SimpleNamespace(**base),
+                             "scan", None)
+    assert calls == [] and res2.findings == []
+
+
+def test_summarize_traffic_split():
+    from core.xss_spa import summarize_traffic, ROUTE_WATCH_JS
+    assert "__gash_routes" in ROUTE_WATCH_JS
+    entries = [
+        {"url": "http://h.test/api/users", "method": "GET",
+         "resource": "fetch", "status": 200,
+         "resp_ct": "application/json"},
+        {"url": "http://h.test/app", "method": "GET", "resource": "document"},
+        {"url": "ws://h.test/live", "method": "WS", "resource": "websocket"},
+        {"url": "http://h.test/sse/feed", "method": "GET",
+         "resource": "eventsource", "resp_ct": "text/event-stream"},
+        {"url": "http://h.test/api/users", "method": "GET",
+         "resource": "fetch"},
+        {"url": "https://evil.com/x", "method": "GET", "resource": "fetch"},
+    ]
+    s = summarize_traffic(entries, "http://h.test")
+    assert s["pool"] == ["http://h.test/app", "http://h.test/sse/feed"]
+    assert s["api"] == ["http://h.test/api/users"]
+    assert s["websockets"] == ["ws://h.test/live"]
+    assert s["sse"] == ["http://h.test/sse/feed"]
+    assert {r["url"] for r in s["graph"]} >= {
+        "http://h.test/api/users", "ws://h.test/live"}
+    scoped = summarize_traffic(entries, "http://h.test",
+                               scope_hosts={"other.test"})
+    assert scoped["pool"] == [] and scoped["graph"] == []
+
+
+def test_runtime_discover_capture_offline(monkeypatch):
+    import importlib.util
+    from core import xss_spa
+    monkeypatch.setattr(importlib.util, "find_spec", lambda *a, **k: None)
+    assert xss_spa.runtime_discover("http://h.test", 3,
+                                    capture_traffic=True) == {
+        "urls": [], "api": [], "params": []}
+
+
+def test_probe_pool_drops_non_http():
+    from core.scanner import _build_probe_pool
+    pool = _build_probe_pool(
+        {"http://h.test/": ""}, "http://h.test",
+        spa_urls=["ws://h.test/live", "http://h.test/app"], limit=25)
+    assert "http://h.test/app?id=1" in pool  # query-less SPA -> probe
+    assert not any(u.startswith("ws:") for u in pool)
+
+
+def test_run_scan_browser_discovery_merges_pool(monkeypatch):
+    import core.scanner as S
+    import core.advanced  # noqa: F401
+    import core.domxss  # noqa: F401
+    import core.webchecks  # noqa: F401
+    import core.xss_spa as SPA
+    from core.registry import REGISTRY
+    monkeypatch.setattr(S, "_fetch_base",
+                        lambda *a, **k: ("", "http://h.test", {}))
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class FakeSession:
+        cookies = []
+        headers = {}
+
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            requested.append(url)
+            return Resp("<html>ok</html>", 200, url)
+
+    requested: list = []
+    monkeypatch.setattr(S, "_session",
+                        lambda timeout, auth=None: FakeSession())
+    monkeypatch.setattr(
+        SPA, "runtime_discover",
+        lambda *a, **k: {"urls": ["http://h.test/runtime-app"],
+                         "api": [], "params": [],
+                         "traffic": [{"url": "http://h.test/runtime-app",
+                                      "method": "GET"}],
+                         "websockets": ["ws://h.test/live"],
+                         "sse": [], "routes": ["/runtime-app"]})
+    from core.net import configure_net
+    configure_net()
+    out = S.run_scan("http://h.test", threads=1, timeout=3, verbose=False,
+                     deep=False, no_crawl=True,
+                     skip_checks=set(REGISTRY) - {"waf-detect",
+                                                  "xss-reflected"},
+                     browser_discovery=True)
+    assert out == []
+    assert any("runtime-app" in u for u in requested)  # pool merged
+    assert not any(u.startswith("ws:") for u in requested)  # graph only
+
+
+def test_authz_ref_extraction():
+    from core.authz import extract_refs_from_url, sibling_url
+    refs = {(r.kind, r.location, r.name): r.value for r in
+            extract_refs_from_url(
+                "http://h.test/api/orders/5?verbose=1&token="
+                "123e4567-e89b-12d3-a456-426614174000")}
+    assert refs[("int", "path", "2")] == "5"
+    assert refs[("uuid", "query", "token")] == \
+        "123e4567-e89b-12d3-a456-426614174000"
+    assert not any(v == "verbose" for v in refs.values())
+    # pagination-style ints are still visible to the extractor (the
+    # /api-only guard for differentials lives in the check itself)
+    ints = [r for r in extract_refs_from_url("http://h.test/blog/2")
+            if r.kind == "int"]
+    assert ints and sibling_url("http://h.test/blog/2", ints[0]) == \
+        "http://h.test/blog/3"
+    uuids = [r for r in extract_refs_from_url(
+        "http://h.test/api/o/123e4567-e89b-12d3-a456-426614174000")
+        if r.kind == "uuid"]
+    assert uuids and sibling_url(
+        "http://h.test/api/o/123e4567-e89b-12d3-a456-426614174000",
+        uuids[0]) is None  # unguessable: no sibling
+    assert extract_refs_from_url("not a url") == []
+
+
+def test_authz_json_refs_and_ownership():
+    from core.authz import (extract_refs_from_json, extract_ownership,
+                            canonical_same, same_object,
+                            classify_auth_response, normalized_hash)
+    refs = {(r.name, r.kind) for r in extract_refs_from_json(
+        {"user": {"id": 7}, "note": "hi",
+         "uid": "123e4567-e89b-12d3-a456-426614174000"})}
+    assert ("user.id", "int") in refs
+    assert ("uid", "uuid") in refs
+    assert ("note", "slug") not in refs  # free text is not a ref
+    assert extract_ownership('{"userId": 9, "x": 1}') == {"userId": "9"}
+    assert extract_ownership("<html>") == {}
+    assert canonical_same('{"b":1,"a":2}', '{"a":2,"b":1}') is True
+    assert canonical_same('{"a":1}', '{"a":2}') is False
+    assert canonical_same("<p>x</p>", '{"a":1}') is None
+    assert same_object('{"a":1}', '{"a": 1}') is True  # canonical first
+    assert same_object("", "") is False
+    assert classify_auth_response(403, "x", "") == "denied"
+    assert classify_auth_response(302, "x",
+                                  "http://h.test/login") == "login-redirect"
+    assert classify_auth_response(200, "<form>password</form>",
+                                  "") == "login-redirect"
+    assert classify_auth_response(200, "data", "") == "ok"
+    assert normalized_hash("a  b") == normalized_hash("a b")
+
+
+def _matrix_sessions(user_map, anon_map, b_map=None):
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    def _mk(mapping):
+        class S:
+            def get(self, url, timeout=None, allow_redirects=True,
+                    headers=None):
+                code, body = mapping.get(url, (404, "nope"))
+                return Resp(body, code, url)
+        return S()
+
+    return _mk(user_map), _mk(anon_map), (_mk(b_map) if b_map else None)
+
+
+def test_authz_matrix_anonymous_access():
+    import core.advanced as A
+    from core.net import configure_net
+    configure_net()
+    body = '{"id":5,"owner":"alice","secret":"x"}'
+    user, anon, _ = _matrix_sessions(
+        {"http://h.test/api/orders/5": (200, body)},
+        {"http://h.test/api/orders/5": (200, body)})
+    pages = {"http://h.test/": "<a href='/api/orders/5'>o</a>"}
+    out = A.test_authz_matrix(user, pages, "http://h.test", 3,
+                              anon_session=anon)
+    assert any(f.title == "Missing authentication on object endpoint"
+               and f.severity == "MEDIUM" and f.confidence == "High"
+               for f in out)
+
+
+def test_authz_matrix_gated_paths_quiet():
+    import core.advanced as A
+    from core.net import configure_net
+    configure_net()
+    user, anon, _ = _matrix_sessions(
+        {"http://h.test/api/orders/5": (200, '{"id":5}')},
+        {"http://h.test/api/orders/5": (403, "forbidden")})
+    pages = {"http://h.test/": "<a href='/api/orders/5'>o</a>"}
+    assert A.test_authz_matrix(user, pages, "http://h.test", 3,
+                               anon_session=anon) == []
+    # public HTML stays quiet too (no JSON/ownership to judge by)
+    u2, a2, _ = _matrix_sessions(
+        {"http://h.test/post/abc-def": (200, "<html>post</html>")},
+        {"http://h.test/post/abc-def": (200, "<html>post</html>")})
+    pages2 = {"http://h.test/": "<a href='/post/abc-def'>p</a>"}
+    assert A.test_authz_matrix(u2, pages2, "http://h.test", 3,
+                               anon_session=a2) == []
+
+
+def test_authz_matrix_cross_user_confirmed():
+    import core.advanced as A
+    from core.net import configure_net
+    configure_net()
+    body = '{"id":5,"owner":"alice"}'
+    user, anon, b = _matrix_sessions(
+        {"http://h.test/api/orders/5": (200, body)},
+        {"http://h.test/api/orders/5": (403, "denied")},
+        {"http://h.test/api/orders/5": (200, body)})
+    pages = {"http://h.test/": "<a href='/api/orders/5'>o</a>"}
+    out = A.test_authz_matrix(user, pages, "http://h.test", 3,
+                              session_b=b, anon_session=anon)
+    assert any(f.title == "Confirmed IDOR / BOLA (cross-session)"
+               and f.severity == "CRITICAL" for f in out)
+
+
+def test_authz_matrix_uuid_and_admin():
+    import core.advanced as A
+    from core.net import configure_net
+    configure_net()
+    uuid = "123e4567-e89b-12d3-a456-426614174000"
+    body = '{"id":"%s","owner":"alice"}' % uuid
+    user, anon, _ = _matrix_sessions(
+        {f"http://h.test/share/{uuid}": (200, body)},
+        {f"http://h.test/share/{uuid}": (200, body)})
+    pages = {"http://h.test/": f"<a href='/share/{uuid}'>d</a>"}
+    out = A.test_authz_matrix(user, pages, "http://h.test", 3,
+                              anon_session=anon)
+    assert any(f.title == "Direct object reference reachable anonymously"
+               and f.severity == "MEDIUM" for f in out)
+    u2, a2, _ = _matrix_sessions(
+        {"http://h.test/admin": (200, "<html>dashboard</html>")},
+        {"http://h.test/admin": (403, "denied")})
+    out2 = A.test_authz_matrix(
+        u2, {"http://h.test/": "<html>x</html>"}, "http://h.test", 3,
+        anon_session=a2,
+        ctx={"found_paths": ["http://h.test/admin"]})
+    assert any(f.title == "Possible missing authorization (admin surface)"
+               for f in out2)

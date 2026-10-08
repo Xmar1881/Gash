@@ -111,6 +111,8 @@ class ScanResult:
     elapsed: float = 0.0
     interrupted: bool = False
     incomplete: bool = False
+    degraded: bool = False
+    checks: list = field(default_factory=list)
 
 
 def resolve_login_password(args) -> str | None:
@@ -202,6 +204,12 @@ def _scan_target(target: str, args, mode: str, wordlist) -> ScanResult:
             if args.skip_checks else None)
     deep = is_deep(args)
     scope = parse_scope(getattr(args, "scope", None))
+    from core.discovery import resolve_coverage
+    cov = resolve_coverage(args)
+    if args.verbose:
+        print(info(f"[i] coverage: profile={getattr(args, 'profile', 'balanced')} "
+                   f"pages={cov['max_pages']} depth={cov['crawl_depth']} "
+                   f"xss_urls={cov['max_xss_urls']}"))
 
     if mode in ("recon", "full"):
         try:
@@ -232,6 +240,8 @@ def _scan_target(target: str, args, mode: str, wordlist) -> ScanResult:
                        "scan phase skipped, nothing to find."))
         else:
             from core.net import PartialResults
+            from core.reporter import _check_errors
+            health: dict = {}
             try:
                 res.findings = run_scan(
                     target,
@@ -242,14 +252,21 @@ def _scan_target(target: str, args, mode: str, wordlist) -> ScanResult:
                     deep=deep,
                     auth=auth,
                     skip_checks=skip,
-                    max_pages=args.max_pages,
-                    crawl_depth=args.depth,
+                    max_pages=cov["max_pages"],
+                    crawl_depth=cov["crawl_depth"],
                     no_crawl=args.no_crawl,
                     dom=args.dom,
                     blind_callback=getattr(args, "blind_callback", None),
                     scope_hosts=scope,
                     oob=oob_client,
                     auth_b=auth_b,
+                    spa=getattr(args, "spa", False),
+                    max_xss_urls=cov["max_xss_urls"],
+                    health=health,
+                    js_files=cov["js_files"],
+                    swagger_paths=cov["swagger_paths"],
+                    browser_discovery=getattr(args, "browser_discovery",
+                                              False),
                 )
             except PartialResults as e:
                 # Rate limit / budget hit mid-scan: keep what we have,
@@ -262,9 +279,28 @@ def _scan_target(target: str, args, mode: str, wordlist) -> ScanResult:
                 print(danger(f"[!] SCAN error: {e}"))
                 if args.verbose:
                     raise
+            res.checks = health.get("checks", [])
+            res.degraded = bool(_check_errors(res.checks))
+            try:
+                _host, _ = _nt(target)
+            except Exception:
+                _host = ""
+            from core.localaudit import is_local_target
+            if is_local_target(_host, getattr(args, "local", False)):
+                try:
+                    from core.localaudit import run_local_audit
+                    from core.knowledge import enrich
+                    print(info("  [*] Local audit (read-only enumeration)..."))
+                    _local = run_local_audit(timeout=args.timeout)
+                    for _f in _local:
+                        enrich(_f)
+                    res.findings += _local
+                except Exception as e:
+                    print(warn(f"  [!] Local audit failed: {str(e)[:100]}"))
             if res.findings or not res.incomplete:
                 print_findings(res.findings, verbose=args.verbose,
-                               incomplete=res.incomplete)
+                               incomplete=res.incomplete,
+                               check_status=res.checks)
             if res.incomplete:
                 print(warn("  [!] INCOMPLETE scan (rate limit / budget) — "
                            "results are partial, NOT a clean bill."))
@@ -292,7 +328,8 @@ def _save_report(target: str, mode: str, res: ScanResult, path: str) -> bool:
         report = build_report(target, mode, __version__,
                               recon=res.recon, findings=res.findings,
                               elapsed=res.elapsed, diff=res.diff,
-                              incomplete=res.incomplete)
+                              incomplete=res.incomplete,
+                              check_status=res.checks)
         save_report(report, path)
         print(success(f"\n[+] Report written: {path}"))
         return True
@@ -393,7 +430,8 @@ def run_bulk(targets: list[str], args, mode: str, output_dir: str | None) -> int
                        "report": None, "summary": summary, "obs": obs_n,
                        "elapsed_s": round(res.elapsed, 2),
                        "interrupted": res.interrupted,
-                       "incomplete": res.incomplete}
+                       "incomplete": res.incomplete,
+                       "degraded": res.degraded}
         if rpath:
             if _save_report(target, mode, res, rpath):
                 entry["report"] = rpath
@@ -418,6 +456,7 @@ def run_bulk(targets: list[str], args, mode: str, output_dir: str | None) -> int
         else:
             s = r.get("summary", {})
             mark = " (partial)" if r.get("interrupted") or r.get("incomplete") else ""
+            mark += " (degraded)" if r.get("degraded") else ""
             obs_mark = f" +{r.get('obs', 0)} obs" if r.get("obs") else ""
             print(success(f"  OK    {r['target']} "
                           f"(C:{s.get('CRITICAL', 0)} M:{s.get('MEDIUM', 0)} "

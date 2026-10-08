@@ -12,7 +12,7 @@
 [![GASH CI](https://github.com/Xmar1881/Gash/actions/workflows/ci.yml/badge.svg)](https://github.com/Xmar1881/Gash/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
-![Version](https://img.shields.io/badge/version-0.4.0-red)
+![Version](https://img.shields.io/badge/version-0.5.0-red)
 
 ```text
   ██████╗  █████╗ ███████╗██╗  ██╗
@@ -22,7 +22,7 @@
  ╚██████╔╝██║  ██║███████║██║  ██║
   ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
   [ GASH // Vulnerability & Penetration Engine ]
-  v0.4.0  //  fast | modular | thorough
+  v0.5.0  //  fast | modular | thorough
 ```
 
 > [!WARNING]
@@ -32,14 +32,14 @@
 
 ## Neden GASH?
 
-- **Tek komutla full tarama:** recon + crawl + 42 güvenlik kontrolü + rapor
+- **Tek komutla full tarama:** recon + crawl + 44 güvenlik kontrolü + rapor
   (zafiyet tespiti, saldırı yüzeyi keşfi ve yapılandırma denetimi)
 - **Akıllı:** tech fingerprint'e göre wordlist seçer (WordPress / PHP / Node / Java / Python)
 - **Modern web:** yapay zekâyla üretilmiş sitelerin tipik hastalıkları — eksik
   başlıklar, wildcard CORS, open redirect, traversal, riskli metotlar ve
   JS'e gömülü secret'lar
-- **Crawler'lı:** link + form + `sitemap.xml` + Swagger/OpenAPI + JS içinden API endpoint çıkarır
-- **Raporlama:** terminal tablosu + `JSON / HTML / TXT` + önceki taramayla **fark (YENİ/KAPANDI)** takibi
+- **Crawler'lı:** link + form + `sitemap.xml` + Swagger/OpenAPI + JS içinden API endpoint çıkarır (+ JS-heavy uygulamalar için opt-in `--spa` headless runtime turu)
+- **Raporlama:** terminal tablosu + `JSON / HTML / TXT / SARIF / XML` + önceki taramayla **fark (YENİ/KAPANDI)** takibi
 - **Dürüst çıktı:** keşif bulguları (admin sayfası, robots.txt, erişilebilir dizin)
   puansız `INFO` gözlem olarak raporlanır — bulunan `/login` sayfası asla CRITICAL değildir
 - **Plugin:** yeni kontrol = 1 decorator (`core/registry.py`)
@@ -90,13 +90,17 @@ py -m playwright install chromium
 | `py gash.py -t URL --full --user-agent "MyScanner/1.0"` | Özel User-Agent |
 | `py gash.py -t https://host/app --full` | Alt-uygulama kapsamı: path korunur (`/app`, `/app` olarak kalır) |
 | `py gash.py -t URL --full --insecure` | TLS doğrulamayı kapat (yalnızca self-signed lab) |
-| `py gash.py --list-checks` | 42 kontrolü listele |
+| `py gash.py --list-checks` | 44 kontrolü listele |
 | `py gash.py -t URL --full --skip-checks sqli-blind,ssti` | İstemediğin check'i kapat |
 | `py gash.py -t URL --full --cookie "session=abc" --header "Authorization: Bearer X"` | Login arkası tarama |
 | `py gash.py -t URL --full --cookie "a=1" --cookie-b "b=2"` | İkinci kullanıcıyla cross-session IDOR doğrulama |
 | `py gash.py -t URL --full --login-user admin --login-pass 1234` | Oto-login dene, oturumla tara |
 | `py gash.py -t URL --full --max-pages 15 --depth 3` | Crawler'ı büyüt |
+| `py gash.py -t URL --full --profile thorough` | Kapsam profili: quick / balanced (varsayılan) / thorough |
 | `py gash.py -t URL --full --dom` | Headless Chromium ile DOM XSS doğrula (yavaş) |
+| `py gash.py -t URL --full --spa --max-xss-urls 40` | SPA runtime keşfi (JS route/form/API) + büyük XSS havuzu |
+| `py gash.py -t URL --full --browser-discovery` | Full browser trafik profili (istek/WS/SSE/route) havuza işlenir |
+| `py gash.py -t http://127.0.0.1:8000 --full` | Loopback hedefte local audit otomatik çalışır (salt-okunur; `--local` zorlar) |
 | `py gash.py -t URL --full --oob` | Otomatik OOB doğrulama (Blind XSS + SSRF), interactsh ile |
 | `py gash.py -t URL --full --delay 0.2 --max-requests 500` | Kibar / bütçeli tarama |
 | `py gash.py --target-file targets.txt --full --output-dir raporlar/` | Toplu tarama (hedef başına rapor + `bulk_summary.json`) |
@@ -104,14 +108,14 @@ py -m playwright install chromium
 
 `targets.txt` formatı: satır başına 1 hedef, `#` yorum ve boş satır atlanır.
 
-## Kontroller (42)
+## Kontroller (44)
 
 `py gash.py --list-checks` çıktısı:
 
 | İsim | Açıklama |
 |---|---|
 | `sqli-error` | Error-based SQLi (DB hata imzası) |
-| `xss-reflected` | Reflected XSS (3 bağlam + escape filtresi) |
+| `xss-reflected` | Reflected XSS (bağlam analizi + breakout kontrolü) |
 | `xss-errpage` | 404 + header yansıması |
 | `upload-form` | Upload formu tespiti (pasif) |
 | `robots` | robots.txt + Disallow toplama |
@@ -121,15 +125,16 @@ py -m playwright install chromium
 | `ssti` | SSTI şablon enjeksiyonu |
 | `ssrf` | SSRF bulut metadata + yüzey notu |
 | `idor` | IDOR/BOLA API obje farkı |
+| `idor-param` | IDOR query parametresi (`?id=`, uuid-farkında) |
+| `authz-matrix` | Anonim/kullanıcı yetki matrisi |
 | `protopollution` | Prototype Pollution yansıma yüzeyi |
-| `stored-xss` | Stored XSS canary (blind: `--blind-callback` gerekli) |
+| `stored-xss` | Stored XSS canary + second-order render kontrolü |
 | `sqli-login` | Login formu SQLi auth-bypass `[deep]` |
 | `waf-detect` | WAF parmak izi (pasif) |
-| `idor-param` | IDOR query parametresi (`?id=`) |
 | `cookie-flags` | Cookie HttpOnly/Secure/SameSite denetimi |
 | `upload-rce` | Upload filtre bypass (benign içerik) `[deep]` |
 | `smart-tech` | Tech fingerprint + nokta-atışı yollar |
-| `dom-xss` | DOM XSS headless doğrulama (`--dom`) |
+| `dom-xss` | DOM XSS headless doğrulama, sink + kaynak + oracle (`--dom`) |
 | `security-headers` | Eksik güvenlik başlıkları (pasif) |
 | `open-redirect` | next/redirect parametreleriyle open redirect |
 | `path-traversal` | file/page parametreleriyle path traversal |
@@ -137,7 +142,7 @@ py -m playwright install chromium
 | `http-methods` | Riskli HTTP metotları (TRACE/PUT/DELETE) |
 | `js-secrets` | JavaScript'e gömülü secret'lar |
 | `jwt-none` | alg:none kullanan JWT'ler (pasif) |
-| `graphql-introspection` | Açık bırakılmış GraphQL introspection |
+| `graphql-introspection` | GraphQL introspection + şema analizi |
 | `host-header` | Yansıyan Host başlığı (cache-poison yüzeyi) |
 | `security-txt` | security.txt varlığı (RFC 9116) |
 | `os-command-injection` | `;id`/`\|id` ile OS komut enjeksiyonu |
@@ -149,6 +154,7 @@ py -m playwright install chromium
 | `wp-user-enum` | WordPress kullanıcı adı ifşası |
 | `swagger-exposed` | Herkese açık API dokümanı (Swagger/OpenAPI) |
 | `mass-assignment` | İstemciden kontrol edilebilen rol alanı |
+| `tls-audit` | TLS sertifika + protokol denetimi |
 | `login-enum` | Login kullanıcı adı sayımı |
 | `ldap-injection` | LDAP jokerkarakter auth bypass |
 | `cache-poisoning` | Host yansımasıyla cache zehirlenmesi |
@@ -163,31 +169,38 @@ Tarama **varsayılan olarak güvenlidir**: time-based bekleme yok, aktif POST
 yok, dosya yükleme yok, login denemesi yok. Bunlar sadece açık `--deep`
 ile çalışır (sihirbaz zaten sorar). Stored-XSS probu password/hidden
 alanlara dokunmaz, upload probları her zaman zararsız metindir.
+JSON/XML/GraphQL body ve PUT/PATCH/DELETE mutasyonları da deep-only'dir
+ve yapıyı korur (tek seferde bir yaprak değer); güvenli mod body mutate etmez.
 TLS sertifikaları varsayılan olarak doğrulanır (`--insecure` açıkça kapatır).
+Check hataları asla sessiz geçilmez: çöken check tek satır yazar, kalanlar
+devam eder ve tarama "Temiz" yerine **SCAN DEGRADED** biter (terminal +
+tüm rapor formatları). Check bazında durum (passed/findings/skipped/error)
+raporda `scan_health` altında taşınır.
 
 ## Sınırlamalar
 
 Dürüst kapsam (Nuclei/ZAP/sqlmap ile karşılaştırma):
 
 - **Tarayıcıdır, sömürü aracı değildir:** payload çalıştırma, oturum çalma yok.
-- IDOR/SSRF bulguları tek-oturum sezgiseldir — manuel doğrulama şarttır
-  (başlıkta yazar).
+- IDOR bulguları ikinci oturum (`--cookie-b`) veya anonim erişim kanıtlamadıkça
+  tek-oturum sezgiseldir (başlıkta yazar).
 - CVSS ve 0–100 risk skoru **sınıf bazlı statik tahminlerdir**, ortama göre
   hesaplanmaz.
-- Dahili OOB dinleyici artık var — `--oob` (interactsh) Blind XSS/SSRF
-  callback'lerini kapsar; diğer OOB sınıfları hâlâ senin dinleyicini ister.
-- Henüz yok: path traversal/LFI, OS komut enjeksiyonu, XXE, open redirect,
-  CORS, JWT, GraphQL introspection, TLS denetimi.
+- OOB doğrulama opt-in'dir — `--oob` (interactsh) Blind XSS/SSRF
+  callback'lerini kapsar; dinleyici yoksa tasarım gereği blind bulgu çıkmaz.
+- Henüz yok: XXE, HTTP/3 denetimi, sertifika zincir (chain-of-trust)
+  doğrulaması, WebSocket mesaj fuzzing, JWT kabul replay'i.
 
 ## Rapor Örneği
 
 ```bash
 py gash.py -t https://target.com --full -o rapor.html
-# rapor.json / rapor.txt de olur (uzantıya göre)
+# rapor.json / rapor.txt / rapor.sarif / rapor.xml de olur (uzantıya göre)
 ```
 
 - **Terminal:** renkli severity listesi + özet tablosu (CRITICAL / MEDIUM / LOW)
 - **HTML:** severity dağılımı, risk skoru (0-100), kategori kırılımı, yönetici özeti, filtre butonları, `evidence <details>` içinde
+- **SARIF / JUnit:** `rapor.sarif` (kod-tarama içe aktarma) ve `rapor.xml` (CI test geçitleri)
 - **Diff:** her tarama `.gash_history/` altına kaydolur, sonraki taramada `X YENİ / Y KAPANDI` gösterir
 
 ## Proje Yapısı
@@ -202,8 +215,17 @@ Gash/
 │   ├── advanced.py      # blind / SSTI / SSRF / IDOR / upload-RCE ...
 │   ├── bulk.py          # toplu tarama yardımcıları
 │   ├── crawler.py       # BFS crawler (sitemap + swagger + JS)
+│   ├── discovery.py     # birleşik keşif: canonicalize, JS/API/REST, profiller
+│   ├── api_params.py    # recursive body parametreleri + güvenli mutate
+│   ├── diff.py          # baseline/differential motoru (tüm check'ler ortak)
+│   ├── xss_context.py   # reflection bağlam analizi
+│   ├── xss_payloads.py  # bağlama-duyarlı payload üretici
+│   ├── xss_spa.py       # SPA runtime keşfi (--spa)
 │   ├── domxss.py        # Playwright DOM doğrulama (--dom)
-│   ├── reporter.py      # terminal + json/html/txt + diff
+│   ├── authz.py         # IDOR/BOLA + yetki matris motoru
+│   ├── graphql.py       # GraphQL şema analizi
+│   ├── localaudit.py    # local makine profili (--local)
+│   ├── reporter.py      # terminal + json/html/txt/sarif/xml + diff
 │   ├── knowledge.py     # CWE / OWASP / CVSS / remediation
 │   ├── registry.py      # plugin sistemi (@check)
 │   ├── net.py           # delay / bütçe / auth
@@ -212,7 +234,11 @@ Gash/
 ├── tests/
 │   ├── test_unit.py         # ağ gerektirmez
 │   ├── test_bulk.py         # toplu tarama (ağ gerektirmez)
+│   ├── test_lab.py          # lokal lab regresyonu (~25 sn)
 │   └── test_integration.py  # lokal stub sunucu (~15 sn)
+├── bench/
+│   ├── lab.py               # zafiyetli lab uygulaması (stdlib)
+│   └── run_bench.py         # DVWA/Juice Shop precision/recall
 └── .github/workflows/ci.yml  # ubuntu+windows × 3.12/3.13
 ```
 
@@ -232,14 +258,30 @@ def test_benim(session, urls, timeout, verbose=False):
 py -m pytest tests/ -q
 ```
 
+## Benchmark
+
+DVWA + Juice Shop'a karşı XSS precision/recall (opt-in, canlı hedef —
+CI'da asla çalışmaz):
+
+```bash
+docker compose -f bench/docker-compose.yml up -d
+py bench/run_bench.py --target all --deep --dom --json-out bench/results.json
+```
+
+Ground truth `bench/cases_*.json` içinde (zafiyetli endpoint'ler +
+negatif kontroller). Skorlama recall/precision'a **confirmed**
+başlıkları sayar, unconfirmed/suspected'i ayrı raporlar (dürüstlük
+istatistikleri).
+
 ## Yol Haritası
 
 - [x] Bulk tarama (`--target-file` + resume)
 - [x] Güvenli varsayılan + `--deep` opt-in + `--scope` + `--fail-on`
 - [ ] YAML profil (sessiz / kapsamlı)
-- [ ] Blind-XSS callback otomasyonu
+- [x] Blind-XSS/OOB doğrulama (`--oob`, interactsh)
 - [ ] CVE eşleme (versiyon → bilinen zafiyet)
-- [ ] SARIF / JUnit + webhook bildirimi
+- [x] SARIF / JUnit çıktıları
+- [ ] Webhook bildirimi
 - [x] Modern kontrol sınıfları: traversal, open redirect, CORS, güvenlik
   başlıkları, riskli metotlar, JS secret'ları
 

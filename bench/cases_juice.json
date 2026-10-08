@@ -1,0 +1,35 @@
+{
+  "$comment": "OWASP Juice Shop XSS ground truth (default config, no auth). Paths follow the Angular client; if your Juice Shop version moved them, adjust path/param and re-run — per-case rows make drift visible instead of silent.",
+  "target": "juice",
+  "default_base_url": "http://127.0.0.1:3000",
+  "auth": null,
+  "cases": [
+    {
+      "id": "juice-search-dom",
+      "kind": "dom",
+      "method": "GET",
+      "path": "/#/search",
+      "param": "q",
+      "vulnerable": true,
+      "notes": "'DOM XSS' challenge: search query flows into the client-side rendered view. Needs --dom (headless + fragment/query payload)."
+    },
+    {
+      "id": "juice-profile-stored",
+      "kind": "stored",
+      "method": "GET",
+      "path": "/#/profile",
+      "param": "username",
+      "vulnerable": true,
+      "notes": "Username rendered unsanitized in the profile view (stored-XSS family). Confirm against your instance: if the build sanitizes it, flip vulnerable to false and treat any CONFIRMED title as an FP."
+    },
+    {
+      "id": "juice-home-clean",
+      "kind": "reflected",
+      "method": "GET",
+      "path": "/#/",
+      "param": "q",
+      "vulnerable": false,
+      "notes": "Negative control: landing view. No XSS-family finding expected."
+    }
+  ]
+}

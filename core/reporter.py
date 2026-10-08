@@ -29,15 +29,35 @@ def is_finding(f) -> bool:
 
 # ---------- terminal ----------
 
+def _check_errors(check_status) -> list:
+    """Checks that errored or aborted mid-scan (never silent)."""
+    return [c for c in (check_status or [])
+            if c.get("status") in ("error", "aborted")]
+
+
 def print_findings(findings, verbose: bool = False,
-                   incomplete: bool = False) -> None:
+                   incomplete: bool = False,
+                   check_status=None) -> None:
+    errors = _check_errors(check_status)
+    degraded = bool(errors)
     print(info("\n[+] SCAN Results"))
-    if not findings and not incomplete:
+    if not findings and not incomplete and not degraded:
         print(success("[+] Clean: no findings."))
         return
     if incomplete:
         print(warn("  [!] INCOMPLETE scan — coverage stopped early, "
                    "absence of findings means nothing."))
+    if degraded:
+        print(warn(f"  [!] SCAN DEGRADED — {len(errors)} check(s) failed, "
+                   "results are partial:"))
+        for e in errors[:5]:
+            what = e.get("error_type", "") + " " + e.get(
+                "error", e.get("reason", ""))
+            print(warn(f"      x {e.get('check')}: {what.strip()}"[:160]))
+    if not findings and degraded:
+        print(warn("  [!] No findings, but failing checks mean this is "
+                   "NOT a clean bill."))
+        return
     findings = sorted(findings, key=lambda f: SEVERITY_ORDER.get(f.severity, 9))
     for f in findings:
         conf = f" [conf:{f.confidence}]" if verbose and f.confidence else ""
@@ -101,8 +121,13 @@ def print_summary_table(findings) -> None:
 
 def build_report(target: str, mode: str, version: str,
                  recon=None, findings=None, elapsed: float = 0.0,
-                 diff: dict | None = None, incomplete: bool = False) -> dict:
+                 diff: dict | None = None, incomplete: bool = False,
+                 check_status=None) -> dict:
     findings = findings or []
+    errors = _check_errors(check_status)
+    degraded = bool(errors)
+    skipped = [c.get("check") for c in (check_status or [])
+               if c.get("status") == "skipped"]
     vulns = [f for f in findings if is_finding(f)]
     obs = [f for f in findings if not is_finding(f)]
     srt = sorted(vulns, key=lambda f: SEVERITY_ORDER.get(f.severity, 9))
@@ -126,6 +151,16 @@ def build_report(target: str, mode: str, version: str,
                     "OBSERVATIONS": len(obs)},
         "diff": diff or {},
         "incomplete": bool(incomplete),
+        "scan_health": {
+            "degraded": degraded,
+            "errors": [{"check": e.get("check"),
+                        "error": (e.get("error_type", "") + " " +
+                                  e.get("error", e.get("reason", ""))).strip()}
+                       for e in errors],
+            "skipped": skipped,
+            "ran": sum(1 for c in (check_status or [])
+                       if c.get("status") in ("passed", "findings")),
+        },
         "recon": recon.to_dict() if recon else None,
         "findings": [f.to_dict() for f in srt],
         "observations": [f.to_dict() for f in
@@ -197,7 +232,7 @@ def print_diff(diff: dict) -> None:
 
 
 def save_report(report: dict, path: str) -> str:
-    """Write json/html/txt based on extension. Returns the path."""
+    """Write json/html/txt/sarif/xml based on extension. Returns the path."""
     low = path.lower()
     if low.endswith(".json"):
         with open(path, "w", encoding="utf-8") as f:
@@ -205,6 +240,12 @@ def save_report(report: dict, path: str) -> str:
     elif low.endswith((".html", ".htm")):
         with open(path, "w", encoding="utf-8") as f:
             f.write(_render_html(report))
+    elif low.endswith(".sarif"):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(_render_sarif(report), f, ensure_ascii=False, indent=2)
+    elif low.endswith(".xml"):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(_render_junit(report))
     else:  # .txt and the rest -> plain text
         with open(path, "w", encoding="utf-8") as f:
             f.write(_render_txt(report))
@@ -222,6 +263,11 @@ def _render_txt(report: dict) -> str:
     if report.get("incomplete"):
         L.append("WARNING: INCOMPLETE scan (rate limit / budget) — "
                  "partial results, NOT a clean bill.")
+    health = report.get("scan_health") or {}
+    if health.get("degraded"):
+        names = ", ".join(e.get("check", "?") for e in health.get("errors", [])[:5])
+        L.append(f"WARNING: SCAN DEGRADED ({len(health.get('errors', []))} "
+                 f"failed checks: {names}) — partial results, NOT a clean bill.")
     df = report.get("diff") or {}
     if df and df.get("onceki_toplam") is not None:
         L.append(f"Diff  : {len(df.get('yeni', []))} new / "
@@ -234,6 +280,15 @@ def _render_txt(report: dict) -> str:
         L.append(f"[{f['severity']}] {f['title']}\n  {f.get('url')}\n  {f.get('detail')}")
         if f.get("confidence"):
             L.append(f"  Confidence: {f.get('confidence')}")
+        _ctx = " ".join(p for p in (
+            f"method={f['method']}" if f.get("method") else "",
+            f"param={f['param']}" if f.get("param") else "",
+            f"location={f['location']}" if f.get("location") else "",
+            f"auth={f['auth_context']}" if f.get("auth_context") else "",
+            f"confirm={f['confirm']}" if f.get("confirm") else "",
+            f"check={f['check']}" if f.get("check") else "") if p)
+        if _ctx:
+            L.append(f"  Context: {_ctx}")
         if f.get("cwe") or f.get("cvss"):
             L.append(f"  {f.get('cwe')} | {f.get('owasp')} | {f.get('cvss')} (template estimate)")
         if f.get("remediation"):
@@ -243,6 +298,103 @@ def _render_txt(report: dict) -> str:
     if not report["findings"] and not report.get("observations"):
         L.append("Clean: no findings.")
     return "\n".join(L) + "\n"
+
+
+_SARIF_LEVEL = {"CRITICAL": "error", "MEDIUM": "error", "LOW": "warning",
+                "INFO": "note"}
+
+
+def _sarif_rule_id(title: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (title or "finding").lower()).strip("-")
+    return f"gash/{slug or 'finding'}"
+
+
+def _render_sarif(report: dict) -> dict:
+    """SARIF 2.1.0 for CI ingestion (GitHub code scanning et al).
+
+    Rules come from finding titles; levels map CRITICAL/MEDIUM->error,
+    LOW->warning, INFO->note. Evidence stays truncated (see to_dict).
+    """
+    rules: dict[str, dict] = {}
+    results: list[dict] = []
+    for f in report.get("findings", []) + report.get("observations", []):
+        rid = _sarif_rule_id(f.get("title", ""))
+        if rid not in rules:
+            rules[rid] = {
+                "id": rid,
+                "name": (f.get("title", "") or "")[:120],
+                "shortDescription": {"text": (f.get("detail", "") or "")[:300]},
+                "help": {"text": (f.get("remediation", "") or "")[:500]},
+                "properties": {
+                    "cwe": f.get("cwe", ""), "owasp": f.get("owasp", ""),
+                    "cvss": f.get("cvss", ""), "check": f.get("check", ""),
+                    "confidence": f.get("confidence", ""),
+                    "confirm": f.get("confirm", "")},
+            }
+        results.append({
+            "ruleId": rid,
+            "level": _SARIF_LEVEL.get(f.get("severity", ""), "warning"),
+            "message": {"text": (f.get("detail", "") or "")[:500]},
+            "locations": [{
+                "physicalLocation": {
+                    "artifactLocation": {"uri": f.get("url", "") or ""},
+                    "region": {"snippet": {"text": (f.get("evidence", "")
+                                                    or "")[:300]}},
+                }}],
+        })
+    return {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {"driver": {
+                "name": "GASH",
+                "version": str(report.get("version", "")),
+                "informationUri": "https://github.com/Xmar1881/Gash",
+                "rules": sorted(rules.values(), key=lambda r: r["id"]),
+            }},
+            "results": results,
+            "invocations": [{
+                "executionSuccessful": not bool(report.get("incomplete")),
+                "properties": {
+                    "target": report.get("target", ""),
+                    "incomplete": bool(report.get("incomplete")),
+                    "degraded": bool((report.get("scan_health") or {})
+                                     .get("degraded")),
+                }}],
+        }],
+    }
+
+
+def _render_junit(report: dict) -> str:
+    """JUnit XML: one testsuite, one testcase per finding (failure body).
+
+    Observations become skipped cases. Always valid XML (escaped).
+    """
+    import xml.sax.saxutils as _sax
+    esc = _sax.escape
+    cases: list[str] = []
+    for f in report.get("findings", []):
+        msg = esc(f"[{f.get('severity')}] {f.get('title')} "
+                  f"({f.get('confidence', '?')}) :: {f.get('detail', '')}"[:500])
+        cases.append(
+            f'    <testcase classname="gash.{esc(f.get("check") or "scan")}" '
+            f'name="{esc(f.get("title", "")[:160])}">\n'
+            f'      <failure message="{msg}" type="{esc(f.get("severity", ""))}">'
+            f'{esc(f.get("url", ""))}</failure>\n'
+            f'    </testcase>')
+    for f in report.get("observations", []):
+        cases.append(
+            f'    <testcase classname="gash.observations" '
+            f'name="{esc(f.get("title", "")[:160])}">\n'
+            f'      <skipped message="{esc(f.get("detail", "")[:200])}"/>\n'
+            f'    </testcase>')
+    total = len(cases)
+    fails = len(report.get("findings", []))
+    return (f'<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<testsuite name="gash" tests="{total}" failures="{fails}" '
+            f'skipped="{len(report.get("observations", []))}">\n'
+            + "\n".join(cases)
+            + ("\n" if cases else "") + '</testsuite>\n')
 
 
 def _diff_html(diff: dict) -> str:
@@ -381,7 +533,8 @@ details{{margin-top:4px}}summary{{cursor:pointer;color:#888}}code{{color:#e6c200
 </style></head><body>
 <h1>█ GASH <span style="font-size:.5em">// Vulnerability &amp; Penetration Engine v{esc(report['version'])}</span></h1>
 <div class="card exec"><b>Executive summary:</b> {_exec_summary(report, risk)}</div>
-{"<div class='card exec'><b>WARNING:</b> incomplete scan (rate limit / budget) — partial results, NOT a clean bill.</div>" if report.get("incomplete") else ""}
+ {"<div class='card exec'><b>WARNING:</b> incomplete scan (rate limit / budget) — partial results, NOT a clean bill.</div>" if report.get("incomplete") else ""}
+ {"<div class='card exec'><b>WARNING:</b> SCAN DEGRADED — failed checks mean partial results, NOT a clean bill.</div>" if (report.get("scan_health") or {}).get("degraded") else ""}
 <h2>Scan info</h2>
 <table class="meta-table">
 <tr><td>Target</td><td>{esc(report['target'])}</td></tr>

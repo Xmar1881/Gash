@@ -1,0 +1,16 @@
+# XSS bench targets (needs Docker; NOT used in CI).
+#   docker compose -f bench/docker-compose.yml up -d
+#   py bench/run_bench.py --target all --deep --dom
+# DVWA: http://127.0.0.1:4280 (admin/password, runner pins security/low per case)
+# Juice Shop: http://127.0.0.1:3000
+services:
+  dvwa:
+    image: vulnerables/web-dvwa:latest
+    ports:
+      - "4280:80"
+    environment:
+      MYSQL_ROOT_PASSWORD: dvwa
+  juice:
+    image: bkimminich/juice-shop:latest
+    ports:
+      - "3000:3000"

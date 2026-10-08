@@ -46,7 +46,8 @@ def build_parser() -> argparse.ArgumentParser:
         "-o", "--output",
         metavar="FILE",
         default=None,
-        help="Report file: report.json / report.html / report.txt (by extension)",
+        help="Report file: report.json / report.html / report.txt / "
+             "report.sarif / report.xml (by extension)",
     )
     p.add_argument(
         "--output-dir",
@@ -235,18 +236,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="List registered checks and exit",
     )
     p.add_argument(
+        "--profile",
+        metavar="quick|balanced|thorough",
+        default="balanced",
+        help="Coverage profile: quick (4 pages), balanced (8, default) or "
+             "thorough (30 pages, deeper crawl, larger XSS pool). Explicit "
+             "--max-pages/--depth/--max-xss-urls override the profile",
+    )
+    p.add_argument(
         "--max-pages",
         type=int,
-        default=8,
+        default=None,
         metavar="N",
-        help="Crawler page limit (default: 8)",
+        help="Crawler page limit (default: profile preset)",
     )
     p.add_argument(
         "--depth",
         type=int,
-        default=2,
+        default=None,
         metavar="N",
-        help="Crawler depth limit (default: 2)",
+        help="Crawler depth limit (default: profile preset)",
     )
     p.add_argument(
         "--no-crawl",
@@ -257,6 +266,34 @@ def build_parser() -> argparse.ArgumentParser:
         "--dom",
         action="store_true",
         help="Headless DOM XSS verification (slow; needs Playwright+Chromium)",
+    )
+    p.add_argument(
+        "--spa",
+        action="store_true",
+        help="SPA runtime discovery: headless read-only pass for JS routes, "
+             "forms and API endpoints (needs Playwright+Chromium)",
+    )
+    p.add_argument(
+        "--browser-discovery",
+        action="store_true",
+        help="Full browser traffic profile: request/WebSocket/SSE capture "
+             "(method + URL + content-type) plus client-side route tracking; "
+             "feeds the scan pool (needs Playwright+Chromium)",
+    )
+    p.add_argument(
+        "--local",
+        action="store_true",
+        help="Local machine audit profile: read-only enumeration of "
+             "listening services, loopback web panels, secret file "
+             "permissions and firewall state (auto-on for "
+             "localhost/127.0.0.1/::1 targets)",
+    )
+    p.add_argument(
+        "--max-xss-urls",
+        type=int,
+        default=None,
+        metavar="N",
+        help="XSS probe pool limit after prioritization (default: profile preset)",
     )
     p.add_argument(
         "-v", "--verbose",

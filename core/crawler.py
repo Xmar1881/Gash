@@ -12,21 +12,24 @@ from collections import deque
 from urllib.parse import urljoin, urlparse
 
 from core.scanner import _get, HREF_RE, FORM_RE, ACTION_RE, INPUT_RE
+from core.discovery import (canonicalize_url, extract_js_endpoints,
+                            concretize_rest_path, extract_html_refs)
 
 SKIP_EXT = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".css",
             ".woff", ".woff2", ".ttf", ".mp4", ".mp3", ".pdf", ".zip")
 SKIP_SCHEME = ("mailto:", "javascript:", "tel:", "data:")
-JS_EP_RE = None  # lazy compile (asagida)
 
 
-def _js_ep_re():
-    global JS_EP_RE
-    if JS_EP_RE is None:
-        import re
-        JS_EP_RE = re.compile(
-            r'''(?:fetch|axios\.(?:get|post)|url|endpoint|apiUrl)\s*\(\s*["']([^"']+)["']'''
-            r'''|["']((?:/api/|/v\d+/|/graphql)[\w\-/]{1,60})["']''', re.I)
-    return JS_EP_RE
+def _mark_seen(seen: set, url: str) -> bool:
+    """Canonical dedupe: ?b=1&a=2 and ?a=2&b=1 queue once. True if new."""
+    try:
+        key = canonicalize_url(url)
+    except Exception:
+        key = url
+    if key in seen:
+        return False
+    seen.add(key)
+    return True
 
 
 def _same_host(url: str, base: str) -> bool:
@@ -61,8 +64,8 @@ def _enqueue_links(body: str, base: str, seen: set, queue, depth: int,
     from urllib.parse import urlencode
     for m in HREF_RE.findall(body or ""):
         u = _clean(m, base)
-        if u and u not in seen and len(pages) + len(queue) < max_pages + 4:
-            seen.add(u)
+        if u and len(pages) + len(queue) < max_pages + 4 \
+                and _mark_seen(seen, u):
             queue.append((u, depth))
     for m in FORM_RE.finditer(body or ""):
         am = ACTION_RE.search(m.group(0))
@@ -70,8 +73,8 @@ def _enqueue_links(body: str, base: str, seen: set, queue, depth: int,
             continue
         names = INPUT_RE.findall(m.group(1)) or ["q"]
         u = _clean((am.group(1) or "/") + "?" + urlencode({names[0]: "gashtest"}), base)
-        if u and u not in seen and len(pages) + len(queue) < max_pages + 4:
-            seen.add(u)
+        if u and len(pages) + len(queue) < max_pages + 4 \
+                and _mark_seen(seen, u):
             queue.append((u, depth))
 
 
@@ -102,13 +105,18 @@ def _sitemap_urls(session, base: str, timeout: int) -> list[str]:
 
 def _js_endpoints(session, body: str, base: str, timeout: int,
                   budget: list) -> list[str]:
-    """Same-host <script src=.js> files (max 5, max 200KB) -> API/endpoint paths."""
+    """Same-host <script src=.js> files (budgeted, max 200KB each).
+
+    Endpoint shapes come from the unified pipeline (fetch/axios/XHR,
+    WebSocket/EventSource, API clients — not just /api/). budget[0] is
+    the remaining file count, decremented per fetch.
+    """
     import re
     out = []
     if not budget or budget[0] <= 0:
         return out
     srcs = [m for m in re.findall(r'<script[^>]*src=["\']([^"\']+)["\']', body or "", re.I)
-            if _same_host(urljoin(base + "/", m), base)][:5]
+            if _same_host(urljoin(base + "/", m), base)][:budget[0]]
     from urllib.parse import urljoin as _uj
     for src in srcs:
         if budget[0] <= 0:
@@ -117,11 +125,33 @@ def _js_endpoints(session, body: str, base: str, timeout: int,
         got = _get(session, _uj(base + "/", src), timeout)
         if not got or len(got[1] or "") > 200_000:
             continue
-        for a, b in _js_ep_re().findall(got[1] or ""):
-            u = _clean(a or b, base)
-            if u and u not in out:
-                out.append(u)
+        for u, _kind in extract_js_endpoints(got[1] or "", base):
+            uu = _clean(u, base)
+            if uu and uu not in out:
+                out.append(uu)
             if len(out) >= 15:
+                break
+    return out
+
+
+def _json_config_routes(session, body: str, base: str, timeout: int,
+                        max_files: int = 2) -> list[str]:
+    """Same-host *.json refs (config/manifest/asset lists) -> routes inside.
+
+    Bounded: max_files fetches, 100KB each. Malformed JSON is fine —
+    endpoint shapes are regex-mined from the raw text.
+    """
+    refs = extract_html_refs(body, base).get("configs", [])[:max_files]
+    out: list[str] = []
+    for ref in refs:
+        got = _get(session, ref, timeout)
+        if not got or len(got[1] or "") > 100_000:
+            continue
+        for u, _kind in extract_js_endpoints(got[1] or "", base):
+            uu = _clean(u, base)
+            if uu and uu not in out:
+                out.append(uu)
+            if len(out) >= 10:
                 break
     return out
 
@@ -130,58 +160,72 @@ SWAGGER_CANDIDATES = ["/swagger.json", "/openapi.json", "/api-docs",
                       "/api/docs", "/v3/api-docs", "/swagger/v1/swagger.json"]
 
 
-def _swagger_paths(session, base: str, timeout: int) -> list[str]:
-    """Swagger/OpenAPI bulunursa path'leri cikar ({id} -> 1). Max ~20."""
+def fetch_swagger_spec(session, base: str, timeout: int) -> dict | None:
+    """First valid Swagger/OpenAPI document, or None. Bounded fetches."""
     import json as _json
-    import re as _re
-    out = []
     for cand in SWAGGER_CANDIDATES:
         got = _get(session, base + cand, timeout)
         if not got or got[0] != 200 or not (got[1] or "").lstrip().startswith("{"):
             continue
         try:
-            paths = _json.loads(got[1]).get("paths", {})
+            spec = _json.loads(got[1])
         except Exception:
             continue
-        for p in list(paths)[:20]:
-            p = _re.sub(r"\{[^}]*\}", "1", p)
-            u = _clean(p, base)
-            if u and u not in out:
-                out.append(u)
-            if len(out) >= 20:
-                break
-        if out:
-            break  # ilk bulunan spec yeterli
+        if isinstance(spec, dict) and isinstance(spec.get("paths"), dict):
+            return spec
+    return None
+
+
+def _swagger_paths(session, base: str, timeout: int,
+                   limit: int = 20) -> list[str]:
+    """Swagger/OpenAPI path'leri cikar ({id}/:id/[id] -> 1). Capped."""
+    spec = fetch_swagger_spec(session, base, timeout)
+    if not spec:
+        return []
+    out = []
+    for p in list(spec.get("paths", {}))[:limit]:
+        concrete, _params = concretize_rest_path(p)
+        u = _clean(concrete, base)
+        if u and u not in out:
+            out.append(u)
+        if len(out) >= limit:
+            break
     return out
 
 
 def crawl(session, base: str, html: str, timeout: int,
           max_pages: int = 8, depth: int = 2,
-          scope_hosts: set[str] | None = None) -> dict[str, str]:
+          scope_hosts: set[str] | None = None,
+          js_files: int = 5, swagger_paths: int = 20) -> dict[str, str]:
     """{url: html}. Base always included. BFS + sitemap + JS, capped.
 
     When scope_hosts is set, the final URL's host must be listed or the
     page stays out of the pool (blocks redirecting out of scope).
+    js_files/swagger_paths scale with the coverage profile.
     """
     pages: dict[str, str] = {base + "/": html or ""}
     if max_pages <= 1 or not html:
         return pages
-    seen = {base + "/"}
+    seen = {canonicalize_url(base + "/")}
     queue: deque[tuple[str, int]] = deque()
+
+    def _offer(u: str | None, d: int) -> None:
+        if u and len(pages) + len(queue) < max_pages + 4 \
+                and _mark_seen(seen, u):
+            queue.append((u, d))
+
     _enqueue_links(html, base, seen, queue, 1, max_pages, pages)
     for u in _sitemap_urls(session, base, timeout):
-        if u not in seen and len(pages) + len(queue) < max_pages + 4:
-            seen.add(u)
-            queue.append((u, 1))
-    for u in _swagger_paths(session, base, timeout):
-        if u not in seen and len(pages) + len(queue) < max_pages + 4:
-            seen.add(u)
-            queue.append((u, 1))
-    js_budget = [5]
+        _offer(u, 1)
+    for u in _swagger_paths(session, base, timeout, limit=swagger_paths):
+        _offer(u, 1)
+    for u, _kind in extract_js_endpoints(html, base):  # inline, no fetch
+        _offer(_clean(u, base), 1)
+    js_budget = [max(0, js_files)]
     for u in _js_endpoints(session, html, base, timeout, js_budget):
-        if u not in seen and len(pages) + len(queue) < max_pages + 4:
-            seen.add(u)
-            queue.append((u, 1))
+        _offer(u, 1)
+    for u in _json_config_routes(session, html, base, timeout):
+        _offer(u, 1)
     from core.spinner import Spinner
     sp = Spinner(f"  [*] Crawling {base}...").start()
     try:
@@ -207,9 +251,14 @@ def crawl(session, base: str, html: str, timeout: int,
             if d >= depth or len(pages) >= max_pages:
                 continue
             _enqueue_links(body, base, seen, queue, d + 1, max_pages, pages)
+            for u, _kind in extract_js_endpoints(body, base):  # inline
+                uu = _clean(u, base)
+                if uu and len(pages) + len(queue) < max_pages + 4 \
+                        and _mark_seen(seen, uu):
+                    queue.append((uu, d + 1))
             for u in _js_endpoints(session, body, base, timeout, js_budget):
-                if u not in seen and len(pages) + len(queue) < max_pages + 4:
-                    seen.add(u)
+                if u and len(pages) + len(queue) < max_pages + 4 \
+                        and _mark_seen(seen, u):
                     queue.append((u, d + 1))
     finally:
         sp.stop()

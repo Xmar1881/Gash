@@ -590,12 +590,20 @@ GRAPHQL_PATHS = ["/graphql", "/api/graphql", "/v1/graphql",
                  "/query", "/gql"]
 
 
-@register_check("graphql-introspection", "GraphQL introspection left on", order=11)
+@register_check("graphql-introspection", "GraphQL introspection + schema analysis", order=11)
 def test_graphql_introspection(session, base: str, pages: dict, timeout: int,
-                               verbose: bool = False) -> list[Finding]:
-    """Asks for __schema once per endpoint. A full schema dump tells an
-    attacker every type, query and mutation available."""
+                               verbose: bool = False,
+                               session_b=None) -> list[Finding]:
+    """Asks for __schema once per endpoint, then reads the schema like an
+    attacker: mutation surface (mapped, never executed), sensitive-field
+    exposure probes (read-only, capped) and nested object authorization
+    with a second session. GET ?query= fallback when POST is closed."""
     from urllib.parse import urljoin
+    from core.graphql import (parse_schema, sensitive_queries,
+                              build_selection, build_by_id_query,
+                              send_query, response_data,
+                              has_sensitive_data)
+    from core.authz import same_object
     cands = [base.rstrip("/") + p for p in GRAPHQL_PATHS]
     try:
         for html in (pages or {}).values():
@@ -607,6 +615,7 @@ def test_graphql_introspection(session, base: str, pages: dict, timeout: int,
     except Exception:
         pass
     out: list[Finding] = []
+    endpoint, schema = "", {}
     for url in cands[:4]:
         try:
             pace()
@@ -622,6 +631,7 @@ def test_graphql_introspection(session, base: str, pages: dict, timeout: int,
         except Exception:
             continue
         if ok:
+            endpoint = url
             out.append(Finding(
                 title="GraphQL introspection enabled", severity="LOW",
                 url=url,
@@ -632,8 +642,111 @@ def test_graphql_introspection(session, base: str, pages: dict, timeout: int,
             ))
             if verbose:
                 print(warn(f"    [!] GraphQL introspection: {url}"))
+            try:
+                import json as _json
+                schema = _json.loads(body).get("data", {}).get(
+                    "__schema", {}) or {}
+                schema = {"__schema": schema}
+            except Exception:
+                schema = {}
             break
-    return out
+    if not endpoint:
+        # POST closed but GET query= open is the same bug over GET.
+        for url in cands[:2]:
+            got = _get(session, url + "?query={__typename}", timeout)
+            if got and got[0] == 200 and "__Schema" in (got[1] or ""):
+                return [Finding(
+                    title="GraphQL introspection enabled", severity="LOW",
+                    url=url,
+                    detail="Introspection answers over GET ?query=; "
+                           "disable it in production",
+                    evidence="__typename",
+                    confidence="High",
+                )]
+        return out
+    try:
+        parsed = parse_schema(schema)
+    except Exception:
+        return out
+    muts = parsed.get("mutations", [])
+    if muts:
+        names = ", ".join(m.get("name", "") for m in muts[:5])
+        out.append(Finding(
+            title="GraphQL mutations exposed", severity="INFO",
+            url=endpoint,
+            detail=f"Schema lists {len(muts)} mutation(s) ({names}); mapped "
+                   "only, never executed — review their input validation "
+                   "and auth manually",
+            evidence=names[:120],
+            confidence="High",
+        ))
+        if verbose:
+            print(warn(f"    [!] GraphQL mutations: {names[:60]}"))
+    for q in sensitive_queries(parsed)[:2]:
+        sel = build_selection(parsed, q)
+        if not sel:
+            continue
+        r = send_query(session, endpoint, timeout, sel)
+        if not r:
+            continue
+        data = response_data(r)
+        hit = has_sensitive_data(data or {})
+        if data and hit:
+            out.append(Finding(
+                title="Exposed sensitive GraphQL field", severity="MEDIUM",
+                url=endpoint,
+                detail=f"Read-only query '{sel[:60]}' returns '{hit}' "
+                       "without visible auth; verify field-level auth",
+                evidence=hit[:80],
+                confidence="Medium",
+            ))
+            if verbose:
+                print(warn(f"    [!] GraphQL exposure: {hit}"))
+            break
+    if session_b is not None:
+        for q in parsed.get("queries", [])[:4]:
+            sel = build_by_id_query(parsed, q, "1")
+            if not sel:
+                continue
+            r1 = send_query(session, endpoint, timeout, sel)
+            d1 = response_data(r1) if r1 else None
+            if not d1:
+                continue
+            try:
+                pace()
+                rb = session_b.post(endpoint, timeout=timeout,
+                                    json={"query": sel})
+                db = response_data(rb)
+            except ScanBudgetExceeded:
+                raise
+            except Exception:
+                continue
+            if db and same_object(_dump(d1), _dump(db)):
+                out.append(Finding(
+                    title="Confirmed IDOR / BOLA (cross-session)",
+                    severity="CRITICAL",
+                    url=endpoint,
+                    detail=f"GraphQL object '{q.get('name')}' (canonical "
+                           "content match) readable by a second user; "
+                           "object auth is missing",
+                    evidence=q.get("name", "")[:60],
+                    confidence="High",
+                    method="POST", param=q.get("name", "")[:60],
+                    location="body", auth_context="user-b",
+                    confirm="cross-session",))
+                if verbose:
+                    print(warn(f"    [!] GraphQL IDOR: {q.get('name')}"))
+                break
+    return out[:5]
+
+
+def _dump(data: dict) -> str:
+    """Canonical JSON dump for cross-session object comparison."""
+    try:
+        import json as _json
+        return _json.dumps(data, sort_keys=True)
+    except Exception:
+        return ""
 
 
 # ---------- 9. Host header reflection ----------
@@ -1311,3 +1424,212 @@ def test_mass_assignment(pages: dict, base: str,
             if len(out) >= 2:
                 return out
     return out
+
+
+# ---------- 20. TLS audit ----------
+
+TLS_EXPIRY_WARN_DAYS = 30
+WEAK_CIPHER_HINTS = ("rc4", "des", "3des", "md5", "null", "anon",
+                     "export", "idea", "seed", "camellia-128")
+
+
+def _cert_names(cert: dict) -> tuple[list[str], list[str]]:
+    """(sans, cns) from a getpeercert() dict. Never raises."""
+    sans: list[str] = []
+    cns: list[str] = []
+    try:
+        for typ, val in (cert or {}).get("subjectAltName", []) or []:
+            if typ == "DNS" and val:
+                sans.append(str(val).lower())
+    except Exception:
+        pass
+    try:
+        for rdn in (cert or {}).get("subject", []) or []:
+            for key, val in rdn or []:
+                if str(key).lower() in ("commonname", "cn") and val:
+                    cns.append(str(val).lower())
+    except Exception:
+        pass
+    return sans, cns
+
+
+def _hostname_matches(cert: dict, host: str) -> bool:
+    """SAN-first hostname check with single-level wildcard support."""
+    host = (host or "").lower().strip(".")
+    if not host:
+        return False
+    sans, cns = _cert_names(cert)
+    for pattern in sans + cns:
+        p = pattern.strip(".")
+        if p == host:
+            return True
+        if p.startswith("*.") and host.count(".") == p.count("."):
+            if host.split(".", 1)[1] == p[2:]:
+                return True
+    return False
+
+
+def _cert_times(cert: dict) -> tuple[float | None, float | None]:
+    """(not_before, not_after) epoch seconds; None when unparsable."""
+    import ssl as _ssl
+    out = []
+    for key in ("notBefore", "notAfter"):
+        try:
+            out.append(_ssl.cert_time_to_seconds(cert.get(key, "")))
+        except Exception:
+            out.append(None)
+    return out[0], out[1]
+
+
+def _is_self_signed(cert: dict) -> bool:
+    try:
+        return bool(cert) and cert.get("issuer") == cert.get("subject")
+    except Exception:
+        return False
+
+
+def _cipher_is_weak(cipher_name: str) -> bool:
+    low = (cipher_name or "").lower().replace("_", "-")
+    return any(h in low for h in WEAK_CIPHER_HINTS)
+
+
+def _tls_handshake(host: str, port: int, timeout: int,
+                   tls_version=None) -> dict | None:
+    """One TLS handshake -> info dict. None on network failure (quiet).
+
+    Programming errors propagate (registry records them); socket-level
+    failures return None so odd hosts degrade instead of erroring.
+    """
+    import socket as _socket
+    import ssl as _ssl
+    ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = _ssl.CERT_NONE
+    if tls_version is not None:
+        ctx.minimum_version = tls_version
+        ctx.maximum_version = tls_version
+    try:
+        raw = _socket.create_connection((host, port), timeout=timeout)
+    except Exception:
+        return None
+    try:
+        tls = ctx.wrap_socket(raw, server_hostname=host)
+    except Exception:
+        try:
+            raw.close()
+        except Exception:
+            pass
+        return None
+    try:
+        info = {"version": "", "cipher": "", "alpn": "", "cert": {}}
+        try:
+            info["version"] = str(tls.version() or "")
+        except Exception:
+            pass
+        try:
+            cipher = tls.cipher() or ()
+            info["cipher"] = str(cipher[0] if cipher else "")
+        except Exception:
+            pass
+        try:
+            info["alpn"] = str(tls.selected_alpn_protocol() or "")
+        except Exception:
+            pass
+        try:
+            info["cert"] = tls.getpeercert() or {}
+        except Exception:
+            pass
+        return info
+    finally:
+        try:
+            tls.close()
+        except Exception:
+            pass
+
+
+@register_check("tls-audit", "TLS certificate + protocol audit", order=11)
+def test_tls_audit(session, base: str, timeout: int,
+                   verbose: bool = False) -> list[Finding]:
+    """Read-only TLS handshakes (≤3): cert validity/hostname/self-signed,
+    weak protocol offers (1.0/1.1), negotiated cipher. Plain-HTTP targets
+    skip quietly. Chain-of-trust validation is out of scope (private-CA
+    labs would false-positive) and reported as such nowhere."""
+    import ssl as _ssl
+    import time as _time
+    try:
+        parts = urlparse(base)
+        host = (parts.hostname or "").lower()
+        scheme = (parts.scheme or "").lower()
+        port = parts.port or 443
+    except Exception:
+        return []
+    if scheme != "https" or not host:
+        return []
+    main = _tls_handshake(host, port, timeout)
+    if not main:
+        return []
+    cert = main.get("cert") or {}
+    out: list[Finding] = []
+    url = f"https://{host}:{port}" if port != 443 else f"https://{host}"
+    ver, cipher = main.get("version", ""), main.get("cipher", "")
+
+    def _note(title: str, severity: str, detail: str, evidence: str,
+              confidence: str) -> None:
+        out.append(Finding(title=title, severity=severity, url=url,
+                           detail=detail, evidence=evidence[:120],
+                           confidence=confidence, method="GET",
+                           location="path", confirm="handshake"))
+        if verbose:
+            print(warn(f"    [!] TLS: {title} ({host})"))
+
+    if cert:
+        nb, na = _cert_times(cert)
+        now = _time.time()
+        if na is not None and na < now:
+            _note("TLS certificate expired", "CRITICAL",
+                  "Serving host presents an expired certificate; clients "
+                  "cannot trust this endpoint", "expired", "High")
+        elif na is not None and na - now < TLS_EXPIRY_WARN_DAYS * 86400:
+            _note("TLS certificate expires soon", "LOW",
+                  "Certificate expires in under "
+                  f"{TLS_EXPIRY_WARN_DAYS} days; rotate before outage",
+                  "expiry<30d", "High")
+        if nb is not None and nb > now:
+            _note("TLS certificate not yet valid", "MEDIUM",
+                  "Certificate validity starts in the future (clock skew "
+                  "or premature deployment)", "notBefore-future", "High")
+        if not _hostname_matches(cert, host):
+            sans, cns = _cert_names(cert)
+            _note("TLS hostname mismatch", "CRITICAL",
+                  f"Certificate names ({', '.join((sans + cns)[:3]) or 'none'}) "
+                  f"do not cover {host}; MITM-grade misconfiguration",
+                  ",".join((sans + cns)[:2]) or "no-san", "High")
+        if _is_self_signed(cert):
+            scope = "lab/loopback" if host in ("localhost", "127.0.0.1",
+                                               "::1") or host.endswith(".local") \
+                else "public-facing"
+            _note("Self-signed TLS certificate", "MEDIUM",
+                  f"No chain to a trusted CA ({scope}); clients cannot "
+                  "verify identity", "self-signed", "High")
+    # weak protocol offers: explicit handshake per legacy version.
+    weak = []
+    for label, ver_enum in (("TLS 1.0", getattr(_ssl.TLSVersion, "TLSv1", None)),
+                            ("TLS 1.1", getattr(_ssl.TLSVersion, "TLSv1_1", None))):
+        if ver_enum is None:
+            continue
+        try:
+            if _tls_handshake(host, port, timeout, ver_enum):
+                weak.append(label)
+        except Exception:
+            continue
+    if weak:
+        _note("Weak TLS protocol enabled", "MEDIUM",
+              f"Server still negotiates {', '.join(weak)} (negotiated best: "
+              f"{ver or '?'}); disable below TLS 1.2",
+              ",".join(weak), "High")
+    if cipher and _cipher_is_weak(cipher):
+        _note("Weak TLS cipher negotiated", "MEDIUM",
+              f"Handshake settled on {cipher}; prefer AEAD suites "
+              "(AES-GCM/ChaCha20) and drop legacy ciphers",
+              cipher, "High")
+    return out[:5]

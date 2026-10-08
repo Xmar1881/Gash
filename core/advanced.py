@@ -15,6 +15,7 @@ from core.scanner import (
     Finding, _get, _post, _inject, _raw_reflected, SQL_ERRORS, UPLOAD_PATHS, FILE_INPUT_HINT,
     FORM_RE, ACTION_RE, INPUT_RE, _post_form_targets,
 )
+from core.xss_context import classify_reflection
 from core.net import ScanBudgetExceeded
 from core.registry import check as register_check
 
@@ -77,16 +78,10 @@ def _bodies_differ(b1: str | None, b2: str | None) -> bool:
     Length alone is weak evidence (two public product pages always differ).
     The digit-normalized similarity must also drop — otherwise the only
     difference is the echoed id, which proves nothing.
+    Delegates to the shared differential engine (no local thresholds).
     """
-    import difflib
-    l1, l2 = len(b1 or ""), len(b2 or "")
-    if abs(l1 - l2) <= max(5, l1 // 50):
-        return False
-    n1 = re.sub(r"\d+", "#", (b1 or "")[:2000])
-    n2 = re.sub(r"\d+", "#", (b2 or "")[:2000])
-    if not n1.strip() or not n2.strip():
-        return False
-    return difflib.SequenceMatcher(None, n1, n2).ratio() < 0.98
+    from core.diff import bodies_differ
+    return bodies_differ(b1, b2)
 
 PP_PAYLOADS = ["__proto__[gashpp]=1", "constructor[prototype][gashpp]=1"]
 
@@ -535,18 +530,28 @@ def test_ssrf(session, urls: list[str], timeout: int,
 def test_idor(session, pages: dict, base: str, timeout: int,
               verbose: bool = False, session_b=None) -> list[Finding]:
     from urllib.parse import urljoin
+    from core.authz import extract_refs_from_url, sibling_url
     cands = []
     for html in (pages or {}).values():
         for m in re.findall(r'href=["\']([^"\']+)["\']', html or "", re.I):
             full = urljoin(base + "/", m)
-            mm = IDOR_RE.search(full)
-            if mm and urlparse(full).hostname == urlparse(base).hostname:
-                cands.append((full, mm.group(1), int(mm.group(2)), mm.group(3)))
+            try:
+                same = urlparse(full).hostname == urlparse(base).hostname
+            except Exception:
+                same = False
+            if not same:
+                continue
+            for ref in extract_refs_from_url(full):
+                # enumerable path ints under API routes only (page/2 style
+                # pagination elsewhere is not an object reference).
+                if ref.kind == "int" and ref.location == "path" \
+                        and "/api/" in (urlparse(full).path or ""):
+                    cands.append((full, ref))
     out: list[Finding] = []
-    for full, prefix, nid, suffix in list(dict.fromkeys(cands))[:5]:
-        pp = urlparse(full)
-        from urllib.parse import urlunparse
-        sib = urlunparse((pp.scheme, pp.netloc, f"{prefix}{nid + 1}{suffix}", "", "", ""))
+    for full, ref in list(dict.fromkeys(cands))[:5]:
+        sib = sibling_url(full, ref)
+        if not sib:
+            continue
         g1, g2 = _get(session, full, timeout), _get(session, sib, timeout)
         if not g1 or not g2:
             continue
@@ -555,22 +560,28 @@ def test_idor(session, pages: dict, base: str, timeout: int,
         if g1[0] == 200 and g2[0] == 200:
             l1, l2 = len(g1[1] or ""), len(g2[1] or "")
             if _bodies_differ(g1[1], g2[1]):
+                try:
+                    new_id = sib.rsplit("/", 1)[-1].split("?")[0][:12]
+                except Exception:
+                    new_id = "N+1"
                 if _cross_session_confirm(session_b, sib, g2[1], timeout):
                     out.append(Finding(
                         title="Confirmed IDOR / BOLA (cross-session)",
                         severity="CRITICAL",
                         url=sib,
-                        detail=f"/{nid} -> /{nid + 1} readable by a second user "
+                        detail=f"/{ref.value} -> /{new_id} readable by a second user "
                                f"({l1}B vs {l2}B); object auth is missing",
                         evidence=f"{l1}B vs {l2}B",
-                        confidence="High",))
+                        confidence="High",
+                        method="GET", param=ref.value, location="path",
+                        confirm="cross-session",))
                     if verbose:
                         print(warn(f"    [!] IDOR confirmed: {sib}"))
                     continue
                 out.append(Finding(
                     title="Possible IDOR / BOLA (single session)", severity="MEDIUM",
                     url=sib,
-                    detail=f"/{nid} -> /{nid + 1} returned different data ({l1}B vs {l2}B), no auth; "
+                    detail=f"/{ref.value} -> /{new_id} returned different data ({l1}B vs {l2}B), no auth; "
                            "measured in one session, confirm with two users",
                     evidence=f"{l1}B vs {l2}B",
                     confidence="Low",))
@@ -583,18 +594,20 @@ def _cross_session_confirm(session_b, sib: str, sib_body: str | None,
                            timeout: int) -> bool:
     """Does a second user see the same object? True = access control missing.
 
-    A 401/403/login for user B means the object IS protected — that keeps
-    the single-session heuristic untouched instead of upgrading it.
+    Canonical-JSON-first comparison (keys/values/ownership exact),
+    legacy length rule as the HTML fallback. A 401/403/login for user B
+    means the object IS protected — that keeps the single-session
+    heuristic untouched instead of upgrading it.
     """
+    from core.authz import same_object
     if session_b is None:
         return False
     g = _get(session_b, sib, timeout)
     if not g or g[0] != 200:
         return False
-    lb, l2 = len(g[1] or ""), len(sib_body or "")
-    if max(lb, l2) == 0:
+    if not (g[1] or "").strip() and not (sib_body or "").strip():
         return False
-    return abs(lb - l2) <= max(30, l2 // 5)
+    return same_object(g[1], sib_body)
 
 
 # ---------- 5. Prototype Pollution surface ----------
@@ -631,12 +644,18 @@ def test_proto_pollution(session, urls: list[str], timeout: int,
 
 # ---------- 6. Stored + Blind XSS ----------
 
-@register_check("stored-xss", "Stored XSS canary (blind needs --blind-callback)", order=10)
+@register_check("stored-xss", "Stored XSS canary + second-order render check", order=10)
 def test_stored_xss(session, pages: dict, base: str, timeout: int,
                     verbose: bool = False, deep: bool = True,
                     blind_callback: str | None = None,
                     oob=None) -> list[Finding]:
-    """GET formlari her zaman; POST formlar deep modda. Benign canary."""
+    """GET formlari her zaman; POST formlar deep modda. Benign canary.
+
+    P1: persistence != XSS. Field-unique canary placed, render locations
+    scanned (action + crawled pages = second-order), then a breaker probe
+    decides: persistence-only -> LOW unconfirmed; breaker raw in render
+    context -> Possible Stored XSS (browser proof arrives in P2).
+    """
     forms = []
     for purl, html in (pages or {}).items():
         for f in _forms(html, purl.rsplit("/", 1)[0] if "/" in purl else base):
@@ -645,7 +664,7 @@ def test_stored_xss(session, pages: dict, base: str, timeout: int,
     forms = forms[:8]
     if not forms:
         return []
-    canary = f"gashstored{int(time.time()) % 100000}"
+    canary_base = f"gashstored{int(time.time()) % 100000}"
     out: list[Finding] = []
     for f in forms:
         fields = f.get("fields", {})
@@ -660,7 +679,10 @@ def test_stored_xss(session, pages: dict, base: str, timeout: int,
                     if fields.get(n, "text") not in UNFUZZABLE_TYPES]
         if not fuzzable:
             continue
-        data = {i: canary for i in fuzzable}
+        # field-unique canaries: persistence tells us WHICH input renders WHERE
+        canaries = {n: f"{canary_base}_{re.sub(r'[^a-z0-9]', '', (n or '').lower())[:12] or 'f'}"
+                    for n in fuzzable}
+        data = dict(canaries)
         try:
             if f["method"] == "POST":
                 if not deep:
@@ -675,24 +697,77 @@ def test_stored_xss(session, pages: dict, base: str, timeout: int,
         except Exception:
             continue
         # persistence: re-fetch the action page + crawled pages
-        # (cache-buster, so proxies/caches can't serve a stale copy)
+        # (cache-buster, so proxies/caches can't serve a stale copy).
+        # Other render URLs = second-order: input at A, output at B.
         import random
         cb = f"gashcb={random.randint(10000, 99999)}"
         checks = list(dict.fromkeys([f["action"]] + list((pages or {}).keys())[:8]))
         checks = [c + ("&" if "?" in c else "?") + cb for c in checks]
+        hits: list[tuple[str, str, str]] = []  # (render_url, field, body)
         for check in checks:
             got = _get(session, check, timeout)
-            if got and canary in (got[1] or ""):
+            if not got:
+                continue
+            body = got[1] or ""
+            for field, canary in canaries.items():
+                if canary in body:
+                    hits.append((check, field, body))
+                    break
+        if hits:
+            render_url, hit_field, _ = hits[0]
+            probe_canary = canaries[hit_field]
+            probe_payload = f'{probe_canary}"><svg onload=alert(1)>'
+            probe_data = dict(canaries)
+            probe_data[hit_field] = probe_payload
+            try:
+                if f["method"] == "POST":
+                    _post(session, f["action"], timeout, data=probe_data)
+                else:
+                    from urllib.parse import urlencode
+                    sep = "&" if "?" in f["action"] else "?"
+                    _get(session, f["action"] + sep + urlencode(probe_data),
+                         timeout)
+            except ScanBudgetExceeded:
+                raise
+            except Exception:
+                pass
+            confirmed: dict | None = None
+            confirmed_at = ""
+            loc = "body" if f["method"] == "POST" else "query"
+            for recheck in [render_url] + [c for c, _, _ in hits[1:3]]:
+                got2 = _get(session, recheck, timeout)
+                if not got2:
+                    continue
+                v = classify_reflection(got2[1], probe_canary, probe_payload)
+                if v["status"] == "breakout":
+                    confirmed, confirmed_at = v, recheck
+                    break
+            if confirmed is not None:
                 out.append(Finding(
-                    title="Possible Stored XSS", severity="CRITICAL",
+                    title="Possible Stored XSS", severity="MEDIUM",
                     url=f["action"],
-                    detail=f"Canary '{canary}' persisted on the page "
-                           f"(form: {', '.join(f['inputs'][:3])})",
-                    evidence=canary,
-                    confidence="High",))
+                    detail=f"Canary for field '{hit_field}' persists and "
+                           f"breaker survives raw in '{confirmed['context']}' "
+                           f"context at {confirmed_at} "
+                           f"({confirmed['evidence']})",
+                    evidence=probe_canary,
+                    confidence="Medium",
+                    method=f["method"], param=hit_field, location=loc,
+                    confirm="breakout",))
                 if verbose:
-                    print(warn(f"    [!] Stored XSS: {f['action']}"))
-                break
+                    print(warn(f"    [!] Stored XSS (breakout): {f['action']}"))
+            else:
+                out.append(Finding(
+                    title="Stored reflection (unconfirmed)", severity="LOW",
+                    url=f["action"],
+                    detail=f"Canary for field '{hit_field}' persists at "
+                           f"{render_url} but breaker chars were not "
+                           "observed; not proven executable",
+                    evidence=probe_canary,
+                    confidence="Low",
+                    method=f["method"], param=hit_field, location=loc,))
+                if verbose:
+                    print(warn(f"    [-] Stored reflection: {f['action']}"))
         if (blind_callback or oob is not None) and sum(
                 1 for x in out if x.title.startswith("Blind XSS canary")) < 2:
             # Blind XSS: only place a real canary when someone listens.
@@ -785,11 +860,8 @@ def _login_fields(chunk: str) -> tuple[dict[str, str], dict[str, str]]:
 
 def _scrub_hidden(body: str, hidden_vals: dict[str, str]) -> str:
     """Blank rotating CSRF tokens so length comparisons stay meaningful."""
-    out = body or ""
-    for v in (hidden_vals or {}).values():
-        if v and len(v) >= 8:
-            out = out.replace(v, "")
-    return out
+    from core.diff import scrub_tokens
+    return scrub_tokens(body, (hidden_vals or {}).values())
 
 
 @register_check("sqli-login", "Login form SQLi auth-bypass differential", order=10, deep_only=True)
@@ -1065,28 +1137,24 @@ def test_waf_detect(session, headers: dict, base: str,
 
 # ---------- 10. IDOR query-param (?id=10 -> 11) ----------
 
-@register_check("idor-param", "IDOR query parameter (id/user_id)", order=10)
+@register_check("idor-param", "IDOR query parameter (id/user_id/uuid)", order=10)
 def test_idor_param(session, urls: list[str], timeout: int,
                     verbose: bool = False, threads: int = 10,
                     session_b=None) -> list[Finding]:
-    """Integer-valued query params: N -> N+1 differential."""
+    """Enumerable query identifiers: N -> N+1 differential (unguessable
+    UUID/GUID/slug refs have no sibling and are covered by authz-matrix)."""
     from concurrent.futures import ThreadPoolExecutor
-    from urllib.parse import urlencode, urlunparse
+    from core.authz import extract_refs_from_url, sibling_url
     out: list[Finding] = []
 
     def _probe(u: str) -> Finding | None:
-        try:
-            q = parse_qs(urlparse(u).query, keep_blank_values=True)
-        except Exception:
-            return None
-        int_keys = [k for k, v in q.items() if v and v[0].isdigit()
-                    and len(v[0]) <= 6 and IDOR_PARAM_RE.search(k)]
-        for key in int_keys[:2]:
-            n = int(q[key][0])
-            p = urlparse(u)
-            sib = urlunparse((p.scheme, p.netloc, p.path, p.params,
-                              urlencode({**{k: v[0] for k, v in q.items()},
-                                         key: n + 1}), p.fragment))
+        refs = [r for r in extract_refs_from_url(u)
+                if r.location == "query" and r.kind == "int"]
+        for ref in refs[:2]:
+            key, n = ref.name, ref.value
+            sib = sibling_url(u, ref)
+            if not sib:
+                continue
             g1, g2 = _get(session, u, timeout), _get(session, sib, timeout)
             if not g1 or not g2:
                 continue
@@ -1102,16 +1170,18 @@ def test_idor_param(session, urls: list[str], timeout: int,
                             title="Confirmed IDOR / BOLA (cross-session)",
                             severity="CRITICAL",
                             url=sib,
-                            detail=f"?{key}={n} -> ={n + 1} readable by a second user "
+                            detail=f"?{key}={n} -> ={int(n) + 1} readable by a second user "
                                    f"({l1}B vs {l2}B); object auth is missing",
                             evidence=f"{l1}B vs {l2}B",
-                            confidence="High",)
+                            confidence="High",
+                            method="GET", param=key, location="query",
+                            confirm="cross-session",)
                     if verbose:
                         print(warn(f"    [!] IDOR-param: {sib}"))
                     return Finding(
                         title="Possible IDOR / BOLA (single session)", severity="MEDIUM",
                         url=sib,
-                        detail=f"?{key}={n} -> ={n + 1} returned different data ({l1}B vs {l2}B), no auth; "
+                        detail=f"?{key}={n} -> ={int(n) + 1} returned different data ({l1}B vs {l2}B), no auth; "
                                "measured in one session, confirm with two users",
                         evidence=f"{l1}B vs {l2}B",
                         confidence="Low",)
@@ -1123,6 +1193,153 @@ def test_idor_param(session, urls: list[str], timeout: int,
             if f:
                 out.append(f)
     return out
+
+
+@register_check("authz-matrix", "Anonymous vs user authorization matrix", order=33)
+def test_authz_matrix(session, pages: dict, base: str, timeout: int,
+                      verbose: bool = False, session_b=None,
+                      ctx: dict | None = None,
+                      anon_session=None) -> list[Finding]:
+    """Who can see what: anonymous vs user (vs user B) per endpoint.
+
+    Runs after dir-brute (order 33) so found admin/API paths join the
+    candidates. Anonymous uses a cookie-less session; the user session is
+    the scan session. No admin session exists by design — privilege
+    boundaries above the user stay "possible", never "confirmed".
+    """
+    from urllib.parse import urljoin
+    from core.authz import (extract_refs_from_url, classify_auth_response,
+                            matrix_rows, same_object, extract_ownership)
+    from core.diff import canonical_json
+    cands: list[tuple[str, list]] = []
+
+    def _same(u: str) -> bool:
+        try:
+            return urlparse(u).hostname == urlparse(base).hostname
+        except Exception:
+            return False
+
+    for html in (pages or {}).values():
+        for m in re.findall(r'href=["\']([^"\']+)["\']', html or "", re.I):
+            full = urljoin(base + "/", m)
+            if not _same(full):
+                continue
+            refs = extract_refs_from_url(full)
+            if refs and (full, refs) not in cands:
+                cands.append((full, refs))
+    for purl in (pages or {}):
+        if "?" in purl and _same(purl):
+            refs = extract_refs_from_url(purl)
+            if refs and all(p != purl for p, _ in cands):
+                cands.append((purl, refs))
+    for u in list((ctx or {}).get("found_paths", []))[:10]:
+        if not _same(u):
+            continue
+        pl = urlparse(u).path.lower()
+        if any(k in pl for k in ("admin", "dashboard", "manage", "/api/")) \
+                and all(p != u for p, _ in cands):
+            cands.append((u, []))
+    cands = cands[:6]
+    if not cands:
+        return []
+    if anon_session is None:
+        from core.scanner import _session as _mk_session
+        try:
+            anon_session = _mk_session(timeout)
+        except Exception:
+            return []
+    anon = anon_session
+    out: list[Finding] = []
+
+    def _fetch(s, url: str):
+        try:
+            return _get(s, url, timeout)
+        except Exception:
+            return None
+
+    for full, refs in cands:
+        g_user, g_anon = _fetch(session, full), _fetch(anon, full)
+        if not g_user or not g_anon:
+            continue
+        cu = classify_auth_response(g_user[0], g_user[1], g_user[2])
+        ca = classify_auth_response(g_anon[0], g_anon[1], g_anon[2])
+        issues = matrix_rows(full, {"anonymous": ca, "user": cu})
+        if issues:
+            kinds = ", ".join(sorted({r["issue"] for r in issues}))
+            out.append(Finding(
+                title="Missing authentication on object endpoint",
+                severity="MEDIUM",
+                url=full,
+                detail=f"Sensitive endpoint answers 200 without a session "
+                       f"({kinds}); anonymous and user sessions both get in",
+                evidence="anon-200",
+                confidence="High",
+                method="GET", location="path", auth_context="anonymous",
+                confirm="anon-200",))
+            if verbose:
+                print(warn(f"    [!] Missing auth: {full}"))
+            continue
+        anon_body = g_anon[1] or ""
+        unguessable = [r for r in refs if r.kind in ("uuid", "guid", "slug")]
+        if unguessable and ca == "ok":
+            data = canonical_json(anon_body)
+            has_data = isinstance(data, (dict, list)) and len(str(data)) > 10
+            if (has_data or extract_ownership(anon_body)) and \
+                    "login" not in anon_body[:2000].lower():
+                out.append(Finding(
+                    title="Direct object reference reachable anonymously",
+                    severity="MEDIUM",
+                    url=full,
+                    detail=f"Unguessable {unguessable[0].kind} object returns "
+                           "data without a session; object auth is missing",
+                    evidence=unguessable[0].value[:40],
+                    confidence="Medium",
+                    method="GET", param=unguessable[0].name,
+                    location=unguessable[0].location,
+                    auth_context="anonymous", confirm="anon-200",))
+                if verbose:
+                    print(warn(f"    [!] Anon object access: {full}"))
+                continue
+        pl = urlparse(full).path.lower()
+        if cu == "ok" and ca != "ok" and not refs and \
+                any(k in pl for k in ("admin", "dashboard", "manage")):
+            out.append(Finding(
+                title="Possible missing authorization (admin surface)",
+                severity="MEDIUM",
+                url=full,
+                detail="Authenticated session reaches an admin surface "
+                       "anonymous cannot; without an admin session the "
+                       "privilege boundary stays unproven",
+                evidence="user-200",
+                confidence="Medium",
+                method="GET", location="path", auth_context="user",))
+            if verbose:
+                print(warn(f"    [!] Admin surface: {full}"))
+            continue
+        if session_b is not None and cu == "ok" and refs:
+            g_b = _fetch(session_b, full)
+            if g_b and g_b[0] == 200 and same_object(g_b[1], g_user[1]):
+                data = canonical_json(g_user[1] or "")
+                rich = isinstance(data, (dict, list)) and len(str(data)) > 10
+                if rich or extract_ownership(g_user[1]):
+                    out.append(Finding(
+                        title="Confirmed IDOR / BOLA (cross-session)",
+                        severity="CRITICAL",
+                        url=full,
+                        detail="Same object (canonical content match) readable "
+                               "by a second user; object auth is missing",
+                        evidence="canonical-match",
+                        confidence="High",))
+                    if verbose:
+                        print(warn(f"    [!] IDOR confirmed (matrix): {full}"))
+        if len(out) >= 4:
+            break
+    seen, uniq = set(), []
+    for x in out:
+        if (x.title, x.url) not in seen:
+            seen.add((x.title, x.url))
+            uniq.append(x)
+    return uniq[:4]
 
 
 # ---------- 11. Cookie flag audit ----------
@@ -1184,6 +1401,166 @@ def test_cookie_flags(session, base: str, timeout: int,
             if verbose:
                 print(warn(f"    [!] Cookie prefix broken: {name}"))
     return out[:4]
+
+
+# JSON/base64 upload field names worth probing (deep only, benign text).
+UPLOAD_JSON_FIELDS = {"file", "upload", "image", "avatar", "photo",
+                      "document", "attachment", "content", "data", "blob",
+                      "picture", "media", "filedata", "imageData"}
+
+_UPLOAD_URL_HINT = re.compile(r"upload|avatar|media|attach|image", re.I)
+
+
+def discover_json_uploads(html: str, base: str) -> list[tuple[str, str]]:
+    """API-style upload sinks: fetch/axios POSTs to upload-ish URLs.
+
+    Returns [(url, field)] with a file-ish field name when one is nearby,
+    else ("file",). Same-host only, capped at 4. Pure (no requests).
+    """
+    from urllib.parse import urljoin
+    out: list[tuple[str, str]] = []
+    body = html or ""
+    for m in re.finditer(
+            r'''(?:fetch|axios\.(?:post|put)|\\$\.(?:post|ajax))\s*\(\s*["']([^"']+)["']''',
+            body, re.I):
+        raw = m.group(1)
+        if not _UPLOAD_URL_HINT.search(raw):
+            continue
+        full = urljoin(base + "/", raw).split("#")[0]
+        try:
+            if urlparse(full).hostname != urlparse(base).hostname:
+                continue
+        except Exception:
+            continue
+        window = body[max(0, m.start() - 200):m.end() + 400]
+        field = "file"
+        for fm in re.finditer(r'''["']([a-zA-Z_]\w{1,24})["']\s*:''', window):
+            if fm.group(1).lower() in UPLOAD_JSON_FIELDS:
+                field = fm.group(1)
+                break
+        if (full, field) not in out:
+            out.append((full, field))
+        if len(out) >= 4:
+            break
+    return out
+
+
+def _upload_ok(resp) -> bool:
+    """Accepted-signal shared by upload probes (2xx + ok-hint, no block)."""
+    try:
+        body = (resp.text or "")[:2000]
+        return resp.status_code in (200, 201) \
+            and bool(UPLOAD_OK_HINT.search(body)) \
+            and not UPLOAD_BLOCK_HINT.search(body)
+    except Exception:
+        return False
+
+
+def _json_upload_probes(session, html: str, base: str, timeout: int,
+                        verbose: bool = False) -> list[Finding]:
+    """JSON/base64 upload: benign text in, served file out (deep only)."""
+    import base64
+    out: list[Finding] = []
+    marker = f"gashjson{int(time.time()) % 100000}"
+    raw = f"GASH benign probe - not executable - {marker} - text only".encode()
+    blob = base64.b64encode(raw).decode()
+    for url, field in discover_json_uploads(html, base)[:2]:
+        try:
+            r = _post(session, url, timeout,
+                      json={field: blob, "filename": "gash_probe.txt"})
+        except ScanBudgetExceeded:
+            raise
+        except Exception:
+            continue
+        if not r or not _upload_ok(r):
+            continue
+        m = re.search(r'["\']([^"\']*(?:uploads?|files?|media|static)[^"\']*)["\']',
+                      r.text or "", re.I)
+        if not m:
+            continue  # accepted, but no servable file disclosed: quiet
+        from urllib.parse import urljoin as _uj
+        try:
+            g = _get(session, _uj(url + "/", m.group(1)), timeout)
+        except ScanBudgetExceeded:
+            raise
+        except Exception:
+            continue
+        if g and marker in (g[1] or ""):
+            if verbose:
+                print(warn(f"    [!] Stored file via JSON upload: {url}"))
+            out.append(Finding(
+                title="Stored file via JSON upload", severity="CRITICAL",
+                url=url,
+                detail=f"Base64 field '{field}' is decoded and served back "
+                       f"with our marker at {m.group(1)[:80]}",
+                evidence=marker,
+                confidence="Medium",))
+            break
+    return out
+
+
+def _upload_mismatch_probe(session, endpoint: str, timeout: int,
+                           content: bytes,
+                           verbose: bool = False) -> list[Finding]:
+    """.txt bytes as .png (and vice versa): is anything validated?"""
+    try:
+        r1 = _post(session, endpoint, timeout,
+                   files={"file": ("gash_probe.png", content, "text/plain")},
+                   data={"submit": "Upload"})
+        r2 = _post(session, endpoint, timeout,
+                   files={"file": ("gash_probe.txt", content, "image/png")},
+                   data={"submit": "Upload"})
+    except ScanBudgetExceeded:
+        raise
+    except Exception:
+        return []
+    if r1 and r2 and _upload_ok(r1) and _upload_ok(r2):
+        if verbose:
+            print(warn(f"    [!] Upload content-type not validated: {endpoint}"))
+        return [Finding(
+            title="Upload content-type not validated", severity="LOW",
+            url=endpoint,
+            detail="Same bytes accepted as .png/text-plain and as "
+                   ".txt/image-png: neither extension nor content-type "
+                   "is meaningfully validated",
+            evidence="ext/ct-mismatch",
+            confidence="Medium",)]
+    return []
+
+
+def _upload_filename_probe(session, endpoint: str, timeout: int,
+                           content: bytes,
+                           verbose: bool = False) -> list[Finding]:
+    """Traversal-ish filename: does an escaped path come back?
+
+    Benign text only; the claim is reflection of an escaped path, never
+    filesystem access.
+    """
+    try:
+        r = _post(session, endpoint, timeout,
+                  files={"file": ("..%2F..%2Fgash_probe.txt", content,
+                                  "text/plain")},
+                  data={"submit": "Upload"})
+    except ScanBudgetExceeded:
+        raise
+    except Exception:
+        return []
+    if not r or not _upload_ok(r):
+        return []
+    body = r.text or ""
+    m = re.search(r'["\']([^"\']*\.\.[^"\']*)["\']', body)
+    if m:
+        if verbose:
+            print(warn(f"    [!] Upload filename path reflection: {endpoint}"))
+        return [Finding(
+            title="Upload filename handling (path reflection)",
+            severity="LOW",
+            url=endpoint,
+            detail=f"Traversal-style filename echoes back as a path "
+                   f"({m.group(1)[:80]}); verify where it lands server-side",
+            evidence="dotdot-path",
+            confidence="Low",)]
+    return []
 
 
 @register_check("upload-rce", "Upload filter bypass (benign content, active POST)", order=15, deep_only=True)
@@ -1287,6 +1664,13 @@ def test_upload_rce(session, base: str, html: str, timeout: int,
                            "unmodified (marker reflected)",
                     evidence="gashsvgmarker",
                     confidence="High",))
+    if endpoints:
+        first = endpoints[0]
+        out += _json_upload_probes(session, html, base, timeout, verbose)
+        out += _upload_mismatch_probe(session, first, timeout, content,
+                                      verbose)
+        out += _upload_filename_probe(session, first, timeout, content,
+                                      verbose)
     return out
 
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import re
 
-KNOWN_EXTS = (".json", ".html", ".htm", ".txt")
+KNOWN_EXTS = (".json", ".html", ".htm", ".txt", ".sarif", ".xml")
 
 
 def load_targets_file(path: str) -> list[str]:

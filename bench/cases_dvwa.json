@@ -1,0 +1,58 @@
+{
+  "$comment": "DVWA XSS ground truth (security level pinned per case). Login: admin/password. Set the level via /security.php before each case (runner does it).",
+  "target": "dvwa",
+  "default_base_url": "http://127.0.0.1:4280",
+  "auth": {"login_path": "/login.php", "username": "admin", "password": "password"},
+  "cases": [
+    {
+      "id": "dvwa-rxss-low",
+      "kind": "reflected",
+      "method": "GET",
+      "path": "/vulnerabilities/xss_r/",
+      "param": "name",
+      "security": "low",
+      "vulnerable": true,
+      "notes": "Low echoes $_GET['name'] raw."
+    },
+    {
+      "id": "dvwa-sxss-low",
+      "kind": "stored",
+      "method": "POST",
+      "path": "/vulnerabilities/xss_s/",
+      "param": "txtName",
+      "security": "low",
+      "vulnerable": true,
+      "notes": "Low stores txtName/mtxMessage raw, renders on the same page."
+    },
+    {
+      "id": "dvwa-dom-low",
+      "kind": "dom",
+      "method": "GET",
+      "path": "/vulnerabilities/xss_d/",
+      "param": "default",
+      "security": "low",
+      "vulnerable": true,
+      "notes": "Low writes the select value into the DOM unsanitized. Needs --dom."
+    },
+    {
+      "id": "dvwa-rxss-high",
+      "kind": "reflected",
+      "method": "GET",
+      "path": "/vulnerabilities/xss_r/",
+      "param": "name",
+      "security": "high",
+      "vulnerable": false,
+      "notes": "High encodes via htmlspecialchars. GASH must report at most unconfirmed/encoded here; a CONFIRMED title is a false positive."
+    },
+    {
+      "id": "dvwa-home-clean",
+      "kind": "reflected",
+      "method": "GET",
+      "path": "/",
+      "param": "q",
+      "security": "high",
+      "vulnerable": false,
+      "notes": "Negative control: parameterless landing page. No XSS-family finding expected."
+    }
+  ]
+}

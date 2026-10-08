@@ -588,6 +588,93 @@ def test_svg_upload_proof():
     assert any(f.title == "Possible Stored XSS (SVG upload)" for f in out)
 
 
+def test_discover_json_uploads():
+    _args_net()
+    import core.advanced as A
+    html = ('<script>fetch("/api/upload",{method:"POST",'
+            'body:JSON.stringify({file:document.x})})</script>'
+            '<script>fetch("/api/users")</script>')
+    found = A.discover_json_uploads(html, "http://h.test")
+    assert found == [("http://h.test/api/upload", "file")]
+    assert A.discover_json_uploads("<html>no js</html>",
+                                   "http://h.test") == []
+
+
+def test_json_upload_stored_proof():
+    _args_net()
+    import base64
+    import core.advanced as A
+    from core.net import configure_net
+    configure_net()
+    saved = []
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if url.endswith("/uploads/g1.txt") and saved:
+                return Resp(saved[-1], 200, url)
+            return Resp("not found", 404, url)
+
+        def post(self, url, timeout=None, allow_redirects=True, **kw):
+            for v in (kw.get("json") or {}).values():
+                try:
+                    raw = base64.b64decode(v).decode()
+                except Exception:
+                    continue
+                if "GASH benign" in raw:
+                    saved.append(raw)
+                    return Resp('{"ok":true,"url":"/uploads/g1.txt"}',
+                                200, url)
+            return Resp("denied", 400, url)
+
+    html = ('<form method="post" action="/up">'
+            '<input type="file" name="f"></form>'
+            '<script>fetch("/api/upload",{method:"POST"})</script>')
+    out = A.test_upload_rce(S(), "http://h.test", html, 3)
+    hit = next(f for f in out
+               if f.title == "Stored file via JSON upload")
+    assert hit.severity == "CRITICAL" and hit.confidence == "Medium"
+
+
+def test_upload_mismatch_and_filename():
+    _args_net()
+    import core.advanced as A
+    from core.net import configure_net
+    configure_net()
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("not found", 404, url)
+
+        def post(self, url, timeout=None, allow_redirects=True, **kw):
+            files = kw.get("files", {})
+            name = files.get("file", ("",))[0] if files.get("file") else ""
+            if kw.get("json"):
+                return Resp("denied", 400, url)
+            return Resp(f"File {name} uploaded ok "
+                        f"'/uploads/{name}'", 200, url)
+
+    html = ("<form method='post' action='/up'>"
+            "<input type='file' name='file'></form>")
+    out = A.test_upload_rce(S(), "http://h.test", html, 3)
+    titles = [f.title for f in out]
+    assert "Upload content-type not validated" in titles
+    assert "Upload filename handling (path reflection)" in titles
+
+
 def test_recurse_dir_extensions():
     from core.net import configure_net
     from core.scanner import smart_recurse

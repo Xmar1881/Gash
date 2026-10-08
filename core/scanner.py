@@ -20,6 +20,7 @@ from core.recon import normalize_target
 from core.net import pace, get_context, scan_dead, ScanBudgetExceeded, RATE_WAIT_BUDGET, PartialResults
 from core.knowledge import enrich
 from core.registry import check as register_check
+from core.xss_context import classify_reflection
 
 # ---------- veri ----------
 
@@ -35,17 +36,31 @@ class Finding:
     owasp: str = ""
     cvss: str = ""
     remediation: str = ""
+    # request/confirmation context (populated by producers when known)
+    method: str = ""       # GET|POST|PUT|PATCH|DELETE…
+    param: str = ""        # injected parameter / field name
+    location: str = ""     # query|path|header|body|fragment
+    auth_context: str = ""  # anonymous|user|user-b|…
+    fingerprint: str = ""  # normalized response fingerprint (truncated)
+    confirm: str = ""      # how it was confirmed: breakout|browser|oob|…
+    check: str = ""        # producing check name (stamped by registry)
 
     def to_dict(self) -> dict:
         # keep reports small: evidence 300, detail 2000 chars.
         # URLs always live in `url`, never inside `detail`.
+        # Secrets are never written in full: masked at the source.
         detail = self.detail or ""
         return {"title": self.title, "severity": self.severity,
                 "detail": detail[:2000], "url": self.url,
                 "evidence": (self.evidence or "")[:300],
                 "confidence": self.confidence,
                 "cwe": self.cwe, "owasp": self.owasp, "cvss": self.cvss,
-                "remediation": self.remediation}
+                "remediation": self.remediation,
+                "method": self.method[:12], "param": self.param[:80],
+                "location": self.location[:12],
+                "auth_context": self.auth_context[:24],
+                "fingerprint": self.fingerprint[:120],
+                "confirm": self.confirm[:40], "check": self.check[:40]}
 
 
 # SQL error signatures (matched lowercase)
@@ -99,9 +114,20 @@ ESCAPED_HINTS = ["&lt;", "&gt;", "&quot;", "&#039;", "&#x27;", "&#39;",
 
 # Probe params when a page has no links. Overlaps redirect/traversal/IDOR
 # key names on purpose, so the newer checks find targets automatically.
+# First 16 are the historic core set (order kept for stable tests).
 FUZZ_PARAMS = ["id", "q", "query", "s", "search", "keyword", "name", "term",
                "file", "page", "lang", "redirect", "next", "preview",
-               "template", "theme"]
+               "template", "theme",
+               # P3 hidden/uncommon discovery: URL, API, sort/filter, user
+               # content and open-redirect families (read-only GET probes).
+               "url", "uri", "callback", "return", "dest", "continue",
+               "ref", "target", "redirect_uri", "return_url", "callback_url",
+               "forward", "goto", "to", "next_url", "sort", "order",
+               "filter", "category", "limit", "offset", "uid", "user_id",
+               "account", "profile", "comment", "message", "body", "text",
+               "title", "content", "desc", "data", "value", "input",
+               "email", "format", "view", "action", "type", "webhook",
+               "feed", "src", "link", "domain", "host"]
 
 # Endpoints that may accept uploads
 UPLOAD_PATHS = [
@@ -344,6 +370,30 @@ def _post(session, url: str, timeout: int, **kwargs):
         return None
 
 
+def _request(session, method: str, url: str, timeout: int, **kwargs):
+    """PUT/PATCH/DELETE equivalent (response or None). Deep-only callers."""
+    try:
+        pace()
+    except ScanBudgetExceeded:
+        _mark_dead()
+        return None
+    session = _tls_session(session)
+    try:
+        r = session.request(method.upper(), url, timeout=timeout,
+                            allow_redirects=True, **kwargs)
+        if r.status_code == 429:
+            _calm_down(float(r.headers.get("Retry-After", 5) or 5), method.upper())
+            pace()
+            r = session.request(method.upper(), url, timeout=timeout,
+                                allow_redirects=True, **kwargs)
+        return r
+    except ScanBudgetExceeded:
+        _mark_dead()
+        return None
+    except Exception:
+        return None
+
+
 def do_login(base_url: str, username: str, password: str, timeout: int = 8,
              login_url: str | None = None,
              auth=None) -> tuple[dict, bool]:
@@ -432,7 +482,8 @@ def _fetch_base(session, base_url: str, timeout: int,
 
 # ---------- discovery: params & forms ----------
 
-def discover_test_urls(html: str, base: str) -> list[str]:
+def discover_test_urls(html: str, base: str,
+                       extra_params: list[str] | None = None) -> list[str]:
     """Form actions (real input names, high signal) + page links. Max 15."""
     urls: list[str] = []
     # form actions FIRST (with their REAL input names — e.g. search.jsp?query=gash)
@@ -453,7 +504,8 @@ def discover_test_urls(html: str, base: str) -> list[str]:
                 urls.append(full)
     # dedupe, keep order
     uniq = list(dict.fromkeys(urls))[:15]
-    # few links on the page: also fuzz common params (same host only)
+    # few links on the page: also fuzz common params (same host only).
+    # extra_params (SPA/JS-mined names) join the fallback first.
     if len(uniq) < 12:
         have = set()
         for u in uniq:
@@ -461,7 +513,7 @@ def discover_test_urls(html: str, base: str) -> list[str]:
                 have.update(parse_qs(urlparse(u).query).keys())
             except Exception:
                 pass
-        for p in FUZZ_PARAMS:
+        for p in list(dict.fromkeys(list(extra_params or []) + FUZZ_PARAMS)):
             if p not in have:
                 uniq.append(f"{base}/?{p}=1")
             if len(uniq) >= 12:
@@ -470,6 +522,49 @@ def discover_test_urls(html: str, base: str) -> list[str]:
         # synthetic params for the base probe pool, even on static sites
         uniq = [f"{base}/?id=1", f"{base}/?q=1", f"{base}/?search=1"]
     return uniq[:15]
+
+
+def _build_probe_pool(pages: dict, base: str,
+                      spa_urls: list[str] | None = None,
+                      limit: int = 25) -> list[str]:
+    """Merge crawl + SPA URLs into one prioritized, capped probe pool.
+
+    Pure except for no network at all: ordering only. Query-less SPA/API
+    endpoints join as ``?id=1`` probes like crawl pages do.
+    """
+    from core.xss_spa import prioritize_urls
+    from core.discovery import canonicalize_url
+    urls: list[str] = []
+    seen: set[str] = set()
+
+    def _add(u: str | None) -> None:
+        if not u or u in urls:
+            return
+        try:
+            if urlparse(u).scheme.lower() not in ("http", "https"):
+                return  # sockets and exotic schemes stay in the graph only
+        except Exception:
+            return
+        try:
+            key = canonicalize_url(u)
+        except Exception:
+            key = u
+        if key in seen:
+            return  # same endpoint, different query order/slash
+        seen.add(key)
+        urls.append(u)
+
+    for purl, phtml in (pages or {}).items():
+        for u in discover_test_urls(phtml, base):
+            _add(u)
+        # the query-less page itself joins the probe pool (?id=1)
+        if "?" not in purl and purl.rstrip("/") != base.rstrip("/"):
+            _add(purl + "?id=1")
+    for u in spa_urls or []:
+        if not u:
+            continue
+        _add(u if ("?" in u and "=" in u) else u + "?id=1")
+    return prioritize_urls(urls)[:max(1, limit)]
 
 
 def _inject(url: str, payload: str) -> str:
@@ -605,34 +700,81 @@ def _raw_reflected(body: str | None, marker: str) -> bool:
     return not any(h in window for h in ESCAPED_HINTS)
 
 
-@register_check("xss-reflected", "Reflected XSS (3 contexts + escape filter)", order=10)
+@register_check("xss-reflected", "Reflected XSS (context-aware + breakout check)", order=10)
 def test_xss(session, urls: list[str], timeout: int, verbose: bool,
              threads: int = 10, pages: dict | None = None, base: str = "",
-             deep: bool = True) -> list[Finding]:
+             deep: bool = True, api_targets: list | None = None) -> list[Finding]:
     from concurrent.futures import ThreadPoolExecutor
     out: list[Finding] = []
 
     def _probe(u: str) -> Finding | None:
+        from core.xss_payloads import generate_for_context
         partial = False
+        unconfirmed: Finding | None = None
+        unconfirmed_verdict: dict | None = None
+        unconfirmed_marker = ""
         for ctx, marker, payload in XSS_PROBES:
             inj = _inject(u, payload)
             got = _get(session, inj, timeout)
             if not got:
                 continue
             _, body, _ = got
-            if _raw_reflected(body, marker):
+            verdict = classify_reflection(body, marker, payload)
+            status = verdict["status"]
+            if status == "breakout":
                 if verbose:
-                    print(warn(f"    [!] XSS({ctx}): {inj}"))
+                    print(warn(f"    [!] XSS({verdict['context']}): {inj}"))
                 return Finding(
                     title="Possible Reflected XSS",
                     severity="MEDIUM",
                     url=inj,
-                    detail=f"Payload reflected raw in '{ctx}' context",
+                    detail=f"Breaker survives raw in '{verdict['context']}' "
+                           f"context ({verdict['evidence']})",
                     evidence=payload,
-                    confidence="High",
+                    confidence="Medium",
+                    method="GET", location="query", confirm="breakout",
                 )
-            if marker in (body or ""):
+            if status == "raw-unconfirmed" and unconfirmed is None:
+                unconfirmed_verdict = verdict
+                unconfirmed_marker = marker
+                unconfirmed = Finding(
+                    title="Reflected input (unconfirmed)",
+                    severity="LOW",
+                    url=inj,
+                    detail=f"Marker reflects raw in '{verdict['context']}' "
+                           "context but breaker chars were not observed; "
+                           "not proven executable",
+                    evidence=payload,
+                    confidence="Low",
+                )
+            if status == "encoded" or marker in (body or ""):
                 partial = True  # reflected but encoded -> inconclusive
+        # stage-2: context-aware generator for the unconfirmed spot only.
+        # Bounded (1 context x 4 payloads) so budgets survive.
+        if unconfirmed_verdict is not None:
+            for payload, conf, note in generate_for_context(
+                    unconfirmed_verdict.get("context", "html-text"),
+                    unconfirmed_marker)[:4]:
+                inj = _inject(u, payload)
+                got = _get(session, inj, timeout)
+                if not got:
+                    continue
+                v2 = classify_reflection(got[1], unconfirmed_marker, payload)
+                if v2["status"] == "breakout":
+                    if verbose:
+                        print(warn(f"    [!] XSS({v2['context']},gen:{note}): {inj}"))
+                    return Finding(
+                        title="Possible Reflected XSS",
+                        severity="MEDIUM",
+                        url=inj,
+                        detail=f"Generated payload breaks out raw in "
+                               f"'{v2['context']}' context ({note}, "
+                               f"confidence {conf}/10; {v2['evidence']})",
+                        evidence=payload,
+                        confidence="Medium",
+                        method="GET", location="query", confirm="breakout",
+                    )
+            return unconfirmed
         if partial:
             return Finding(
                 title="Partially encoded reflection (review manually)",
@@ -654,12 +796,90 @@ def test_xss(session, urls: list[str], timeout: int, verbose: bool,
     out = hits + infos
     if deep:
         out += _post_xss(session, pages, base, timeout, verbose)
+        out += _api_body_xss(session, api_targets, timeout, verbose)
+    return out
+
+
+def _api_body_xss(session, api_targets: list | None, timeout: int,
+                  verbose: bool = False) -> list[Finding]:
+    """JSON/XML/GraphQL body reflection (deep only, structure-preserving).
+
+    One leaf per target is replaced by a marker payload; the shape,
+    keys and sibling values stay intact. POST/PUT/PATCH/DELETE keep
+    their method. Safe mode never reaches here (deep-only caller).
+    """
+    import json as _json
+    from core.api_params import mutate_json_body, mutate_xml_body
+    out: list[Finding] = []
+    for t in (api_targets or [])[:4]:
+        method = (getattr(t, "method", "POST") or "POST").upper()
+        ctype = (getattr(t, "content_type", "") or "").lower()
+        leaves = [p for p in (getattr(t, "params", []) or [])
+                  if p.location in ("json", "graphql", "xml")][:2]
+        for p in leaves:
+            marker = "gxj1"
+            payload = marker + '"><svg onload=alert(1)>'
+            template = getattr(t, "template", "") or ""
+            r = None
+            try:
+                if p.location == "xml":
+                    new_body = (mutate_xml_body(template, p.name, payload)
+                                if template else
+                                f"<{p.name}>{payload}</{p.name}>")
+                    if not new_body:
+                        continue
+                    kw = {"data": new_body,
+                          "headers": {"Content-Type": "application/xml"}}
+                else:
+                    if template:
+                        new_body = mutate_json_body(template, p.name, payload)
+                    else:
+                        new_body = _json.dumps({p.name: payload})
+                    if not new_body:
+                        continue
+                    try:
+                        kw = {"json": _json.loads(new_body)}
+                    except Exception:
+                        kw = {"data": new_body,
+                              "headers": {"Content-Type": ctype or
+                                          "application/json"}}
+                if method == "POST":
+                    r = _post(session, t.url, timeout, **kw)
+                else:
+                    r = _request(session, method, t.url, timeout, **kw)
+            except ScanBudgetExceeded:
+                raise
+            except Exception:
+                continue
+            if not r:
+                continue
+            verdict = classify_reflection(getattr(r, "text", ""), marker,
+                                          payload)
+            if verdict["status"] == "breakout":
+                if verbose:
+                    print(warn(f"    [!] XSS({verdict['context']}, "
+                               f"{method} {p.name}): {t.url}"))
+                out.append(Finding(
+                    title="Possible Reflected XSS",
+                    severity="MEDIUM",
+                    url=t.url,
+                    detail=f"Breaker survives raw in '{verdict['context']}' "
+                           f"context via {method} body field '{p.name}' "
+                           f"({verdict['evidence']})",
+                    evidence=payload,
+                    confidence="Medium",
+                    method=method, param=p.name, location="body",
+                    confirm="breakout",
+                ))
+                break
+        if len(out) >= 4:
+            break
     return out
 
 
 def _post_xss(session, pages, base: str, timeout: int,
               verbose: bool = False) -> list[Finding]:
-    """Same reflection test through POST bodies (deep only, raw hits only)."""
+    """Same reflection test through POST bodies (deep only, breakout hits only)."""
     out: list[Finding] = []
     for action, field, filler in _post_form_targets(pages, base):
         for ctx, marker, payload in XSS_PROBES:
@@ -667,16 +887,20 @@ def _post_xss(session, pages, base: str, timeout: int,
                       data={**filler, field: payload})
             if not r:
                 continue
-            if _raw_reflected(r.text, marker):
+            verdict = classify_reflection(r.text, marker, payload)
+            if verdict["status"] == "breakout":
                 if verbose:
-                    print(warn(f"    [!] XSS({ctx}, POST {field}): {action}"))
+                    print(warn(f"    [!] XSS({verdict['context']}, POST {field}): {action}"))
                 out.append(Finding(
                     title="Possible Reflected XSS",
                     severity="MEDIUM",
                     url=action,
-                    detail=f"Payload reflected raw in '{ctx}' context via POST body",
+                    detail=f"Breaker survives raw in '{verdict['context']}' "
+                           f"context via POST body ({verdict['evidence']})",
                     evidence=payload,
-                    confidence="High",
+                    confidence="Medium",
+                    method="POST", param=field, location="body",
+                    confirm="breakout",
                 ))
                 break
         if len(out) >= 4:
@@ -754,15 +978,13 @@ def _baseline_404(session, base: str, timeout: int) -> tuple[int, int, str]:
 
 def _looks_like_baseline(status: int, body: str, base_status: int,
                          base_len: int, base_text: str) -> bool:
-    """Combined signal: status + size + content similarity (difflib)."""
-    if status != base_status or not base_text:
-        return False
-    blen = len(body or "")
-    if abs(blen - base_len) > max(80, base_len // 10):
-        return False
-    import difflib
-    ratio = difflib.SequenceMatcher(None, base_text, (body or "")[:4000]).ratio()
-    return ratio > 0.9
+    """Combined signal: status + size + content similarity.
+
+    Delegates to the shared differential engine (no local thresholds).
+    """
+    from core.diff import looks_like_baseline
+    return looks_like_baseline(status, body, base_status, base_len,
+                               base_text)
 
 
 def _secret_file_proof(path: str, body: str) -> str:
@@ -989,7 +1211,12 @@ def run_scan(target: str, threads: int = 20, timeout: int = 8,
               no_crawl: bool = False, dom: bool = False,
               blind_callback: str | None = None,
               scope_hosts: set[str] | None = None,
-              oob=None, auth_b=None) -> list[Finding]:
+              oob=None, auth_b=None, spa: bool = False,
+              max_xss_urls: int = 25,
+              health: dict | None = None,
+              js_files: int = 5,
+              swagger_paths: int = 20,
+              browser_discovery: bool = False) -> list[Finding]:
     import core.advanced  # noqa: F401 — registers checks with the registry
     import core.domxss  # noqa: F401 — registers the dom-xss check
     import core.webchecks  # noqa: F401 — registers modern web checks
@@ -1020,27 +1247,68 @@ def run_scan(target: str, threads: int = 20, timeout: int = 8,
             print(info(f"  [*] Crawling (max {max_pages} pages, depth {crawl_depth})..."))
             try:
                 pages = crawl(session, base, html, timeout, max_pages, crawl_depth,
-                              scope_hosts=scope_hosts)
+                              scope_hosts=scope_hosts, js_files=js_files,
+                              swagger_paths=swagger_paths)
             except ScanBudgetExceeded as e:
                 print(warn(f"  [!] {e}"))
                 pages = {base + "/": html or ""}
             if verbose:
                 print(f"    {DIM}{len(pages)} pages collected{RESET}")
 
-        urls: list[str] = []
-        for purl, phtml in pages.items():
-            for u in discover_test_urls(phtml, base):
-                if u not in urls:
-                    urls.append(u)
-                if len(urls) >= 25:
-                    break
-            # the query-less page itself joins the probe pool (?id=1)
-            if "?" not in purl and purl.rstrip("/") != base.rstrip("/"):
-                probe = purl + "?id=1"
-                if probe not in urls and len(urls) < 25:
-                    urls.append(probe)
-            if len(urls) >= 25:
-                break
+        urls = _build_probe_pool(pages, base, limit=max_xss_urls)
+        browser_graph: dict = {}
+        api_targets: list = []
+        if not no_crawl:
+            try:
+                from core.crawler import fetch_swagger_spec
+                from core.api_params import swagger_api_targets
+                spec = fetch_swagger_spec(session, base, timeout)
+                if spec:
+                    api_targets = swagger_api_targets(spec, base, limit=10)
+                    if verbose and api_targets:
+                        print(f"    {DIM}{len(api_targets)} API body targets "
+                              f"(OpenAPI){RESET}")
+            except ScanBudgetExceeded:
+                raise
+            except Exception as e:
+                if verbose:
+                    print(warn(f"  [-] API target build skipped: {str(e)[:80]}"))
+        if spa or browser_discovery:
+            try:
+                from core.xss_spa import runtime_discover
+                print(info("  [*] SPA runtime discovery (headless, read-only)..."))
+                runtime = runtime_discover(
+                    base, timeout, scope_hosts=scope_hosts, verbose=verbose,
+                    capture_traffic=browser_discovery)
+                spa_urls = list((runtime or {}).get("urls", [])) + \
+                    list((runtime or {}).get("api", []))
+                spa_params = list((runtime or {}).get("params", []))
+                if browser_discovery:
+                    browser_graph = {
+                        "traffic": list((runtime or {}).get("traffic", []))[:40],
+                        "websockets": list((runtime or {}).get(
+                            "websockets", []))[:10],
+                        "sse": list((runtime or {}).get("sse", []))[:10],
+                        "routes": list((runtime or {}).get("routes", []))[:20],
+                    }
+                    if verbose and (browser_graph["websockets"]
+                                    or browser_graph["sse"]
+                                    or browser_graph["routes"]):
+                        print(f"    {DIM}browser graph: "
+                              f"{len(browser_graph['traffic'])} requests, "
+                              f"{len(browser_graph['websockets'])} sockets, "
+                              f"{len(browser_graph['sse'])} streams, "
+                              f"{len(browser_graph['routes'])} routes{RESET}")
+                if spa_urls or spa_params:
+                    urls = _build_probe_pool(pages, base, spa_urls=spa_urls,
+                                             limit=max_xss_urls)
+                    if verbose and spa_params:
+                        print(f"    {DIM}SPA params: {', '.join(spa_params[:8])}{RESET}")
+            except ScanBudgetExceeded:
+                raise
+            except Exception as e:
+                if verbose:
+                    print(warn(f"  [-] SPA discovery skipped: {str(e)[:100]}"))
         if verbose:
             print(f"    {DIM}{len(urls)} test URLs{RESET}")
 
@@ -1048,19 +1316,30 @@ def run_scan(target: str, threads: int = 20, timeout: int = 8,
                "headers": headers, "timeout": timeout, "threads": threads,
                "verbose": verbose, "deep": deep, "wordlist": wordlist,
                "techs": [], "extra_paths": [], "dom": dom,
-           "blind_callback": blind_callback, "oob": oob,
-               "session_b": session_b}
+               "blind_callback": blind_callback, "oob": oob,
+               "session_b": session_b, "spa": spa,
+               "max_xss_urls": max_xss_urls, "js_files": js_files,
+               "swagger_paths": swagger_paths,
+               "api_targets": api_targets,
+               "browser_discovery": browser_discovery,
+               "browser_graph": browser_graph}
         findings: list[Finding] = []
         try:
             findings += run_checks(session, ctx, skip=skip_checks or set(),
                                    deep=deep, verbose=verbose)
+            if health is not None:
+                health["checks"] = list(ctx.get("check_status", []))
         except PartialResults as e:
             findings = e.findings
+            if health is not None:
+                health["checks"] = list(ctx.get("check_status", []))
             print(warn(f"  [!] {e}"))
             for f in findings:
                 enrich(f)
             raise PartialResults(findings, str(e))
         except ScanBudgetExceeded as e:
+            if health is not None:
+                health["checks"] = list(ctx.get("check_status", []))
             print(warn(f"  [!] {e}"))
             for f in findings:
                 enrich(f)

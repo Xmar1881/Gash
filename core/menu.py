@@ -27,7 +27,7 @@ CATEGORIES: dict[str, tuple[str, str, set[str]]] = {
           {"xss-reflected", "xss-errpage", "stored-xss", "dom-xss"}),
     "3": ("SSRF / IDOR / API",
           "SSRF, object-level auth gaps, prototype pollution",
-          {"ssrf", "idor", "idor-param", "protopollution"}),
+          {"ssrf", "idor", "idor-param", "authz-matrix", "protopollution"}),
     "4": ("Exposure",
           "robots, dir-brute, uploads, cookies, WAF note",
           {"robots", "smart-dirs", "smart-recurse", "smart-tech",
@@ -39,7 +39,8 @@ CATEGORIES: dict[str, tuple[str, str, set[str]]] = {
            "host-header", "security-txt", "os-command-injection",
            "crlf-injection", "csrf-surface", "firebase-open",
            "supabase-anon", "nextjs-middleware-bypass", "wp-user-enum",
-           "swagger-exposed", "mass-assignment", "cache-poisoning"}),
+           "swagger-exposed", "mass-assignment", "cache-poisoning",
+           "tls-audit"}),
 }
 
 ALL_CHECKS: set[str] = set().union(*(c[2] for c in CATEGORIES.values()))
@@ -231,12 +232,29 @@ def _step_advanced(argv: list[str], profile: str) -> None:
         if _ask_yes_no("Let the crawler roam (links/forms/sitemap)", True) is False:
             argv.append("--no-crawl")
         else:
-            mp = _ask("Page limit (empty = 8)", "")
+            cov = _ask_choice("Coverage profile", [
+                "quick — 4 pages, shallow (fast)",
+                "balanced — 8 pages (default)",
+                "thorough — 30 pages, deep crawl, larger pools (slow)",
+            ], default=2)
+            if cov == 1:
+                argv += ["--profile", "quick"]
+            elif cov == 3:
+                argv += ["--profile", "thorough"]
+            mp = _ask("Page limit (empty = profile preset)", "")
             if mp:
                 argv += ["--max-pages", mp]
-            dp = _ask("Depth (empty = 2)", "")
+            dp = _ask("Depth (empty = profile preset)", "")
             if dp:
                 argv += ["--depth", dp]
+        if profile != "RECON ONLY":
+            if _ask_yes_no("SPA runtime discovery (--spa, headless, needs Playwright)", False):
+                argv.append("--spa")
+            if _ask_yes_no("Full browser traffic profile (--browser-discovery: requests/WS/SSE/routes)", False):
+                argv.append("--browser-discovery")
+            mx = _ask("XSS probe pool limit (empty = profile preset)", "")
+            if mx:
+                argv += ["--max-xss-urls", mx]
         scope = _ask("Scope allowlist (empty = target host only, e.g. a.com,api.a.com)", "")
         if scope:
             argv += ["--scope", scope]
