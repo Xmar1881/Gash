@@ -113,6 +113,7 @@ class ScanResult:
     incomplete: bool = False
     degraded: bool = False
     checks: list = field(default_factory=list)
+    coverage: dict = field(default_factory=dict)
 
 
 def resolve_login_password(args) -> str | None:
@@ -149,6 +150,14 @@ def _scan_target(target: str, args, mode: str, wordlist) -> ScanResult:
             auth_b = None
         elif args.verbose:
             print(info(f"[i] second session ready: {len(auth_b.cookies)} cookie(s)"))
+    auth_c = None
+    if getattr(args, "cookie_admin", None) or getattr(args, "header_admin", None):
+        auth_c = parse_auth(args.cookie_admin, args.header_admin)
+        if auth_c.cookies == auth.cookies and auth_c.headers == auth.headers:
+            print(warn("  [!] --cookie-admin duplicates the primary session, ignoring."))
+            auth_c = None
+        elif args.verbose:
+            print(info("[i] admin session ready"))
 
     oob_client = None
     if getattr(args, "oob", False):
@@ -260,6 +269,7 @@ def _scan_target(target: str, args, mode: str, wordlist) -> ScanResult:
                     scope_hosts=scope,
                     oob=oob_client,
                     auth_b=auth_b,
+                    auth_c=auth_c,
                     spa=getattr(args, "spa", False),
                     max_xss_urls=cov["max_xss_urls"],
                     health=health,
@@ -267,6 +277,9 @@ def _scan_target(target: str, args, mode: str, wordlist) -> ScanResult:
                     swagger_paths=cov["swagger_paths"],
                     browser_discovery=getattr(args, "browser_discovery",
                                               False),
+                    browser_caps={k: cov[k] for k in
+                                  ("spa_visits", "traffic_cap", "route_cap",
+                                   "ws_cap", "api_cap") if k in cov},
                 )
             except PartialResults as e:
                 # Rate limit / budget hit mid-scan: keep what we have,
@@ -280,6 +293,7 @@ def _scan_target(target: str, args, mode: str, wordlist) -> ScanResult:
                 if args.verbose:
                     raise
             res.checks = health.get("checks", [])
+            res.coverage = health.get("coverage", {})
             res.degraded = bool(_check_errors(res.checks))
             try:
                 _host, _ = _nt(target)
@@ -291,16 +305,50 @@ def _scan_target(target: str, args, mode: str, wordlist) -> ScanResult:
                     from core.localaudit import run_local_audit
                     from core.knowledge import enrich
                     print(info("  [*] Local audit (read-only enumeration)..."))
-                    _local = run_local_audit(timeout=args.timeout)
+                    _local_health: dict = {}
+                    _local = run_local_audit(timeout=args.timeout,
+                                             deep=deep,
+                                             health=_local_health)
                     for _f in _local:
                         enrich(_f)
                     res.findings += _local
+                    _lst = _local_health.get("status", "passed")
+                    if _lst == "error":
+                        res.checks.append({
+                            "check": "local-audit", "status": "error",
+                            "error_type": "CollectorError",
+                            "error": "; ".join(
+                                _local_health.get("errors", []))[:150],
+                            "elapsed_ms": 0, "findings": 0})
+                    else:
+                        res.checks.append({
+                            "check": "local-audit",
+                            "status": "findings" if any(
+                                f.severity != "INFO" for f in _local)
+                            else "passed",
+                            "elapsed_ms": 0, "findings": len(_local),
+                            "partial_sections": [
+                                e.split(":")[0] for e in
+                                _local_health.get("errors", [])],
+                        })
+                        if _lst == "partial":
+                            print(warn(
+                                "  [!] Local audit PARTIAL "
+                                f"({', '.join(_local_health.get('errors', []))[:120]}); "
+                                "missing sections are unknown, not clean."))
                 except Exception as e:
                     print(warn(f"  [!] Local audit failed: {str(e)[:100]}"))
+                    res.checks.append({
+                        "check": "local-audit", "status": "error",
+                        "error_type": type(e).__name__,
+                        "error": str(e)[:150],
+                        "elapsed_ms": 0, "findings": 0})
+                res.degraded = bool(_check_errors(res.checks))
             if res.findings or not res.incomplete:
                 print_findings(res.findings, verbose=args.verbose,
                                incomplete=res.incomplete,
-                               check_status=res.checks)
+                               check_status=res.checks,
+                               coverage=res.coverage)
             if res.incomplete:
                 print(warn("  [!] INCOMPLETE scan (rate limit / budget) — "
                            "results are partial, NOT a clean bill."))
@@ -329,7 +377,8 @@ def _save_report(target: str, mode: str, res: ScanResult, path: str) -> bool:
                               recon=res.recon, findings=res.findings,
                               elapsed=res.elapsed, diff=res.diff,
                               incomplete=res.incomplete,
-                              check_status=res.checks)
+                              check_status=res.checks,
+                              coverage=res.coverage)
         save_report(report, path)
         print(success(f"\n[+] Report written: {path}"))
         return True

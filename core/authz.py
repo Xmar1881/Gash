@@ -247,10 +247,129 @@ def classify_auth_response(status: int, body: str | None,
     return "other"
 
 
+def identifier_graph(pages: dict | None = None,
+                       api_targets: list | None = None,
+                       traffic: list[dict] | None = None,
+                       base: str = "") -> list[dict]:
+    """Unified identifier candidates from every discovery source.
+
+    Each item: {source, ref, url, method, template}. Sources: page hrefs
+    + crawled URLs (path/query), JSON bodies (nested), GraphQL variables
+    (traffic payloads), browser-traffic rows (query + body leaves),
+    OpenAPI-derived ApiTargets (path/query/json params). Header
+    identifiers are modeled (location="header") but never probed live
+    without an explicit session contract. Pure (no requests), capped.
+    """
+    from urllib.parse import urljoin
+    out: list[dict] = []
+    seen: set = set()
+
+    def _same(u: str) -> bool:
+        try:
+            from urllib.parse import urlparse as _up
+            return _up(u).hostname == _up(base).hostname
+        except Exception:
+            return False
+
+    def _add(source: str, ref, url: str, method: str = "GET",
+             template: str = "") -> None:
+        try:
+            key = (source, ref.kind, ref.location, ref.name, ref.value,
+                   method, url)
+        except Exception:
+            return
+        if key in seen or len(out) >= 20:
+            return
+        seen.add(key)
+        out.append({"source": source, "ref": ref, "url": url,
+                    "method": method, "template": template or ""})
+
+    for html in (pages or {}).values():
+        for m in re.findall(r'href=["\']([^"\']+)["\']', html or "", re.I):
+            full = urljoin(base + "/", m)
+            if not _same(full):
+                continue
+            for ref in extract_refs_from_url(full):
+                _add("href", ref, full)
+    for purl in (pages or {}):
+        if "?" in purl and _same(purl):
+            for ref in extract_refs_from_url(purl):
+                _add("crawled-url", ref, purl)
+    for t in api_targets or []:
+        try:
+            url = getattr(t, "url", "")
+            method = (getattr(t, "method", "GET") or "GET").upper()
+            template = getattr(t, "template", "") or ""
+        except Exception:
+            continue
+        if not url or not _same(url):
+            continue
+        for p in getattr(t, "params", []) or []:
+            try:
+                loc = p.location if p.location in (
+                    "query", "path", "json") else "query"
+                kind = classify_value(p.value)
+                if kind is None and ID_NAME_RE.search(p.name or ""):
+                    kind = "int"  # schema-declared id, placeholder value
+                if kind is None:
+                    continue
+                _add("openapi", ObjectRef(kind, loc, p.name, p.value or "1"),
+                     url, method, template)
+            except Exception:
+                continue
+    for row in traffic or []:
+        try:
+            url = str((row or {}).get("url", "")).split("#")[0]
+            method = str((row or {}).get("method", "GET")).upper()
+        except Exception:
+            continue
+        if not url or not _same(url):
+            continue
+        for ref in extract_refs_from_url(url):
+            _add("traffic-url", ref, url, method)
+        body = str((row or {}).get("post_data", "") or "")
+        ct = str((row or {}).get("req_ct", "") or "").lower()
+        if body and ("graphql" in ct or "graphql" in url.lower()):
+            try:
+                from core.api_params import extract_graphql_params
+                import json as _json
+                doc = _json.loads(body)
+                vars_doc = doc.get("variables") if isinstance(doc, dict) \
+                    else None
+                for gp in extract_graphql_params(
+                        doc.get("query", "") if isinstance(doc, dict) else "",
+                        _json.dumps(vars_doc) if vars_doc else None):
+                    kind = classify_value(gp.value)
+                    if kind is None and ID_NAME_RE.search(
+                            gp.name.split(".")[-1]):
+                        kind = "int"
+                    if kind is None:
+                        continue
+                    _add("graphql-vars",
+                         ObjectRef(kind, "graphql", gp.name,
+                                   gp.value or "1"),
+                         url, method, body[:500])
+            except Exception:
+                pass
+        elif body and "json" in ct:
+            try:
+                import json as _json
+                for ref in extract_refs_from_json(_json.loads(body), url):
+                    _add("traffic-body", ref, url, method, body[:500])
+            except Exception:
+                pass
+    return out
+
+
+# Role-sensitive path markers for admin-surface discovery.
+ROLE_PATHS = ("/admin", "/manage", "/dashboard", "/billing", "/users",
+              "/settings", "/api/internal", "/api/admin")
+
+
 def matrix_rows(endpoint: str, cells: dict) -> list[dict]:
     """Authorization verdicts for one endpoint from classified cells.
 
-    cells: {"anonymous": cls, "user": cls, "user_b": cls}.
+    Cells: {"anonymous": cls, "user": cls, "user_b": cls}.
     A second user's *same-content* read is decided by the caller via
     same_object(), not here.
     """

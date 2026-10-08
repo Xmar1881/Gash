@@ -273,6 +273,49 @@ def _schema_props(schema: dict | None) -> list[str]:
     return out
 
 
+def traffic_to_targets(rows: list[dict], base: str,
+                       limit: int = 10) -> list[ApiTarget]:
+    """Browser traffic rows -> probe-able targets (privileged source).
+
+    Method + query + body shape come from what the app really sent, so
+    these outrank wordlist guesses. Dedupe by (method, path); capped.
+    Pure (no requests).
+    """
+    out: list[ApiTarget] = []
+    seen: set[tuple[str, str]] = set()
+    from urllib.parse import urlparse
+    for r in rows or []:
+        try:
+            url = str((r or {}).get("url", "")).split("#")[0]
+            method = str((r or {}).get("method", "GET")).upper() or "GET"
+            if method == "WS":
+                continue
+            p = urlparse(url)
+            if not url or p.scheme.lower() not in ("http", "https"):
+                continue
+            key = (method, p.path or "/")
+            if key in seen:
+                continue
+            seen.add(key)
+            params = extract_request_params(
+                url, {}, str((r or {}).get("req_ct", "") or ""),
+                (r or {}).get("post_data") or "")
+            template = ""
+            ctype = str((r or {}).get("req_ct", "") or "").split(";")[0]
+            if method in ("GET", "HEAD", "OPTIONS") and not params:
+                continue  # navigation without inputs: pool covers it
+            if not params and method in STATE_CHANGING:
+                params = [ApiParam(name="q", location="query", value="1")]
+            out.append(ApiTarget(url=url, method=method,
+                                 content_type=ctype or "application/json",
+                                 params=params[:20], template=template))
+        except Exception:
+            continue
+        if len(out) >= limit:
+            break
+    return out
+
+
 def swagger_api_targets(spec: dict, base: str,
                         limit: int = 20) -> list[ApiTarget]:
     """OpenAPI spec -> probe-able targets (methods + params + bodies).

@@ -17,14 +17,22 @@ from urllib.parse import (urljoin, urlparse, parse_qsl, urlencode,
                           urlunparse)
 
 # Coverage profiles: (max_pages, crawl_depth, max_xss_urls, js_files,
-# swagger_paths). balanced == historic defaults, so old behavior stays.
+# swagger_paths, spa_visits, traffic_cap, route_cap, ws_cap, api_cap).
+# balanced keeps the historic crawl behavior; thorough goes wider and
+# says so in the report (truncated flags).
 PROFILES: dict[str, dict[str, int]] = {
     "quick": {"max_pages": 4, "crawl_depth": 1, "max_xss_urls": 12,
-              "js_files": 3, "swagger_paths": 10},
-    "balanced": {"max_pages": 8, "crawl_depth": 2, "max_xss_urls": 25,
-                 "js_files": 5, "swagger_paths": 20},
-    "thorough": {"max_pages": 30, "crawl_depth": 4, "max_xss_urls": 60,
-                 "js_files": 10, "swagger_paths": 40},
+              "js_files": 3, "swagger_paths": 10, "spa_visits": 1,
+              "traffic_cap": 20, "route_cap": 10, "ws_cap": 5,
+              "api_cap": 10},
+    "balanced": {"max_pages": 12, "crawl_depth": 2, "max_xss_urls": 30,
+                 "js_files": 5, "swagger_paths": 20, "spa_visits": 2,
+                 "traffic_cap": 40, "route_cap": 20, "ws_cap": 10,
+                 "api_cap": 15},
+    "thorough": {"max_pages": 50, "crawl_depth": 4, "max_xss_urls": 80,
+                 "js_files": 10, "swagger_paths": 40, "spa_visits": 4,
+                 "traffic_cap": 100, "route_cap": 40, "ws_cap": 20,
+                 "api_cap": 25},
 }
 
 

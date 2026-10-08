@@ -602,7 +602,8 @@ def test_graphql_introspection(session, base: str, pages: dict, timeout: int,
     from core.graphql import (parse_schema, sensitive_queries,
                               build_selection, build_by_id_query,
                               send_query, response_data,
-                              has_sensitive_data)
+                              has_sensitive_data, schema_graph,
+                              weak_contracts)
     from core.authz import same_object
     cands = [base.rstrip("/") + p for p in GRAPHQL_PATHS]
     try:
@@ -682,6 +683,30 @@ def test_graphql_introspection(session, base: str, pages: dict, timeout: int,
         ))
         if verbose:
             print(warn(f"    [!] GraphQL mutations: {names[:60]}"))
+    for wc in weak_contracts(parsed)[:2]:
+        out.append(Finding(
+            title="GraphQL weak input contract", severity="INFO",
+            url=endpoint,
+            detail=f"Mutation '{wc['mutation']}' takes nullable sensitive "
+                   f"input '{wc['arg']}' ({wc['issue']}); static schema "
+                   "review only, verify server-side enforcement manually",
+            evidence=f"{wc['mutation']}.{wc['arg']}"[:80],
+            confidence="Medium",
+        ))
+        if verbose:
+            print(warn(f"    [!] GraphQL weak contract: {wc['mutation']}"))
+    if verbose:
+        try:
+            from core.colors import DIM, RESET
+            graph = schema_graph(parsed, endpoint)
+            print(f"    {DIM}graphql graph: "
+                  f"{len(graph['queries'])} queries, "
+                  f"{len(graph['mutations'])} mutations, "
+                  f"{len(graph['objects'])} objects"
+                  f"{', sensitive: ' + ','.join(graph['sensitive'][:4]) if graph['sensitive'] else ''}"
+                  f"{RESET}")
+        except Exception:
+            pass
     for q in sensitive_queries(parsed)[:2]:
         sel = build_selection(parsed, q)
         if not sel:
@@ -1633,3 +1658,87 @@ def test_tls_audit(session, base: str, timeout: int,
               "(AES-GCM/ChaCha20) and drop legacy ciphers",
               cipher, "High")
     return out[:5]
+
+
+# ---------- 21. Known vulnerable components ----------
+
+VERSION_FILE_CANDS = ["/CHANGELOG.txt", "/CHANGELOG.md", "/README.txt"]
+DRUPAL_VER_RE = re.compile(r"^\s*Drupal\s+(\d[\d.]*)", re.I | re.M)
+
+
+def _version_file_version(session, base: str, timeout: int) -> list:
+    """Drupal-style CHANGELOG first lines -> [(drupal, ver, src)]. 1 hit max."""
+    for cand in VERSION_FILE_CANDS:
+        got = _get(session, base.rstrip("/") + cand, timeout)
+        if not got or got[0] != 200 or len(got[1] or "") > 100_000:
+            continue
+        m = DRUPAL_VER_RE.search((got[1] or "")[:2000])
+        if m:
+            from core.cve import parse_version
+            if parse_version(m.group(1)):
+                return [("drupal", m.group(1), "CHANGELOG.txt")]
+    return []
+
+
+@register_check("vuln-components", "Known vulnerable component versions", order=11)
+def test_vuln_components(session, base: str, pages: dict, html: str,
+                         headers: dict, timeout: int,
+                         verbose: bool = False) -> list[Finding]:
+    """Version sightings (meta/?ver=/headers/CHANGELOG/JS banners) matched
+    against a curated CVE DB. Narrow inclusive ranges only: an uncertain
+    match reports nothing. A handful of bounded GETs, all read-only."""
+    from urllib.parse import urljoin
+    from core.cve import (extract_versions, extract_js_versions,
+                          components_with_findings)
+    found: list[tuple[str, str, str]] = []
+    try:
+        found += extract_versions(html or "", headers)
+        for html in list((pages or {}).values())[:4]:
+            found += extract_versions(html or "", None)
+    except Exception:
+        pass
+    try:
+        found += _version_file_version(session, base, timeout)
+    except ScanBudgetExceeded:
+        raise
+    except Exception:
+        pass
+    try:
+        srcs: list[str] = []
+        for html in list((pages or {}).values())[:4]:
+            for m in re.findall(r'<script[^>]*src=["\']([^"\']+)["\']',
+                                html or "", re.I):
+                if m not in srcs:
+                    srcs.append(m)
+        fetched = 0
+        for src in srcs:
+            if fetched >= 3:
+                break
+            full = urljoin(base + "/", src)
+            if not _same_host(full, base):
+                continue
+            fetched += 1
+            got = _get(session, full, timeout)
+            if not got or len(got[1] or "") > 200_000:
+                continue
+            found += extract_js_versions(got[1] or "")
+    except ScanBudgetExceeded:
+        raise
+    except Exception:
+        pass
+    out: list[Finding] = []
+    for item in components_with_findings(found):
+        out.append(Finding(
+            title=item["title"], severity=item["severity"],
+            url=base + "/",
+            detail=item["detail"],
+            evidence=item["evidence"],
+            confidence=item["confidence"],
+            location=item.get("location", "body"),
+            confirm="version-match",
+        ))
+        if verbose:
+            print(warn(f"    [!] Vuln component: {item['title']}"))
+        if len(out) >= 4:
+            break
+    return out

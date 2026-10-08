@@ -526,11 +526,13 @@ def discover_test_urls(html: str, base: str,
 
 def _build_probe_pool(pages: dict, base: str,
                       spa_urls: list[str] | None = None,
-                      limit: int = 25) -> list[str]:
+                      limit: int = 25,
+                      stats: dict | None = None) -> list[str]:
     """Merge crawl + SPA URLs into one prioritized, capped probe pool.
 
     Pure except for no network at all: ordering only. Query-less SPA/API
-    endpoints join as ``?id=1`` probes like crawl pages do.
+    endpoints join as ``?id=1`` probes like crawl pages do. stats (when
+    given) receives the pre-cap pool size for truncation reporting.
     """
     from core.xss_spa import prioritize_urls
     from core.discovery import canonicalize_url
@@ -564,7 +566,13 @@ def _build_probe_pool(pages: dict, base: str,
         if not u:
             continue
         _add(u if ("?" in u and "=" in u) else u + "?id=1")
-    return prioritize_urls(urls)[:max(1, limit)]
+    ranked = prioritize_urls(urls)
+    if stats is not None:
+        try:
+            stats["pool_seen"] = len(ranked)
+        except Exception:
+            pass
+    return ranked[:max(1, limit)]
 
 
 def _inject(url: str, payload: str) -> str:
@@ -1216,7 +1224,9 @@ def run_scan(target: str, threads: int = 20, timeout: int = 8,
               health: dict | None = None,
               js_files: int = 5,
               swagger_paths: int = 20,
-              browser_discovery: bool = False) -> list[Finding]:
+              browser_discovery: bool = False,
+              browser_caps: dict | None = None,
+              auth_c=None) -> list[Finding]:
     import core.advanced  # noqa: F401 — registers checks with the registry
     import core.domxss  # noqa: F401 — registers the dom-xss check
     import core.webchecks  # noqa: F401 — registers modern web checks
@@ -1232,6 +1242,10 @@ def run_scan(target: str, threads: int = 20, timeout: int = 8,
         if auth_b is not None and (getattr(auth_b, "cookies", None)
                                    or getattr(auth_b, "headers", None)):
             session_b = _session(timeout, auth_b)
+        session_c = None
+        if auth_c is not None and (getattr(auth_c, "cookies", None)
+                                   or getattr(auth_c, "headers", None)):
+            session_c = _session(timeout, auth_c)
 
         try:
             html, base, headers = _fetch_base(session, base0, timeout, scope_hosts)
@@ -1241,6 +1255,9 @@ def run_scan(target: str, threads: int = 20, timeout: int = 8,
             print(warn("    [i] base page unreachable, scanning blind"))
 
         # --- light crawler (same-origin BFS) ---
+        crawl_stats: dict = {}
+        pool_stats: dict = {}
+        spa_stats: dict = {}
         if no_crawl:
             pages = {base + "/": html or ""}
         else:
@@ -1248,15 +1265,17 @@ def run_scan(target: str, threads: int = 20, timeout: int = 8,
             try:
                 pages = crawl(session, base, html, timeout, max_pages, crawl_depth,
                               scope_hosts=scope_hosts, js_files=js_files,
-                              swagger_paths=swagger_paths)
+                              swagger_paths=swagger_paths, stats=crawl_stats)
             except ScanBudgetExceeded as e:
                 print(warn(f"  [!] {e}"))
                 pages = {base + "/": html or ""}
             if verbose:
                 print(f"    {DIM}{len(pages)} pages collected{RESET}")
 
-        urls = _build_probe_pool(pages, base, limit=max_xss_urls)
+        urls = _build_probe_pool(pages, base, limit=max_xss_urls,
+                                 stats=pool_stats)
         browser_graph: dict = {}
+        runtime: dict = {}
         api_targets: list = []
         if not no_crawl:
             try:
@@ -1277,9 +1296,16 @@ def run_scan(target: str, threads: int = 20, timeout: int = 8,
             try:
                 from core.xss_spa import runtime_discover
                 print(info("  [*] SPA runtime discovery (headless, read-only)..."))
+                caps = browser_caps if isinstance(browser_caps, dict) else {}
                 runtime = runtime_discover(
                     base, timeout, scope_hosts=scope_hosts, verbose=verbose,
-                    capture_traffic=browser_discovery)
+                    capture_traffic=browser_discovery, caps={
+                        "visits": caps.get("spa_visits", 2),
+                        "traffic": caps.get("traffic_cap", 40),
+                        "routes": caps.get("route_cap", 20),
+                        "ws": caps.get("ws_cap", 10),
+                        "api": caps.get("api_cap", 15),
+                        "urls": 30})
                 spa_urls = list((runtime or {}).get("urls", [])) + \
                     list((runtime or {}).get("api", []))
                 spa_params = list((runtime or {}).get("params", []))
@@ -1301,9 +1327,21 @@ def run_scan(target: str, threads: int = 20, timeout: int = 8,
                               f"{len(browser_graph['routes'])} routes{RESET}")
                 if spa_urls or spa_params:
                     urls = _build_probe_pool(pages, base, spa_urls=spa_urls,
-                                             limit=max_xss_urls)
+                                             limit=max_xss_urls,
+                                             stats=pool_stats)
                     if verbose and spa_params:
                         print(f"    {DIM}SPA params: {', '.join(spa_params[:8])}{RESET}")
+                spa_stats = dict((runtime or {}).get("stats", {}) or {})
+                if browser_graph.get("traffic"):
+                    # privileged source: real app traffic outranks guesses.
+                    from core.api_params import traffic_to_targets
+                    try:
+                        api_targets = traffic_to_targets(
+                            browser_graph["traffic"], base, limit=6
+                        ) + api_targets
+                        api_targets = api_targets[:10]
+                    except Exception:
+                        pass
             except ScanBudgetExceeded:
                 raise
             except Exception as e:
@@ -1311,6 +1349,55 @@ def run_scan(target: str, threads: int = 20, timeout: int = 8,
                     print(warn(f"  [-] SPA discovery skipped: {str(e)[:100]}"))
         if verbose:
             print(f"    {DIM}{len(urls)} test URLs{RESET}")
+
+        # coverage ledger: discovered vs tested vs truncated. "Not found"
+        # and "not tested" stay visibly different in every report.
+        try:
+            _net = get_context()
+            _req_sent, _req_budget = _net.count, _net.max_requests
+        except Exception:
+            _req_sent, _req_budget = 0, 0
+        coverage: dict = {
+            "pages_discovered": crawl_stats.get("pages_discovered",
+                                                len(pages)),
+            "pages_scanned": crawl_stats.get(
+                "pages_scanned",
+                sum(1 for h in pages.values() if h)),
+            "js_files": crawl_stats.get("js_files", 0),
+            "swagger_paths": crawl_stats.get("swagger_paths", 0),
+            "routes_seen": len((runtime or {}).get("routes", [])),
+            "api_seen": len((runtime or {}).get("api", [])),
+            "websockets_seen": len((runtime or {}).get("websockets", [])),
+            "runtime_visits": int(spa_stats.get("visits", 0)),
+            "traffic_seen": int(spa_stats.get("traffic_seen", 0)),
+            "xss_urls_tested": len(urls),
+            "pool_seen": int(pool_stats.get("pool_seen", len(urls))),
+            "api_targets_discovered": len(api_targets),
+            "api_targets_tested": min(len(api_targets), 4),
+            "requests_sent": _req_sent,
+            "request_budget": _req_budget,
+            "checks_passed": 0, "checks_errored": 0, "checks_skipped": 0,
+            "truncated": bool(crawl_stats.get("truncated", False))
+            or bool(spa_stats.get("truncated", False))
+            or int(pool_stats.get("pool_seen", len(urls))) > len(urls),
+        }
+
+        def _cover() -> None:
+            if health is None:
+                return
+            health["checks"] = list(ctx.get("check_status", []))
+            try:
+                statuses = [c.get("status") for c in health["checks"]]
+                coverage["checks_passed"] = sum(
+                    1 for s in statuses if s in ("passed", "findings"))
+                coverage["checks_errored"] = sum(
+                    1 for s in statuses if s in ("error", "aborted"))
+                coverage["checks_skipped"] = sum(
+                    1 for s in statuses if s == "skipped")
+                coverage["requests_sent"] = get_context().count
+            except Exception:
+                pass
+            health["coverage"] = dict(coverage)
 
         ctx = {"urls": urls, "pages": pages, "html": html, "base": base,
                "headers": headers, "timeout": timeout, "threads": threads,
@@ -1322,24 +1409,22 @@ def run_scan(target: str, threads: int = 20, timeout: int = 8,
                "swagger_paths": swagger_paths,
                "api_targets": api_targets,
                "browser_discovery": browser_discovery,
-               "browser_graph": browser_graph}
+               "browser_graph": browser_graph,
+               "session_c": session_c}
         findings: list[Finding] = []
         try:
             findings += run_checks(session, ctx, skip=skip_checks or set(),
                                    deep=deep, verbose=verbose)
-            if health is not None:
-                health["checks"] = list(ctx.get("check_status", []))
+            _cover()
         except PartialResults as e:
             findings = e.findings
-            if health is not None:
-                health["checks"] = list(ctx.get("check_status", []))
+            _cover()
             print(warn(f"  [!] {e}"))
             for f in findings:
                 enrich(f)
             raise PartialResults(findings, str(e))
         except ScanBudgetExceeded as e:
-            if health is not None:
-                health["checks"] = list(ctx.get("check_status", []))
+            _cover()
             print(warn(f"  [!] {e}"))
             for f in findings:
                 enrich(f)

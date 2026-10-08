@@ -1,5 +1,7 @@
 # GASH // Vulnerability & Penetration Engine
 
+<p align="center"><img src="docs/logo.png" alt="GASH logo" width="220"></p>
+
 > English version: [README.md](README.md)
 >
 > Not: uygulama çıktıları İngilizcedir (severity: CRITICAL/MEDIUM/LOW).
@@ -32,7 +34,7 @@
 
 ## Neden GASH?
 
-- **Tek komutla full tarama:** recon + crawl + 44 güvenlik kontrolü + rapor
+- **Tek komutla full tarama:** recon + crawl + 45 güvenlik kontrolü + rapor
   (zafiyet tespiti, saldırı yüzeyi keşfi ve yapılandırma denetimi)
 - **Akıllı:** tech fingerprint'e göre wordlist seçer (WordPress / PHP / Node / Java / Python)
 - **Modern web:** yapay zekâyla üretilmiş sitelerin tipik hastalıkları — eksik
@@ -67,7 +69,7 @@ py gash.py --menu
 py gash.py -t https://target.com --full -o rapor.html -v
 ```
 
-Opsiyonel (sadece `--dom` headless DOM XSS için):
+Opsiyonel (sadece `--dom` / `--spa` / `--browser-discovery` headless tarama için):
 
 ```bash
 py -m pip install playwright
@@ -75,6 +77,16 @@ py -m playwright install chromium
 ```
 
 ## Kullanım
+
+> **Tek komutta maksimum kapsama** (deep + thorough + browser + OOB):
+>
+> ```bash
+> py gash.py -t https://hedef.com --full --deep --profile thorough --dom --spa --browser-discovery --oob -o rapor.html -v
+> ```
+>
+> `--dom/--spa/--browser-discovery` için `playwright` + Chromium,
+> `--oob` için `pip install gash[oob]` gerekir. Giriş arkası yüzey için
+> `--cookie "session=abc"` (artı `--cookie-b` / `--cookie-admin`) ekle.
 
 | Komut | Ne yapar |
 |---|---|
@@ -90,10 +102,11 @@ py -m playwright install chromium
 | `py gash.py -t URL --full --user-agent "MyScanner/1.0"` | Özel User-Agent |
 | `py gash.py -t https://host/app --full` | Alt-uygulama kapsamı: path korunur (`/app`, `/app` olarak kalır) |
 | `py gash.py -t URL --full --insecure` | TLS doğrulamayı kapat (yalnızca self-signed lab) |
-| `py gash.py --list-checks` | 44 kontrolü listele |
+| `py gash.py --list-checks` | 45 kontrolü listele |
 | `py gash.py -t URL --full --skip-checks sqli-blind,ssti` | İstemediğin check'i kapat |
 | `py gash.py -t URL --full --cookie "session=abc" --header "Authorization: Bearer X"` | Login arkası tarama |
 | `py gash.py -t URL --full --cookie "a=1" --cookie-b "b=2"` | İkinci kullanıcıyla cross-session IDOR doğrulama |
+| `py gash.py -t URL --full --cookie "a=1" --cookie-admin "adm=9"` | Yetki sınırı doğrulama için admin oturumu (sadece CLI) |
 | `py gash.py -t URL --full --login-user admin --login-pass 1234` | Oto-login dene, oturumla tara |
 | `py gash.py -t URL --full --max-pages 15 --depth 3` | Crawler'ı büyüt |
 | `py gash.py -t URL --full --profile thorough` | Kapsam profili: quick / balanced (varsayılan) / thorough |
@@ -108,7 +121,7 @@ py -m playwright install chromium
 
 `targets.txt` formatı: satır başına 1 hedef, `#` yorum ve boş satır atlanır.
 
-## Kontroller (44)
+## Kontroller (45)
 
 `py gash.py --list-checks` çıktısı:
 
@@ -155,6 +168,7 @@ py -m playwright install chromium
 | `swagger-exposed` | Herkese açık API dokümanı (Swagger/OpenAPI) |
 | `mass-assignment` | İstemciden kontrol edilebilen rol alanı |
 | `tls-audit` | TLS sertifika + protokol denetimi |
+| `vuln-components` | Bilinen zafiyetli bileşen sürümleri |
 | `login-enum` | Login kullanıcı adı sayımı |
 | `ldap-injection` | LDAP jokerkarakter auth bypass |
 | `cache-poisoning` | Host yansımasıyla cache zehirlenmesi |
@@ -225,6 +239,10 @@ Gash/
 │   ├── authz.py         # IDOR/BOLA + yetki matris motoru
 │   ├── graphql.py       # GraphQL şema analizi
 │   ├── localaudit.py    # local makine profili (--local)
+│   ├── cve.py           # bilinen-zafiyetli bileşen DB + sürüm eşleme
+│   ├── oob.py           # interactsh bant-dışı doğrulama
+│   ├── colors.py        # terminal paleti
+│   ├── spinner.py       # ilerleme animasyonu
 │   ├── reporter.py      # terminal + json/html/txt/sarif/xml + diff
 │   ├── knowledge.py     # CWE / OWASP / CVSS / remediation
 │   ├── registry.py      # plugin sistemi (@check)
@@ -234,11 +252,18 @@ Gash/
 ├── tests/
 │   ├── test_unit.py         # ağ gerektirmez
 │   ├── test_bulk.py         # toplu tarama (ağ gerektirmez)
+│   ├── test_bench.py        # bench skorlama (ağ gerektirmez)
 │   ├── test_lab.py          # lokal lab regresyonu (~25 sn)
+│   ├── test_localbench.py   # lokal yüzey matrisi (ağ gerektirmez)
 │   └── test_integration.py  # lokal stub sunucu (~15 sn)
 ├── bench/
 │   ├── lab.py               # zafiyetli lab uygulaması (stdlib)
-│   └── run_bench.py         # DVWA/Juice Shop precision/recall
+│   ├── run_bench.py         # DVWA/Juice Shop precision/recall
+│   ├── score.py             # precision/recall skorlama
+│   ├── cases_dvwa.json / cases_juice.json  # ground truth
+│   └── docker-compose.yml   # bench hedefleri
+├── docs/
+│   └── logo.png             # proje logosu
 └── .github/workflows/ci.yml  # ubuntu+windows × 3.12/3.13
 ```
 
@@ -272,6 +297,8 @@ Ground truth `bench/cases_*.json` içinde (zafiyetli endpoint'ler +
 negatif kontroller). Skorlama recall/precision'a **confirmed**
 başlıkları sayar, unconfirmed/suspected'i ayrı raporlar (dürüstlük
 istatistikleri).
+Docker yoksa: `py -m pytest tests/test_lab.py -q` aynı vulnerable/fixed
+regresyonunu lokal stdlib lab'e karşı koşar.
 
 ## Yol Haritası
 
@@ -279,7 +306,7 @@ istatistikleri).
 - [x] Güvenli varsayılan + `--deep` opt-in + `--scope` + `--fail-on`
 - [ ] YAML profil (sessiz / kapsamlı)
 - [x] Blind-XSS/OOB doğrulama (`--oob`, interactsh)
-- [ ] CVE eşleme (versiyon → bilinen zafiyet)
+- [x] CVE eşleme (versiyon → bilinen zafiyet, `vuln-components`)
 - [x] SARIF / JUnit çıktıları
 - [ ] Webhook bildirimi
 - [x] Modern kontrol sınıfları: traversal, open redirect, CORS, güvenlik

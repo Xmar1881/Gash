@@ -279,3 +279,41 @@ def test_lab_dom_browser():
     if not out:
         pytest.skip("chromium unavailable")
     assert any("DOM XSS" in f.title for f in out)
+
+
+def test_lab_dom_no_self_echo():
+    """Plain page, no sinks/handlers: the probe must not confirm itself.
+
+    Regression: our marker-carrying page.evaluate() dispatches used to
+    trip our own eval hook (sample == our probe script) and report a
+    bogus postMessage->eval CONFIRMED.
+    """
+    pytest.importorskip("playwright.sync_api")
+    from playwright.sync_api import sync_playwright
+    import core.domxss as D
+    from core.net import configure_net
+    configure_net()
+    srv = serve(0)
+    import threading
+    import time as _t
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    _t.sleep(0.3)
+    try:
+        base = f"http://127.0.0.1:{port}"
+        try:
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(headless=True)
+                try:
+                    hit = D._probe_page(browser, base + "/cors_fixed",
+                                        base, 5, {}, verbose=False)
+                finally:
+                    browser.close()
+        except Exception as e:
+            if "chromium" in str(e).lower() or "browser" in str(e).lower():
+                pytest.skip("chromium unavailable")
+            raise
+    finally:
+        srv.shutdown()
+        srv.server_close()
+    assert hit is None  # silence is correct here

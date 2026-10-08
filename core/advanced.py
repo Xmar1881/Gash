@@ -1199,7 +1199,7 @@ def test_idor_param(session, urls: list[str], timeout: int,
 def test_authz_matrix(session, pages: dict, base: str, timeout: int,
                       verbose: bool = False, session_b=None,
                       ctx: dict | None = None,
-                      anon_session=None) -> list[Finding]:
+                      anon_session=None, session_c=None) -> list[Finding]:
     """Who can see what: anonymous vs user (vs user B) per endpoint.
 
     Runs after dir-brute (order 33) so found admin/API paths join the
@@ -1207,9 +1207,9 @@ def test_authz_matrix(session, pages: dict, base: str, timeout: int,
     the scan session. No admin session exists by design — privilege
     boundaries above the user stay "possible", never "confirmed".
     """
-    from urllib.parse import urljoin
-    from core.authz import (extract_refs_from_url, classify_auth_response,
-                            matrix_rows, same_object, extract_ownership)
+    from core.authz import (classify_auth_response,
+                            matrix_rows, same_object, extract_ownership,
+                            identifier_graph, ROLE_PATHS)
     from core.diff import canonical_json
     cands: list[tuple[str, list]] = []
 
@@ -1219,24 +1219,27 @@ def test_authz_matrix(session, pages: dict, base: str, timeout: int,
         except Exception:
             return False
 
-    for html in (pages or {}).values():
-        for m in re.findall(r'href=["\']([^"\']+)["\']', html or "", re.I):
-            full = urljoin(base + "/", m)
-            if not _same(full):
-                continue
-            refs = extract_refs_from_url(full)
-            if refs and (full, refs) not in cands:
-                cands.append((full, refs))
-    for purl in (pages or {}):
-        if "?" in purl and _same(purl):
-            refs = extract_refs_from_url(purl)
-            if refs and all(p != purl for p, _ in cands):
-                cands.append((purl, refs))
+    try:
+        graph = identifier_graph(
+            pages, (ctx or {}).get("api_targets"),
+            ((ctx or {}).get("browser_graph", {}) or {}).get("traffic"),
+            base)
+    except Exception:
+        graph = []
+    for item in graph:
+        try:
+            if (item.get("method", "GET") or "GET").upper() != "GET":
+                continue  # state-changing: matrix reads with GET only
+            full, ref = item["url"], item["ref"]
+        except Exception:
+            continue
+        if _same(full) and all(p != full for p, _ in cands):
+            cands.append((full, [ref]))
     for u in list((ctx or {}).get("found_paths", []))[:10]:
         if not _same(u):
             continue
         pl = urlparse(u).path.lower()
-        if any(k in pl for k in ("admin", "dashboard", "manage", "/api/")) \
+        if any(k in pl for k in ROLE_PATHS + ("/api/",)) \
                 and all(p != u for p, _ in cands):
             cands.append((u, []))
     cands = cands[:6]
@@ -1316,6 +1319,27 @@ def test_authz_matrix(session, pages: dict, base: str, timeout: int,
             if verbose:
                 print(warn(f"    [!] Admin surface: {full}"))
             continue
+        if session_c is not None and cu == "ok" and \
+                any(k in pl for k in ROLE_PATHS):
+            g_c = _fetch(session_c, full)
+            if g_c and g_c[0] == 200 and same_object(g_c[1], g_user[1]):
+                data = canonical_json(g_user[1] or "")
+                rich = isinstance(data, (dict, list)) and len(str(data)) > 10
+                if rich or extract_ownership(g_user[1]):
+                    out.append(Finding(
+                        title="Missing authorization on admin endpoint",
+                        severity="MEDIUM",
+                        url=full,
+                        detail="Normal user session reads an admin endpoint "
+                               "with the same canonical content an admin "
+                               "session sees; role check is missing",
+                        evidence="admin-same-content",
+                        confidence="High",
+                        method="GET", location="path",
+                        auth_context="user", confirm="admin-match",))
+                    if verbose:
+                        print(warn(f"    [!] Admin authz missing: {full}"))
+                    continue
         if session_b is not None and cu == "ok" and refs:
             g_b = _fetch(session_b, full)
             if g_b and g_b[0] == 200 and same_object(g_b[1], g_user[1]):
@@ -1329,7 +1353,9 @@ def test_authz_matrix(session, pages: dict, base: str, timeout: int,
                         detail="Same object (canonical content match) readable "
                                "by a second user; object auth is missing",
                         evidence="canonical-match",
-                        confidence="High",))
+                        confidence="High",
+                        method="GET", location="path", auth_context="user-b",
+                        confirm="cross-session",))
                     if verbose:
                         print(warn(f"    [!] IDOR confirmed (matrix): {full}"))
         if len(out) >= 4:

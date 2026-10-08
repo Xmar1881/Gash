@@ -1,5 +1,7 @@
 # GASH // Vulnerability & Penetration Engine
 
+<p align="center"><img src="docs/logo.png" alt="GASH logo" width="220"></p>
+
 > Türkçe sürüm için: [README.tr.md](README.tr.md)
 
 > Fast, modular automated web vulnerability scanner + pentest engine.
@@ -31,7 +33,7 @@
 
 ## Why GASH?
 
-- **Full scan in one command:** recon + crawl + 44 security checks + report
+- **Full scan in one command:** recon + crawl + 45 security checks + report
   (vulnerability detection, attack-surface discovery and config auditing)
 - **Smart:** picks wordlists from tech fingerprint (WordPress / PHP / Node / Java / Python)
 - **Modern-web aware:** the misconfigs AI-built sites ship with — missing
@@ -68,7 +70,7 @@ py gash.py --menu
 py gash.py -t https://target.com --full -o report.html -v
 ```
 
-Optional (only for `--dom` headless DOM XSS verification):
+Optional (only for `--dom` / `--spa` / `--browser-discovery` headless browsing):
 
 ```bash
 py -m pip install playwright
@@ -76,6 +78,16 @@ py -m playwright install chromium
 ```
 
 ## Usage
+
+> **Maximum coverage in one command** (deep + thorough + browser + OOB):
+>
+> ```bash
+> py gash.py -t https://target.com --full --deep --profile thorough --dom --spa --browser-discovery --oob -o report.html -v
+> ```
+>
+> Needs `playwright` + Chromium (`--dom/--spa/--browser-discovery`) and
+> `pip install gash[oob]` (`--oob`). Add `--cookie "session=abc"` (plus
+> `--cookie-b` / `--cookie-admin`) to also cover logged-in surfaces.
 
 | Command | What it does |
 |---|---|
@@ -91,10 +103,11 @@ py -m playwright install chromium
 | `py gash.py -t URL --full --user-agent "MyScanner/1.0"` | Custom User-Agent |
 | `py gash.py -t https://host/app --full` | Sub-app scope: the path is kept (`/app` stays `/app`) |
 | `py gash.py -t URL --full --insecure` | Skip TLS verification (self-signed labs only) |
-| `py gash.py --list-checks` | List the 44 checks |
+| `py gash.py --list-checks` | List the 45 checks |
 | `py gash.py -t URL --full --skip-checks sqli-blind,ssti` | Disable unwanted checks |
 | `py gash.py -t URL --full --cookie "session=abc" --header "Authorization: Bearer X"` | Authenticated scan |
 | `py gash.py -t URL --full --cookie "a=1" --cookie-b "b=2"` | Cross-session IDOR confirmation with a second user |
+| `py gash.py -t URL --full --cookie "a=1" --cookie-admin "adm=9"` | Admin session for privilege-boundary confirmation (CLI only) |
 | `py gash.py -t URL --full --login-user admin --login-pass 1234` | Try auto-login, scan with session |
 | `py gash.py -t URL --full --max-pages 15 --depth 3` | Larger crawler |
 | `py gash.py -t URL --full --profile thorough` | Coverage profile: quick / balanced (default) / thorough |
@@ -110,7 +123,7 @@ py -m playwright install chromium
 
 `targets.txt` format: one target per line, `#` comments and blank lines are skipped.
 
-## Checks (44)
+## Checks (45)
 
 Output of `py gash.py --list-checks`:
 
@@ -125,19 +138,19 @@ Output of `py gash.py --list-checks`:
 | `smart-recurse` | Recurse under found paths + backup extensions |
 | `sqli-blind` | Boolean-blind + encoding bypass + time-based |
 | `ssti` | SSTI template injection |
-| `ssrf` | SSRF cloud metadata + surface note |
+| `ssrf` | SSRF cloud metadata (+verbose surface note) |
 | `idor` | IDOR/BOLA API object differential |
 | `idor-param` | IDOR query parameter (`?id=`, uuid-aware) |
 | `authz-matrix` | Anonymous vs user authorization matrix |
 | `protopollution` | Prototype Pollution reflection surface |
 | `stored-xss` | Stored XSS canary + second-order render check |
 | `sqli-login` | Login form SQLi auth-bypass differential `[deep]` |
-| `waf-detect` | WAF fingerprint (passive) |
+| `waf-detect` | WAF fingerprint (passive note) |
 | `cookie-flags` | Cookie HttpOnly/Secure/SameSite audit |
 | `upload-rce` | Upload filter bypass (benign content) `[deep]` |
 | `smart-tech` | Tech fingerprint + targeted paths |
-| `dom-xss` | DOM XSS headless verification, sinks + sources + oracle (`--dom`) |
-| `security-headers` | Missing security headers (passive) |
+| `dom-xss` | DOM XSS headless sinks+sources+oracle (`--dom`) |
+| `security-headers` | Missing/weak security headers (passive) |
 | `open-redirect` | Open redirect via next/redirect params |
 | `path-traversal` | Path traversal via file/page params |
 | `cors` | Permissive CORS policy (evil origin probe) |
@@ -157,8 +170,9 @@ Output of `py gash.py --list-checks`:
 | `swagger-exposed` | Public API docs (Swagger/OpenAPI) |
 | `mass-assignment` | Client-controllable role field |
 | `tls-audit` | TLS certificate + protocol audit |
-| `login-enum` | Login username enumeration |
-| `ldap-injection` | LDAP wildcard auth bypass |
+| `vuln-components` | Known vulnerable component versions |
+| `login-enum` | Login username enumeration differential `[deep]` |
+| `ldap-injection` | LDAP wildcard auth bypass `[deep]` |
 | `cache-poisoning` | Cache poisoning via Host reflection |
 
 Every finding is enriched with `CWE + OWASP Top 10 + estimated CVSS + remediation`
@@ -242,6 +256,10 @@ Gash/
 │   ├── authz.py         # IDOR/BOLA + authorization matrix engine
 │   ├── graphql.py       # GraphQL schema analysis
 │   ├── localaudit.py    # local machine profile (--local)
+│   ├── cve.py           # known-vulnerable component DB + version matching
+│   ├── oob.py           # interactsh out-of-band verification
+│   ├── colors.py        # terminal palette
+│   ├── spinner.py       # progress spinner
 │   ├── reporter.py      # terminal + json/html/txt/sarif/xml + diff
 │   ├── knowledge.py     # CWE / OWASP / CVSS / remediation
 │   ├── registry.py      # plugin system (@check)
@@ -251,11 +269,18 @@ Gash/
 ├── tests/
 │   ├── test_unit.py         # no network needed
 │   ├── test_bulk.py         # bulk scan (no network)
+│   ├── test_bench.py        # bench scoring (no network)
 │   ├── test_lab.py          # local lab regression (~25s)
+│   ├── test_localbench.py   # local-surface matrix (no network)
 │   └── test_integration.py  # local stub server (~15s)
 ├── bench/
 │   ├── lab.py               # vulnerable lab app (stdlib only)
-│   └── run_bench.py         # DVWA/Juice Shop precision/recall
+│   ├── run_bench.py         # DVWA/Juice Shop precision/recall
+│   ├── score.py             # precision/recall scoring
+│   ├── cases_dvwa.json / cases_juice.json  # ground truth
+│   └── docker-compose.yml   # bench targets
+├── docs/
+│   └── logo.png             # project logo
 └── .github/workflows/ci.yml  # ubuntu+windows × 3.12/3.13
 ```
 
@@ -294,6 +319,8 @@ py bench/run_bench.py --target all --deep --dom --json-out bench/results.json
 Ground truth in `bench/cases_*.json` (vulnerable endpoints + negative
 controls). Scoring counts **confirmed** titles toward recall/precision
 and reports unconfirmed/suspected separately (honesty stats).
+No Docker? `py -m pytest tests/test_lab.py -q` runs the same
+vulnerable/fixed regression against a stdlib lab app locally.
 
 ## Roadmap
 
@@ -301,7 +328,7 @@ and reports unconfirmed/suspected separately (honesty stats).
 - [x] Safe-by-default + `--deep` opt-in + `--scope` + `--fail-on`
 - [ ] YAML profiles (quiet / thorough)
 - [x] Blind-XSS/OOB verification (`--oob` via interactsh, silent without)
-- [ ] CVE mapping (version → known vulnerability)
+- [x] CVE mapping (version → known vulnerability, `vuln-components`)
 - [x] SARIF / JUnit outputs
 - [ ] Webhook notifications
 - [x] Modern check classes: traversal, open redirect, CORS, security headers,

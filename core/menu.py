@@ -40,7 +40,7 @@ CATEGORIES: dict[str, tuple[str, str, set[str]]] = {
            "crlf-injection", "csrf-surface", "firebase-open",
            "supabase-anon", "nextjs-middleware-bypass", "wp-user-enum",
            "swagger-exposed", "mass-assignment", "cache-poisoning",
-           "tls-audit"}),
+           "tls-audit", "vuln-components"}),
 }
 
 ALL_CHECKS: set[str] = set().union(*(c[2] for c in CATEGORIES.values()))

@@ -72,14 +72,21 @@ def test_knowledge_coverage():
         "Missing authentication on object endpoint",
         "Direct object reference reachable anonymously",
         "Possible missing authorization (admin surface)",
+        "Missing authorization on admin endpoint",
         "TLS certificate expired", "TLS hostname mismatch",
         "Self-signed TLS certificate", "TLS certificate expires soon",
         "TLS certificate not yet valid", "Weak TLS protocol enabled",
         "Weak TLS cipher negotiated",
         "GraphQL mutations exposed", "Exposed sensitive GraphQL field",
+        "GraphQL weak input contract",
+        "Known vulnerable component (CVE-2020-11022)",
+        "End-of-life component (PHP 5.6)",
         "Exposed development server", "Local development server",
+        "Local listeners inventory",
+        "Local UDP service (DNS)", "LAN-visible UDP service (MDNS)",
         "Overly broad secret file permissions", "Secret file present",
         "Host firewall disabled", "Container/VM network present",
+        "Container published port", "WSL port forwarding",
         "Possible Unrestricted File Upload (confirmed)",
         "Upload Filter Bypass (RCE vector)",
         "Stored file via JSON upload",
@@ -1788,6 +1795,23 @@ def test_report_sarif_and_junit(tmp_path):
     assert any(c.find("skipped") is not None for c in cases)
 
 
+def test_report_html_soft_design(tmp_path):
+    from core.reporter import build_report, save_report
+    from core.scanner import Finding
+    vuln = Finding(title="Possible Reflected XSS", severity="MEDIUM",
+                   url="http://h.test/?q=1", detail="breaker here",
+                   evidence="gx1", confidence="Medium", method="GET",
+                   param="q", location="query", confirm="breakout",
+                   check="xss-reflected")
+    rep = build_report("http://h.test", "full", "9.9", findings=[vuln])
+    html = open(save_report(rep, str(tmp_path / "r.html")),
+                encoding="utf-8").read()
+    assert "linear-gradient" in html  # soft hero banner
+    assert "article class='finding mid'" in html  # card, not table row
+    assert "param: q" in html and "confirm: breakout" in html  # chips
+    assert "#0a0a0a" not in html  # old hacker theme gone
+
+
 def test_spa_extract_routes():
     from core.xss_spa import extract_spa_routes
     html = ('<script>fetch("/api/users");'
@@ -1914,7 +1938,7 @@ def test_degraded_report_never_clean(capsys):
     assert "SCAN DEGRADED" in out and "Clean" not in out
     rep2 = build_report("http://h.test", "full", "0.0", check_status=[])
     assert rep2["scan_health"] == {"degraded": False, "errors": [],
-                                   "skipped": [], "ran": 0}
+                                   "partial": [], "skipped": [], "ran": 0}
 
 
 def test_run_scan_exposes_check_health(monkeypatch):
@@ -1952,6 +1976,87 @@ def test_run_scan_exposes_check_health(monkeypatch):
     by_name = {r["check"]: r for r in health["checks"]}
     assert by_name["waf-detect"]["status"] == "passed"
     assert by_name["sqli-login"]["status"] == "skipped"
+
+
+def test_crawler_stats_and_truncation():
+    from core.crawler import crawl
+    from core.net import configure_net
+    configure_net()
+
+    class Resp:
+        def __init__(self, text="", url=""):
+            self.text = text
+            self.status_code = 200
+            self.url = url
+            self.headers = {}
+
+    links = "".join(f"<a href='/p{i}?x=1'>l</a>" for i in range(10))
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp(f"<html>{links}</html>", url)
+
+    stats: dict = {}
+    pages = crawl(S(), "http://h.test", f"<html>{links}</html>", 3,
+                  max_pages=4, depth=2, stats=stats)
+    assert stats["pages_discovered"] == len(pages) == 4
+    assert stats["pages_scanned"] >= 1
+    assert stats["truncated"] is True  # capped: said, not hidden
+
+
+def test_run_scan_health_carries_coverage(monkeypatch):
+    import core.scanner as S
+    import core.advanced  # noqa: F401
+    import core.domxss  # noqa: F401
+    import core.webchecks  # noqa: F401
+    from core.registry import REGISTRY
+    monkeypatch.setattr(S, "_fetch_base",
+                        lambda *a, **k: ("", "http://h.test", {}))
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class FakeSession:
+        cookies = []
+        headers = {}
+
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("<html>ok</html>", 200, url)
+
+    monkeypatch.setattr(S, "_session",
+                        lambda timeout, auth=None: FakeSession())
+    from core.net import configure_net
+    configure_net()
+    health: dict = {}
+    S.run_scan("http://h.test", threads=1, timeout=3, verbose=False,
+               deep=False, no_crawl=True,
+               skip_checks=set(REGISTRY) - {"waf-detect"}, health=health)
+    cov = health["coverage"]
+    assert cov["pages_discovered"] == 1 and cov["xss_urls_tested"] >= 1
+    assert cov["truncated"] is False
+    assert cov["checks_skipped"] == len(REGISTRY) - 1
+    assert cov["requests_sent"] >= 0
+
+
+def test_coverage_truncated_banner_and_txt(tmp_path, capsys):
+    from core.reporter import (build_report, print_findings, save_report)
+    cov = {"pages_discovered": 50, "pages_scanned": 30,
+           "xss_urls_tested": 60, "pool_seen": 90,
+           "api_targets_discovered": 10, "api_targets_tested": 4,
+           "requests_sent": 500, "request_budget": 0, "truncated": True,
+           "checks_passed": 40, "checks_errored": 0, "checks_skipped": 4}
+    print_findings([], coverage=cov)
+    assert "TRUNCATED" in capsys.readouterr().out
+    rep = build_report("http://h.test", "full", "0.0", coverage=cov)
+    assert rep["coverage"]["truncated"] is True
+    txt = save_report(rep, str(tmp_path / "r.txt"))
+    assert "TRUNCATED" in open(txt, encoding="utf-8").read()
+    rep2 = build_report("http://h.test", "full", "0.0")
+    assert rep2["coverage"] == {}
 
 
 def test_canonicalize_url():
@@ -2009,20 +2114,21 @@ def test_extract_html_refs_unified():
 def test_resolve_coverage_profiles():
     from types import SimpleNamespace
     from core.discovery import resolve_coverage, PROFILES
-    assert PROFILES["balanced"]["max_pages"] == 8  # historic defaults kept
+    assert PROFILES["balanced"]["max_pages"] == 12  # M15 widened
     b = resolve_coverage(SimpleNamespace())
-    assert (b["max_pages"], b["crawl_depth"], b["max_xss_urls"]) == (8, 2, 25)
+    assert (b["max_pages"], b["crawl_depth"], b["max_xss_urls"]) == (12, 2, 30)
     q = resolve_coverage(SimpleNamespace(profile="quick"))
     assert q["max_pages"] == 4 and q["max_xss_urls"] == 12
     t = resolve_coverage(SimpleNamespace(profile="thorough"))
-    assert t["max_pages"] == 30 and t["crawl_depth"] == 4
+    assert t["max_pages"] == 50 and t["crawl_depth"] == 4
+    assert t["spa_visits"] == 4 and t["traffic_cap"] == 100
     over = resolve_coverage(SimpleNamespace(profile="thorough",
                                              max_pages=5, depth=None,
                                              max_xss_urls=None))
     assert over["max_pages"] == 5  # explicit flag wins
     assert over["crawl_depth"] == 4
     bad = resolve_coverage(SimpleNamespace(profile="nope"))
-    assert bad["max_pages"] == 8  # unknown -> balanced
+    assert bad["max_pages"] == 12  # unknown -> balanced
 
 
 def test_probe_pool_canonical_dedupe():
@@ -2402,7 +2508,8 @@ def test_graphql_check_full_chain():
         session_b=_gql_session(intro, data))
     titles = [f.title for f in out]
     assert "GraphQL introspection enabled" in titles
-    assert "GraphQL mutations exposed" in titles  # mapped, never executed
+    assert "GraphQL mutations exposed" in titles
+    assert "GraphQL weak input contract" in titles  # nullable role arg
     assert "Exposed sensitive GraphQL field" in titles
     assert "Confirmed IDOR / BOLA (cross-session)" in titles
     assert next(f for f in out
@@ -2467,7 +2574,103 @@ def test_windows_netstat_parse():
             "LISTENING       4242\n"
             "  UDP    0.0.0.0:5353           *:*                                    \n")
     rows = parse_windows_netstat(text)
-    assert rows == [{"ip": "127.0.0.1", "port": 3000, "pid": "4242"}]
+    assert rows == [{"ip": "127.0.0.1", "port": 3000, "pid": "4242",
+                     "state": "LISTENING"}]
+
+
+def test_windows_netstat_listening_only_and_ipv6():
+    from core.localaudit import parse_windows_netstat
+    text = ("\n".join([
+        "  TCP    0.0.0.0:80               0.0.0.0:0              LISTENING       4",
+        "  TCP    [::]:443                 [::]:0                 LISTENING       4",
+        "  TCP    127.0.0.1:5000           127.0.0.1:60000        ESTABLISHED     123",
+        "  TCP    192.168.1.5:443          93.184.216.34:51234    TIME_WAIT       0",
+    ]))
+    rows = parse_windows_netstat(text)
+    assert len(rows) == 4  # parser preserves every state
+    assert {(r["ip"], r["port"], r["state"]) for r in rows} == {
+        ("0.0.0.0", 80, "LISTENING"), ("::", 443, "LISTENING"),
+        ("127.0.0.1", 5000, "ESTABLISHED"), ("192.168.1.5", 443, "TIME_WAIT")}
+    listeners = [r for r in rows if r["state"] == "LISTENING"]
+    assert len(listeners) == 2  # ESTABLISHED is never a listener
+    assert ("127.0.0.1", 5000) not in {(r["ip"], r["port"])
+                                       for r in listeners}
+
+
+def test_proc_net_tcp6():
+    from core.localaudit import parse_proc_net_tcp
+    head = ("  sl  local_address rem_address   st tx_queue rx_queue tr "
+            "tm->when retrnsmt   uid  timeout inode")
+    rows = parse_proc_net_tcp("\n".join([
+        head,
+        "   0: 00000000000000000000000001000000:0BB8 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 111 1 0000000000000000 100 0 0 10 0",
+        "   1: 00000000000000000000000000000000:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 222 1 0000000000000000 100 0 0 10 0",
+        "   2: 0100007F:1F90 00000000:0000 01 00000000:00000000 00:00000000 00000000     0        0 333 1 0000000000000000 100 0 0 10 0",
+    ]))
+    by_inode = {r["inode"]: r for r in rows}
+    assert by_inode["111"]["ip"] == "::1"  # not misread as IPv4
+    assert by_inode["111"]["port"] == 3000
+    assert by_inode["222"]["ip"] == "::"  # all-interfaces v6, distinct from 0.0.0.0
+    assert by_inode["333"]["ip"] == "127.0.0.1"  # v4 still fine
+    assert by_inode["333"]["state"] == "01"  # non-LISTEN preserved
+    assert parse_proc_net_tcp("garbage") == []
+
+
+def test_listener_model_and_scope():
+    from core.localaudit import (bind_scope, ip_version, new_listener,
+                                 parse_cgroup_service)
+    assert bind_scope("127.0.0.1") == "loopback"
+    assert bind_scope("::1") == "loopback"
+    assert bind_scope("0.0.0.0") == "all"
+    assert bind_scope("::") == "all"
+    assert bind_scope("192.168.1.5") == "private"
+    assert bind_scope("8.8.8.8") == "public"
+    assert bind_scope("fe80::1%12") == "private"
+    assert bind_scope("") == "unknown"
+    assert ip_version("::1") == "IPv6" and ip_version("1.2.3.4") == "IPv4"
+    rec = new_listener(proto="udp", ip="::", port=53)
+    assert rec["scope"] == "all" and rec["ipver"] == "IPv6"
+    assert rec["confidence"] == "low" and rec["source"] == "connect-scan"
+    assert rec["process"] == "?" and rec["exe"] == ""
+    assert parse_cgroup_service("0::/system.slice/nginx.service") == \
+        "nginx.service"
+    assert parse_cgroup_service(
+        "0::/docker/abcdef1234567890") == "docker/abcdef123456"
+    assert parse_cgroup_service("0::/user.slice/none") == ""
+
+
+def test_parse_ps_listeners_join():
+    from core.localaudit import parse_ps_listeners
+    doc = {
+        "tcp": [
+            {"LocalAddress": "127.0.0.1", "LocalPort": 3000,
+             "OwningProcess": 11},
+            {"LocalAddress": "0.0.0.0", "LocalPort": 80,
+             "OwningProcess": 4},
+        ],
+        "udp": [{"LocalAddress": "0.0.0.0", "LocalPort": 53,
+                 "OwningProcess": 11}],
+        "procs": [
+            {"Id": 11, "ProcessName": "node",
+             "Path": "C:\\node\\node.exe"},
+            {"Id": 4, "ProcessName": "System", "Path": ""},
+        ],
+        "services": [{"Name": "W3SVC", "ProcessId": 4}],
+        "parents": [{"ProcessId": 11, "ParentProcessId": 1},
+                    {"ProcessId": 1, "ParentProcessId": 0}],
+    }
+    rows = parse_ps_listeners(doc)
+    by_port = {r["port"]: r for r in rows}
+    assert by_port[3000]["process"] == "node"
+    assert by_port[3000]["exe"] == "C:\\node\\node.exe"
+    assert by_port[3000]["parent"] == "1"  # ppid known, name unknown
+    assert by_port[3000]["confidence"] == "high"
+    assert by_port[80]["service"] == "W3SVC"
+    assert by_port[80]["confidence"] == "medium"  # no exe
+    udp = [r for r in rows if r["proto"] == "udp"][0]
+    assert udp["confidence"] == "low" and udp["source"] == "powershell"
+    assert parse_ps_listeners({}) == []
+    assert parse_ps_listeners(None) == []
 
 
 def test_classify_dev_banner():
@@ -2477,6 +2680,32 @@ def test_classify_dev_banner():
     assert classify_dev_banner("__NEXT_DATA__ {}", {}) == "nextjs"
     assert classify_dev_banner("<html>hello</html>", {}) == ""
     assert classify_dev_banner("", {"Server": "webpack-dev-server"}) == "webpack"
+
+
+def test_dev_fingerprint_breadth_and_no_single_word_fp():
+    from core.localaudit import classify_dev_banner
+    assert classify_dev_banner("__NUXT__ {}", {}) == "nuxt"
+    assert classify_dev_banner("ng-version x ng-cli", {}) == "angular-dev"
+    assert classify_dev_banner("django-debug-toolbar on", {}) == "django-debug"
+    assert classify_dev_banner("Werkzeug console is locked", {}) == "flask-debug"
+    assert classify_dev_banner("Whoops, looks like wat", {}) == "laravel-debug"
+    assert classify_dev_banner("", {"Server": "PHP 8.1.0 Development Server",
+                                     "X-Powered-By": "PHP/8.1"}) == "php-dev-server"
+    assert classify_dev_banner("nodemon watching express", {}) == "express-dev"
+    assert classify_dev_banner('{"openapi":1}/actuator/health', {}) == \
+        "spring-actuator"
+    assert classify_dev_banner("@storybook/preview here", {}) == "storybook"
+    assert classify_dev_banner("jupyter-notebook tree", {}) == "jupyter"
+    assert classify_dev_banner("grafana/login page", {}) == "grafana"
+    assert classify_dev_banner("swagger-ui bundle", {}) == "api-docs-dev"
+    assert classify_dev_banner("Fast Refresh runtime", {}) == "nextjs-dev"
+    assert classify_dev_banner(
+        "<form>admin dashboard login</form>", {}) == "admin-panel"
+    # single generic words must NOT fire
+    assert classify_dev_banner("you are invited", {}) == ""
+    assert classify_dev_banner("<h1>admin</h1>", {}) == ""
+    assert classify_dev_banner("express delivery", {}) == ""
+    assert classify_dev_banner("", {}) == ""
 
 
 def test_secret_file_status_perms(tmp_path):
@@ -2501,6 +2730,73 @@ def test_secret_file_status_perms(tmp_path):
     assert rec2["broad"] is False
 
 
+def test_secret_candidates_breadth(tmp_path):
+    from core.localaudit import _resolve_secret_candidates
+    home = tmp_path / "home"
+    (home / ".aws").mkdir(parents=True)
+    (home / ".aws" / "credentials").write_text("x", encoding="utf-8")
+    (home / ".ssh").mkdir()
+    (home / ".ssh" / "id_ed25519").write_text("x", encoding="utf-8")
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    (cwd / ".env").write_text("x", encoding="utf-8")
+    (cwd / ".env.prod").write_text("x", encoding="utf-8")
+    found = {p: k for p, k in
+             _resolve_secret_candidates(str(home), str(cwd))}
+    assert any(v == "AWS credentials" for v in found.values())
+    assert any(v == "SSH private key" for v in found.values())
+    assert sum(1 for v in found.values()
+               if v == "environment file") == 2  # .env + .env.prod
+
+
+def test_fingerprint_shape_never_stores(tmp_path):
+    from core.localaudit import fingerprint_secret_shape
+    pem = tmp_path / "key.pem"
+    pem.write_bytes(b"-----BEGIN RSA PRIVATE KEY-----\nABC")
+    assert fingerprint_secret_shape(str(pem)) == "PEM private key"
+    jwt = tmp_path / "tok"
+    jwt.write_text("eyJhbGciOiJ9.e30.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+                   encoding="utf-8")
+    assert fingerprint_secret_shape(str(jwt)) == "JWT"
+    txt = tmp_path / "plain"
+    txt.write_text("hello world", encoding="utf-8")
+    assert fingerprint_secret_shape(str(txt)) == ""
+    assert fingerprint_secret_shape(str(tmp_path / "missing")) == ""
+
+
+def test_summarize_acl_locale_proof():
+    from core.localaudit import _summarize_acl
+    rows = [{"path": "C:\\u\\.env", "owner": "X\\user",
+             "sids": ["S-1-1-0", "S-1-5-32-544"]},
+            {"path": "C:\\u\\ok", "owner": "X\\user",
+             "sids": ["S-1-5-32-544"]},
+            {"nope": 1}]
+    out = _summarize_acl(rows)
+    assert out["C:\\u\\.env"]["broad_read"] is True
+    assert out["C:\\u\\.env"]["owner"] == "X\\user"
+    assert out["C:\\u\\ok"]["broad_read"] is False
+    assert _summarize_acl([]) == {}
+
+
+def test_windows_acl_audit_guarded(monkeypatch):
+    import sys
+    import subprocess
+    import core.localaudit as L
+
+    class Proc:
+        returncode = 0
+        stdout = ('[{"path":"C:\\\\u\\\\.env","owner":"X\\\\user",'
+                  '"sids":["S-1-5-32-545"]}]')
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(subprocess, "run",
+                        lambda *a, **k: Proc())
+    out = L.windows_acl_audit(["C:\\u\\.env"])
+    assert out["C:\\u\\.env"]["broad_read"] is True
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert L.windows_acl_audit(["/x"]) == {}
+
+
 def test_run_local_audit_orchestration(monkeypatch):
     import core.localaudit as L
     monkeypatch.setattr(L, "collect_listening", lambda timeout=3.0: [
@@ -2508,9 +2804,10 @@ def test_run_local_audit_orchestration(monkeypatch):
         {"ip": "127.0.0.1", "port": 8000, "process": "python/app"},
         {"ip": "127.0.0.1", "port": 9000, "process": "?"},
     ])
-    monkeypatch.setattr(L, "probe_local_http", lambda port, timeout=3.0: (
+    monkeypatch.setattr(L, "probe_local_http", lambda port, timeout=3.0,
+                                                            host="127.0.0.1": (
         ("<script src='/@vite/client'></script>", {}) if port == 5173 else
-        ("<div>vite app</div>", {}) if port == 8000 else
+        ("<div>vite hmr @vite/client</div>", {}) if port == 8000 else
         ("<html>ok</html>", {})))
     monkeypatch.setattr(L, "secret_file_status", lambda **k: [
         {"path": "/home/u/.env", "kind": "environment file", "broad": True}])
@@ -2524,6 +2821,220 @@ def test_run_local_audit_orchestration(monkeypatch):
     assert by_title["Host firewall disabled"].severity == "LOW"
     assert by_title["Container/VM network present"].severity == "INFO"
     assert not any("9000" in f.url for f in out)  # plain ports stay quiet
+    inv = by_title["Local listeners inventory"]
+    assert inv.severity == "INFO" and "3 listeners" in inv.detail
+
+
+def test_linux_process_info_guarded():
+    from core.localaudit import linux_process_info
+    assert linux_process_info("99999999") == {
+        "pid": "99999999", "comm": "", "exe": "", "ppid": "",
+        "parent": "", "service": ""}
+    assert linux_process_info("")["comm"] == ""
+
+
+def test_exposure_model_matrix():
+    from core.localaudit import (classify_exposure, exposure_verdict,
+                                 classify_interface, local_interface_map,
+                                 new_listener)
+    ifaces = {"192.168.1.5": "eth0", "10.7.0.2": "tun0",
+              "172.17.0.1": "docker0"}
+    assert classify_exposure(new_listener(ip="127.0.0.1"),
+                             ifaces)["class"] == "loopback-only"
+    assert classify_exposure(new_listener(ip="::1"),
+                             ifaces)["class"] == "loopback-only"
+    assert classify_exposure(new_listener(ip="0.0.0.0"),
+                             ifaces)["class"] == "all-interfaces"
+    assert classify_exposure(new_listener(ip="::"),
+                             ifaces)["class"] == "all-interfaces"
+    assert classify_exposure(new_listener(ip="192.168.1.5"),
+                             ifaces)["class"] == "lan-visible"
+    assert classify_exposure(new_listener(ip="10.7.0.2"),
+                             ifaces)["class"] == "virtual-network-visible"
+    assert classify_exposure(new_listener(ip="172.17.0.1"),
+                             ifaces)["class"] == "virtual-network-visible"
+    assert classify_exposure(new_listener(ip="2001:db8::1"),
+                             ifaces)["class"] == "ipv6-visible"
+    assert classify_exposure(new_listener(ip=""),
+                             ifaces)["class"] == "unknown"
+    assert classify_interface("tun0", "10.7.0.2") == "vpn"
+    assert classify_interface("docker0", "172.17.0.1") == "docker"
+    assert classify_interface("vEthernet (WSL)", "x") == "wsl"
+    assert classify_interface("eth0", "192.168.1.5") == "lan"
+    assert local_interface_map()["127.0.0.1"] == "lo"
+    # verdict: severity from bind+firewall+service, never CRITICAL
+    assert exposure_verdict("all-interfaces", "off", True)[0] == "MEDIUM"
+    assert exposure_verdict("all-interfaces", "on", True)[1] == "Medium"
+    assert exposure_verdict("all-interfaces", "off", True)[1] == "High"
+    assert exposure_verdict("all-interfaces", "on", False)[0] == "LOW"
+    assert exposure_verdict("loopback-only", "off", True)[0] == "INFO"
+    assert exposure_verdict("lan-visible", "unknown", True)[0] == "MEDIUM"
+    assert exposure_verdict("unknown", "off", True)[0] == "INFO"
+    for cls in ("loopback-only", "lan-visible", "all-interfaces",
+                "ipv6-visible", "virtual-network-visible", "unknown"):
+        for fw in ("on", "off", "unknown"):
+            assert exposure_verdict(cls, fw, True)[0] != "CRITICAL"
+            assert exposure_verdict(cls, fw, False)[0] != "CRITICAL"
+
+
+def test_run_local_audit_lan_visible(monkeypatch):
+    import core.localaudit as L
+    monkeypatch.setattr(L, "collect_listening", lambda timeout=3.0: [
+        L.new_listener(proto="tcp", ip="192.168.1.5", port=3000,
+                       process="node", confidence="high", source="proc"),
+    ])
+    monkeypatch.setattr(L, "local_interface_map",
+                        lambda: {"192.168.1.5": "eth0"})
+    monkeypatch.setattr(L, "firewall_status", lambda: "on")
+    monkeypatch.setattr(L, "probe_local_http",
+                        lambda port, timeout=3.0, host="127.0.0.1": (
+                            "<script src='/@vite/client'></script>", {}))
+    monkeypatch.setattr(L, "secret_file_status", lambda **k: [])
+    monkeypatch.setattr(L, "container_interfaces", lambda: [])
+    out = L.run_local_audit()
+    hit = next(f for f in out
+               if f.title == "Exposed development server")
+    assert hit.severity == "MEDIUM" and hit.confidence == "Medium"
+    assert "lan-visible" in hit.detail
+
+
+def test_docker_parsers_and_graph():
+    from core.localaudit import (parse_docker_ports, parse_docker_ps,
+                                 parse_wsl_portproxy, docker_graph,
+                                 new_listener)
+    assert parse_docker_ports(
+        "0.0.0.0:3000->3000/tcp, :::3000->3000/tcp, 80/tcp") == [
+        {"host_ip": "0.0.0.0", "host_port": 3000, "container_port": 3000,
+         "proto": "tcp"},
+        {"host_ip": "::", "host_port": 3000, "container_port": 3000,
+         "proto": "tcp"},
+    ]
+    assert parse_docker_ports("bogus") == []
+    doc = ('{"Names":"webapp","Image":"node:20","State":"running",'
+           '"Ports":"0.0.0.0:3000->3000/tcp"}\nnot-json\n'
+           '{"Names":"db","Image":"pg","State":"running","Ports":""}')
+    cons = parse_docker_ps(doc)
+    assert [c["name"] for c in cons] == ["webapp", "db"]
+    assert cons[0]["ports"][0]["host_port"] == 3000
+    assert parse_docker_ps("") == []
+    pp = parse_wsl_portproxy(
+        "Listen on ipv4:             Connect to ipv4:\n"
+        "Address         Port        Address         Port\n"
+        "0.0.0.0         3000        172.20.1.2      3000\n"
+        "garbage line\n")
+    assert pp == [{"listen": "0.0.0.0:3000", "listen_port": 3000,
+                   "connect": "172.20.1.2:3000"}]
+    assert parse_wsl_portproxy("") == []
+    listeners = [new_listener(proto="tcp", ip="0.0.0.0", port=3000,
+                              process="docker-proxy")]
+    rows = docker_graph(listeners, cons, {"webapp": "172.17.0.2"})
+    assert rows[0]["container"] == "172.17.0.2"
+    assert rows[0]["service"] == "docker-proxy"
+    assert rows[0]["exposure"] == "all-interfaces"
+    assert docker_graph([], cons, {})[0]["service"] == "?"
+
+
+def test_run_local_audit_docker_and_wsl(monkeypatch):
+    import core.localaudit as L
+    monkeypatch.setattr(L, "collect_listening", lambda timeout=3.0: [
+        L.new_listener(proto="tcp", ip="0.0.0.0", port=3000,
+                       process="docker-proxy"),
+    ])
+    monkeypatch.setattr(L, "probe_local_http",
+                        lambda port, timeout=3.0, host="127.0.0.1": (
+                            "<html>ok</html>", {}))
+    monkeypatch.setattr(L, "secret_file_status", lambda **k: [])
+    monkeypatch.setattr(L, "firewall_status", lambda: "unknown")
+    monkeypatch.setattr(L, "container_interfaces", lambda: ["docker0"])
+    monkeypatch.setattr(L, "docker_containers", lambda **k: [
+        {"name": "webapp", "image": "node:20", "state": "running",
+         "ports": [{"host_ip": "0.0.0.0", "host_port": 3000,
+                    "container_port": 3000, "proto": "tcp"}]}])
+    monkeypatch.setattr(L, "docker_container_ips",
+                        lambda names, **k: {"webapp": "172.17.0.2"})
+    monkeypatch.setattr(L, "wsl_forwardings", lambda **k: [
+        {"listen": "0.0.0.0:4000", "listen_port": 4000,
+         "connect": "172.20.1.2:4000"}])
+    out = L.run_local_audit()
+    by_title = {f.title: f for f in out}
+    assert "172.17.0.2" in by_title["Container published port"].detail
+    assert by_title["Container published port"].severity == "MEDIUM"
+    assert by_title["WSL port forwarding"].severity == "INFO"
+
+
+def test_classify_udp_service():
+    from core.localaudit import classify_udp_service
+    assert classify_udp_service(53) == "dns"
+    assert classify_udp_service(5353) == "mdns"
+    assert classify_udp_service(1900) == "ssdp"
+    assert classify_udp_service(9999) == ""
+    assert classify_udp_service(9999, "minecraft-server") == "minecraft"
+    assert classify_udp_service("bogus") == ""
+
+
+def test_dns_wire_roundtrip():
+    from core.localaudit import build_dns_query, parse_dns_reply
+    import struct
+    pkt = build_dns_query("gash-ab.invalid.", 0x1234)
+    assert len(pkt) > 12
+    # server side: echo a minimal NXDOMAIN for our id
+    reply = struct.pack(">HHHHHH", 0x1234, 0x8183, 1, 0, 0, 0) + pkt[12:]
+    assert parse_dns_reply(reply, 0x1234) == 3  # NXDOMAIN
+    assert parse_dns_reply(reply, 0x9999) is None  # wrong id
+    assert parse_dns_reply(b"short", 0x1234) is None
+    assert parse_dns_reply(None, 0x1234) is None
+
+
+def test_probe_dns_live_loopback():
+    import socket
+    import struct
+    from core.localaudit import probe_dns_server
+    srv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    srv.bind(("127.0.0.1", 0))
+    port = srv.getsockname()[1]
+    srv.settimeout(5)
+    stop = {"done": False}
+
+    def _serve():
+        try:
+            data, addr = srv.recvfrom(512)
+            qid = struct.unpack(">H", data[:2])[0]
+            srv.sendto(struct.pack(">HHHHHH", qid, 0x8180, 1, 0, 0, 0)
+                       + data[12:], addr)
+        except Exception:
+            pass
+        finally:
+            stop["done"] = True
+
+    import threading
+    threading.Thread(target=_serve, daemon=True).start()
+    try:
+        assert probe_dns_server(port, timeout=4) is True
+    finally:
+        srv.close()
+    assert probe_dns_server(1, timeout=0.5) is False  # closed port
+
+
+def test_run_local_audit_udp_findings(monkeypatch):
+    import core.localaudit as L
+    monkeypatch.setattr(L, "collect_listening", lambda timeout=3.0: [
+        L.new_listener(proto="udp", ip="127.0.0.1", port=53,
+                       process="dnsd", confidence="low", source="proc"),
+        L.new_listener(proto="udp", ip="192.168.1.5", port=5353,
+                       process="?", confidence="low", source="proc"),
+        L.new_listener(proto="udp", ip="127.0.0.1", port=9999,
+                       process="?", confidence="low", source="proc"),
+    ])
+    monkeypatch.setattr(L, "probe_dns_server", lambda *a, **k: True)
+    monkeypatch.setattr(L, "secret_file_status", lambda **k: [])
+    monkeypatch.setattr(L, "firewall_status", lambda: "unknown")
+    monkeypatch.setattr(L, "container_interfaces", lambda: [])
+    out = L.run_local_audit()
+    by_title = {f.title: f for f in out}
+    assert by_title["Local UDP service (DNS)"].severity == "INFO"
+    assert "reply verified" in by_title["Local UDP service (DNS)"].detail
+    assert by_title["LAN-visible UDP service (MDNS)"].severity == "LOW"
+    assert not any("9999" in f.url for f in out)  # unknown stays quiet
 
 
 def test_scan_target_local_gate(monkeypatch, tmp_path):
@@ -2532,7 +3043,7 @@ def test_scan_target_local_gate(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     calls = []
 
-    def fake_audit(timeout=3.0):
+    def fake_audit(timeout=3.0, deep=False, health=None):
         calls.append(timeout)
         from core.scanner import Finding
         return [Finding(title="Local development server (loopback-bound)",
@@ -2553,10 +3064,38 @@ def test_scan_target_local_gate(monkeypatch, tmp_path):
                             "scan", None)
     assert calls == [3]
     assert any("Local development server" in f.title for f in res.findings)
+    assert any(r["check"] == "local-audit" and r["status"] != "error"
+               for r in res.checks)
+    assert any(r["check"] == "local-audit" and r["status"] != "error"
+               for r in res.checks)
     calls.clear()
     res2 = gash._scan_target("http://example.com", SimpleNamespace(**base),
                              "scan", None)
     assert calls == [] and res2.findings == []
+
+
+def test_scan_target_local_error_degrades(monkeypatch, tmp_path):
+    import gash
+    from types import SimpleNamespace
+    monkeypatch.chdir(tmp_path)
+
+    def _boom(timeout=3.0, deep=False):
+        raise RuntimeError("no-proc")
+
+    monkeypatch.setattr("core.localaudit.run_local_audit", _boom)
+    monkeypatch.setattr(gash, "run_scan", lambda *a, **k: [])
+    base = dict(delay=0.0, max_requests=0, cookie=None, header=None,
+                login_user=None, login_pass=None, login_url=None,
+                timeout=3, skip_ports=True, ports=None, threads=5,
+                verbose=False, wordlist=None, quick=False, deep=False,
+                skip_checks=set(), no_crawl=True, dom=False,
+                blind_callback=None, scope=None, fail_on=None, oob=False,
+                proxy=None, user_agent=None, insecure=False, cookie_b=None,
+                header_b=None, output=None)
+    res = gash._scan_target("http://127.0.0.1:9", SimpleNamespace(**base),
+                            "scan", None)
+    err = next(r for r in res.checks if r["check"] == "local-audit")
+    assert err["status"] == "error" and res.degraded is True
 
 
 def test_summarize_traffic_split():
@@ -2584,6 +3123,13 @@ def test_summarize_traffic_split():
     scoped = summarize_traffic(entries, "http://h.test",
                                scope_hosts={"other.test"})
     assert scoped["pool"] == [] and scoped["graph"] == []
+    capped = summarize_traffic(entries, "http://h.test",
+                               caps={"graph": 1})
+    assert len(capped["graph"]) == 1  # cap truncates the tail
+    ws_only = summarize_traffic(
+        [{"url": "ws://h.test/live", "method": "WS"}], "http://h.test",
+        caps={"ws": 0})
+    assert ws_only["websockets"] == ["ws://h.test/live"]  # 0 = default
 
 
 def test_runtime_discover_capture_offline(monkeypatch):
@@ -2796,3 +3342,164 @@ def test_authz_matrix_uuid_and_admin():
         ctx={"found_paths": ["http://h.test/admin"]})
     assert any(f.title == "Possible missing authorization (admin surface)"
                for f in out2)
+
+
+def test_traffic_to_targets_privileged():
+    from core.api_params import traffic_to_targets
+    rows = [
+        {"url": "http://h.test/api/orders?status=open", "method": "GET",
+         "req_ct": "", "post_data": ""},
+        {"url": "http://h.test/api/users", "method": "POST",
+         "req_ct": "application/json",
+         "post_data": '{"user":{"role":"user"}}'},
+        {"url": "ws://h.test/live", "method": "WS"},
+        {"url": "http://h.test/api/users", "method": "POST",
+         "req_ct": "application/json",
+         "post_data": '{"user":{"role":"user"}}'},
+    ]
+    targets = traffic_to_targets(rows, "http://h.test")
+    assert len(targets) == 2  # deduped, sockets skipped
+    post = next(t for t in targets if t.method == "POST")
+    assert post.url == "http://h.test/api/users"
+    assert "user.role" in [p.name for p in post.params]
+    assert traffic_to_targets([], "http://h.test") == []
+
+
+def test_identifier_graph_sources():
+    from core.api_params import ApiTarget, ApiParam
+    from core.authz import identifier_graph
+    pages = {"http://h.test/": "<a href='/api/orders/5'>o</a>"}
+    api = [ApiTarget(url="http://h.test/api/users", method="GET",
+                     content_type="application/json",
+                     params=[ApiParam(name="id", location="query",
+                                      value="5")])]
+    traffic = [{"url": "http://h.test/g?session="
+                       "123e4567-e89b-12d3-a456-426614174000",
+                "method": "GET", "req_ct": "", "post_data": ""},
+               {"url": "http://h.test/graphql", "method": "POST",
+                "req_ct": "application/json",
+                "post_data": '{"query":"q","variables":{"id":9}}'}]
+    graph = identifier_graph(pages, api, traffic, "http://h.test")
+    by_source = {}
+    for g in graph:
+        by_source.setdefault(g["source"], []).append(
+            (g["ref"].kind, g["ref"].name))
+    assert ("int", "2") in by_source.get("href", [])  # path segment index
+    assert ("int", "id") in by_source.get("openapi", [])
+    assert ("uuid", "session") in by_source.get("traffic-url", [])
+    assert ("int", "id") in by_source.get("graphql-vars", [])
+
+
+def test_authz_matrix_admin_confirm():
+    import core.advanced as A
+    from core.net import configure_net
+    configure_net()
+    body = '{"users":[{"email":"a@b.c"}]}'
+    user, anon, adm = _matrix_sessions(
+        {"http://h.test/admin/users/5": (200, body)},
+        {"http://h.test/admin/users/5": (403, "denied")},
+        {"http://h.test/admin/users/5": (200, body)})
+    pages = {"http://h.test/": "<a href='/admin/users/5'>a</a>"}
+    out = A.test_authz_matrix(user, pages, "http://h.test", 3,
+                              anon_session=anon, session_c=adm)
+    hit = next(f for f in out
+               if f.title == "Missing authorization on admin endpoint")
+    assert hit.severity == "MEDIUM" and hit.confidence == "High"
+
+
+def test_graphql_graph_and_weak_contract():
+    from core.graphql import schema_graph, weak_contracts
+    from core.net import configure_net
+    configure_net()
+    parsed = __import__("core.graphql", fromlist=["parse_schema"]).parse_schema(
+        _gql_schema())
+    graph = schema_graph(parsed, "http://h.test/graphql")
+    assert graph["endpoint"] == "http://h.test/graphql"
+    assert any(q["has_id_arg"] for q in graph["queries"])
+    assert "users" in graph["sensitive"]
+    assert "updateUser" in graph["sensitive"]
+    wc = weak_contracts(parsed)
+    assert wc == [{"mutation": "updateUser", "arg": "role",
+                   "issue": "nullable sensitive input"}]
+    parsed2 = {"queries": [], "mutations": [
+        {"name": "promote", "args": [{"name": "role", "required": False}]}],
+        "objects": {}}
+    assert weak_contracts(parsed2) == [
+        {"mutation": "promote", "arg": "role",
+         "issue": "nullable sensitive input"}]
+    assert weak_contracts({}) == []
+
+
+def test_cve_version_compare_and_ranges():
+    from core.cve import parse_version, in_range, match_component
+    assert parse_version("1.12.4") == ("1", "12", "4")
+    assert parse_version("v3.5") == ("3", "5")
+    assert parse_version("abc") is None and parse_version("") is None
+    assert in_range(("1", "9"), ("1",), ("3", "4", "1")) is True
+    assert in_range(("3", "5", "0"), ("1",), ("3", "4", "1")) is False
+    assert in_range(("3", "5"), ("1",), ("3", "4", "1")) is False
+    assert match_component("jquery", "1.12.4")[0]["cve"] == "CVE-2020-11022"
+    assert match_component("jquery", "3.6.0") == []
+    assert match_component("jquery", "garbage") == []
+    assert match_component("drupal", "7.57")[0]["severity"] == "CRITICAL"
+    assert match_component("wordpress", "4.7.1")[0]["cve"] == \
+        "CVE-2017-1001000"
+    assert match_component("nope", "1.0") == []
+
+
+def test_cve_extraction_sources():
+    from core.cve import (extract_versions, extract_js_versions,
+                          components_with_findings)
+    html = ('<meta name="generator" content="WordPress 4.7.1" />'
+            '<script src="/wp-includes/js/jquery/jquery.js?ver=1.12.4">'
+            '</script>'
+            '<link href="/theme.css?ver=9.9" />')
+    found = extract_versions(html, {"X-Powered-By": "PHP/5.6.40"})
+    by_comp = {c: v for c, v, _ in found}
+    assert by_comp["wordpress"] == "4.7.1"
+    assert by_comp["jquery"] == "1.12.4"
+    assert "9.9" not in by_comp.values()  # theme ver= ignored
+    assert by_comp["php-eol"] == "5.6.40"
+    js = "/*! jQuery v1.12.4 | (c) JS Foundation */"
+    assert ("jquery", "1.12.4", "js-banner") in extract_js_versions(js)
+    assert extract_js_versions("var x = 1;") == []
+    payloads = components_with_findings(found)
+    titles = [p["title"] for p in payloads]
+    assert any("CVE-2017-1001000" in t for t in titles)
+    assert any("CVE-2020-11022" in t for t in titles)
+    assert components_with_findings([("jquery", "3.6.0", "js-banner")]) == []
+
+
+def test_vuln_components_check():
+    import core.webchecks as W
+    from core.net import configure_net
+    configure_net()
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if url.endswith("CHANGELOG.txt"):
+                return Resp("Drupal 7.57, 2018-02-21\nblah", 200, url)
+            if url.endswith(".js"):
+                return Resp("/*! jQuery v3.6.0 */", 200, url)
+            return Resp("nope", 404, url)
+
+    pages = {"http://h.test/":
+             '<meta name="generator" content="WordPress 4.7.1" />'
+             '<script src="/app.js"></script>'}
+    out = W.test_vuln_components(S(), "http://h.test", pages,
+                                 pages["http://h.test/"],
+                                 {"X-Powered-By": "PHP/8.1.0"}, 3)
+    titles = [f.title for f in out]
+    assert any("CVE-2017-1001000" in t for t in titles)
+    assert any("CVE-2018-7600" in t for t in titles)  # CHANGELOG Drupal
+    assert next(f for f in out if "Drupalgeddon" in f.detail
+                or "2018-7600" in f.title).severity == "CRITICAL"
+    assert not any("jQuery" in (f.detail + f.title) and "3.6.0" in
+                   (f.detail + f.evidence) for f in out)

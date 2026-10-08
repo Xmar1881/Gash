@@ -323,6 +323,18 @@ KB: list[tuple[str, dict]] = [
         remediation="Informational surface map (never executed): review every "
                     "mutation's input validation and auth; hide admin-only "
                     "mutations behind roles.")),
+    ("GraphQL weak input contract", dict(
+        cwe="CWE-915", owasp="A08:2021 – Software and Data Integrity Failures",
+        cvss="no estimate",
+        remediation="Static schema note: a sensitive mutation input is "
+                    "nullable client-side. Enforce allowlists + non-null + "
+                    "server-side authorization regardless of the schema.")),
+    ("Missing authorization on admin endpoint", dict(
+        cwe="CWE-862", owasp="A01:2021 – Broken Access Control",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N (6.5)",
+        remediation="PROVEN with an admin session: a normal user reads the "
+                    "same admin content. Add role checks on every admin path "
+                    "and audit who already read what.")),
     ("Exposed sensitive GraphQL field", dict(
         cwe="CWE-200", owasp="A01:2021 – Broken Access Control",
         cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N (7.5)",
@@ -427,6 +439,16 @@ KB: list[tuple[str, dict]] = [
         cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N (5.9)",
         remediation="Prefer AES-GCM/ChaCha20-Poly1305, drop RC4/3DES/MD5/ "
                     "export suites in the cipher string.")),
+    ("Known vulnerable component", dict(
+        cwe="CWE-1104", owasp="A06:2021 – Vulnerable and Outdated Components",
+        cvss="varies by CVE (see detail for the NVD link)",
+        remediation="Upgrade to the fixed release immediately; enable "
+                    "dependabot/renovate so N-days don't linger.")),
+    ("End-of-life component", dict(
+        cwe="CWE-1104", owasp="A06:2021 – Vulnerable and Outdated Components",
+        cvss="no estimate",
+        remediation="EOL means every future CVE stays open: migrate to a "
+                    "supported branch, there is no patch coming.")),
     ("Exposed development server", dict(
         cwe="CWE-668", owasp="A05:2021 – Security Misconfiguration",
         cvss="CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N (5.4)",
@@ -436,6 +458,21 @@ KB: list[tuple[str, dict]] = [
         cwe="CWE-?", owasp="—",
         cvss="no estimate",
         remediation="Informational: correctly loopback-bound, no action.")),
+    ("Local listeners inventory", dict(
+        cwe="CWE-?", owasp="—",
+        cvss="no estimate",
+        remediation="Informational inventory of local listeners with "
+                    "process attribution; triage exposed ones first.")),
+    ("Local UDP service", dict(
+        cwe="CWE-?", owasp="—",
+        cvss="no estimate",
+        remediation="Informational: loopback UDP service, port-classified "
+                    "(only DNS gets one benign query); no action.")),
+    ("LAN-visible UDP service", dict(
+        cwe="CWE-668", owasp="A05:2021 – Security Misconfiguration",
+        cvss="no estimate",
+        remediation="UDP answers off-host: confirm the service must be "
+                    "LAN-reachable; bind to loopback or firewall it.")),
     ("Overly broad secret file permissions", dict(
         cwe="CWE-732", owasp="A01:2021 – Broken Access Control",
         cvss="CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N (5.5)",
@@ -456,6 +493,17 @@ KB: list[tuple[str, dict]] = [
         cvss="no estimate",
         remediation="Informational: virtual interfaces exist; audit "
                     "container/WSL guests separately.")),
+    ("Container published port", dict(
+        cwe="CWE-668", owasp="A05:2021 – Security Misconfiguration",
+        cvss="no estimate",
+        remediation="Host->container port mapping: confirm the published "
+                    "port must be reachable at its exposure class; unpublish "
+                    "or bind to 127.0.0.1 otherwise.")),
+    ("WSL port forwarding", dict(
+        cwe="CWE-?", owasp="—",
+        cvss="no estimate",
+        remediation="Informational: portproxy forwards into WSL guests; "
+                    "audit the guest side separately.")),
 ]
 
 

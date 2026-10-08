@@ -161,12 +161,20 @@ ROUTE_WATCH_JS = """
 
 
 def summarize_traffic(entries: list[dict], base: str,
-                      scope_hosts: set[str] | None = None) -> dict:
+                      scope_hosts: set[str] | None = None,
+                      caps: dict | None = None) -> dict:
     """Raw listener records -> pool urls + sockets + streams + graph.
 
     Pure: same-host/scope filtering, http(s) pool vs ws(s) graph split,
-    SSE flagged by content-type. All lists capped.
+    SSE flagged by content-type. All lists capped (profile-scalable).
     """
+    cap = {"pool": 25, "api": 15, "ws": 10, "sse": 10, "graph": 80}
+    try:
+        for k in cap:
+            if caps and int(caps.get(k, 0)) > 0:
+                cap[k] = int(caps[k])
+    except Exception:
+        pass
     from core.discovery import classify_endpoint
     try:
         base_host = (urlparse(base).hostname or "").lower()
@@ -201,7 +209,9 @@ def summarize_traffic(entries: list[dict], base: str,
         row = {"url": url[:200], "method": method,
                "resource": rtype or "?",
                "status": e.get("status", "?"),
-               "resp_ct": resp_ct[:60] if resp_ct else "?"}
+               "resp_ct": resp_ct[:60] if resp_ct else "?",
+               "req_ct": str(e.get("req_ct", "") or "")[:60],
+               "post_data": str(e.get("post_data", "") or "")[:500]}
         if scheme in ("ws", "wss"):
             sockets.append(url)
             row["kind"] = "socket"
@@ -217,24 +227,33 @@ def summarize_traffic(entries: list[dict], base: str,
         else:
             continue
         graph.append(row)
-        if len(graph) >= 80:
+        if len(graph) >= cap["graph"]:
             break
-    return {"pool": pool[:25], "api": api[:15], "websockets": sockets[:10],
-            "sse": sse[:10], "graph": graph}
+    return {"pool": pool[:cap["pool"]], "api": api[:cap["api"]],
+            "websockets": sockets[:cap["ws"]],
+            "sse": sse[:cap["sse"]], "graph": graph}
 
 
 def runtime_discover(base: str, timeout: int = 8, max_visits: int = 4,
                      scope_hosts: set[str] | None = None,
                      verbose: bool = False,
-                     capture_traffic: bool = False) -> dict:
+                     capture_traffic: bool = False,
+                     caps: dict | None = None) -> dict:
     """Headless runtime pass -> urls/api/params (+traffic with capture).
 
-    capture_traffic (--browser-discovery): live request/websocket/
-    response listeners (method + URL + content-type + status, incl. SSE
-    and sockets) plus a client-side route watcher. Never raises for
-    missing Playwright/Chromium/runtime errors: the static crawler
-    result stands on its own.
+    Visits up to caps['visits'] same-host pages (base first), so JS-heavy
+    apps contribute routes from more than one screen. All list caps come
+    from the coverage profile; `stats` reports seen-vs-kept + truncated
+    so reports can say what was NOT covered.
     """
+    defaults = {"visits": 2, "urls": 30, "api": 15, "routes": 20,
+                "traffic": 40, "ws": 10}
+    try:
+        defaults.update({k: int(v) for k, v in (caps or {}).items()
+                         if k in defaults and int(v) > 0})
+    except Exception:
+        pass
+    caps = defaults
     empty: dict = {"urls": [], "api": [], "params": []}
     try:
         import importlib.util
@@ -258,6 +277,19 @@ def runtime_discover(base: str, timeout: int = 8, max_visits: int = 4,
     param_blob: list[str] = []
     records: list[dict] = []
     watched_routes: list[str] = []
+    n_visits = max(1, int(caps.get("visits", 2) or 1))
+    visits_done = 0
+
+    def _in_scope(full: str) -> bool:
+        if not _same_host(full, base):
+            return False
+        if scope_hosts:
+            try:
+                return (urlparse(full).hostname or "").lower() in scope_hosts
+            except Exception:
+                return False
+        return True
+
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=True)
@@ -271,11 +303,26 @@ def runtime_discover(base: str, timeout: int = 8, max_visits: int = 4,
 
                     def _on_request(req):
                         try:
+                            post_data = ""
+                            try:
+                                post_data = str(
+                                    getattr(req, "post_data", "") or "")[:2048]
+                            except Exception:
+                                pass
+                            headers = {}
+                            try:
+                                headers = dict(
+                                    getattr(req, "headers", {}) or {})
+                            except Exception:
+                                pass
                             records.append({
                                 "url": req.url,
                                 "method": getattr(req, "method", "GET"),
                                 "resource": (getattr(req, "resource_type", "")
-                                             or "")})
+                                             or ""),
+                                "req_ct": str(headers.get("content-type", "")
+                                              or "")[:80],
+                                "post_data": post_data})
                         except Exception:
                             pass
 
@@ -308,80 +355,90 @@ def runtime_discover(base: str, timeout: int = 8, max_visits: int = 4,
                             page.on(ev, cb)
                         except Exception:
                             pass
-                try:
-                    page.goto(base + "/", timeout=(timeout + 10) * 1000,
-                              wait_until="domcontentloaded")
-                    page.wait_for_timeout(3000)
-                    data = page.evaluate("""() => ({
-                      links: Array.from(document.querySelectorAll('a[href]'))
-                        .map(a => a.href).slice(0, 40),
-                      forms: Array.from(document.forms).map(f => ({
-                        action: f.action || location.href,
-                        inputs: Array.from(f.elements).map(e => e.name || '')
-                          .filter(Boolean).slice(0, 6)
-                      })).slice(0, 8),
-                      resources: (performance.getEntriesByType('resource') || [])
-                        .map(r => r.name).slice(0, 60),
-                      nextData: (document.getElementById('__NEXT_DATA__') || {})
-                        .textContent || ''
-                    })""")
-                except Exception:
-                    return empty
-                for href in (data or {}).get("links", []) or []:
-                    full = str(href).split("#")[0]
-                    if _same_host(full, base) and full not in urls:
-                        if scope_hosts:
-                            try:
-                                host = (urlparse(full).hostname or "").lower()
-                            except Exception:
-                                continue
-                            if host not in scope_hosts:
-                                continue
-                        urls.append(full)
-                    if len(urls) >= 20:
-                        break
-                for f in (data or {}).get("forms", []) or []:
+                to_visit = [base + "/"]
+                seen_visits: set[str] = set()
+                snapshots: list[dict] = []
+                while to_visit and visits_done < n_visits:
+                    target = to_visit.pop(0)
+                    if target in seen_visits:
+                        continue
+                    seen_visits.add(target)
                     try:
-                        action = str(f.get("action", "")) or base + "/"
-                        inputs = [str(i) for i in (f.get("inputs", []) or [])
-                                  if i][:3]
-                        if _same_host(action, base) and inputs:
-                            from urllib.parse import urlencode
-                            sep = "&" if "?" in action else "?"
-                            probe = (action.split("#")[0] + sep +
-                                     urlencode({inputs[0]: "gash"}))
-                            if probe not in urls:
-                                urls.append(probe)
+                        page.goto(target,
+                                  timeout=(timeout + 10) * 1000,
+                                  wait_until="domcontentloaded")
+                        page.wait_for_timeout(2500)
+                        data = page.evaluate("""() => ({
+                          links: Array.from(document.querySelectorAll('a[href]'))
+                            .map(a => a.href).slice(0, 40),
+                          forms: Array.from(document.forms).map(f => ({
+                            action: f.action || location.href,
+                            inputs: Array.from(f.elements).map(e => e.name || '')
+                              .filter(Boolean).slice(0, 6)
+                          })).slice(0, 8),
+                          resources: (performance.getEntriesByType('resource') || [])
+                            .map(r => r.name).slice(0, 60),
+                          nextData: (document.getElementById('__NEXT_DATA__') || {})
+                            .textContent || ''
+                        })""")
                     except Exception:
                         continue
-                for res in (data or {}).get("resources", []) or []:
-                    r = str(res)
-                    if ("/api/" in r or "/graphql" in r or r.endswith(".json")) \
-                            and _same_host(r, base) and r not in api:
-                        api.append(r.split("#")[0])
-                    if len(api) >= 15:
-                        break
-                nd = str((data or {}).get("nextData", "") or "")
-                if nd:
-                    param_blob.append(nd[:50_000])
-                    for r in extract_spa_routes(nd, base):
-                        if r not in urls:
-                            urls.append(r)
-                        if len(urls) >= 25:
+                    visits_done += 1
+                    snapshots.append(data or {})
+                    for href in (data or {}).get("links", []) or []:
+                        full = str(href).split("#")[0]
+                        if _in_scope(full) and full not in urls:
+                            urls.append(full)
+                            if _in_scope(full) and full not in seen_visits \
+                                    and len(to_visit) < n_visits + 4:
+                                to_visit.append(full)
+                        if len(urls) >= 40:
                             break
+                for data in snapshots:
+                    for f in (data or {}).get("forms", []) or []:
+                        try:
+                            action = str(f.get("action", "")) or base + "/"
+                            inputs = [str(i) for i in (f.get("inputs", []) or [])
+                                      if i][:3]
+                            if _in_scope(action) and inputs:
+                                from urllib.parse import urlencode
+                                sep = "&" if "?" in action else "?"
+                                probe = (action.split("#")[0] + sep +
+                                         urlencode({inputs[0]: "gash"}))
+                                if probe not in urls:
+                                    urls.append(probe)
+                        except Exception:
+                            continue
+                for data in snapshots:
+                    for res in (data or {}).get("resources", []) or []:
+                        r = str(res)
+                        if ("/api/" in r or "/graphql" in r or r.endswith(".json")) \
+                                and _same_host(r, base) and r not in api:
+                            api.append(r.split("#")[0])
+                        if len(api) >= caps["api"]:
+                            break
+                for data in snapshots:
+                    nd = str((data or {}).get("nextData", "") or "")
+                    if nd:
+                        param_blob.append(nd[:50_000])
+                        for r in extract_spa_routes(nd, base):
+                            if r not in urls:
+                                urls.append(r)
+                            if len(urls) >= 40:
+                                break
                 if capture_traffic:
                     try:
                         seen_routes = page.evaluate(
-                            "() => (window.__gash_routes || []).slice(0, 20)")
+                            "() => (window.__gash_routes || []).slice(0, 40)")
                     except Exception:
                         seen_routes = []
                     for rt in seen_routes or []:
                         full = urljoin(base + "/",
                                        str(rt)).split("#")[0]
-                        if _same_host(full, base) and full not in urls:
+                        if _in_scope(full) and full not in urls:
                             watched_routes.append(full)
                             urls.append(full)
-                        if len(urls) >= 30:
+                        if len(urls) >= 40:
                             break
             finally:
                 try:
@@ -394,15 +451,23 @@ def runtime_discover(base: str, timeout: int = 8, max_visits: int = 4,
             print(warn(f"  [-] SPA discovery failed: {str(e)[:100]}"))
         return empty
     params = extract_param_names(*param_blob)
-    out = {"urls": urls[:25], "api": api[:15], "params": params[:20]}
+    out = {"urls": urls[:caps["urls"]], "api": api[:caps["api"]],
+           "params": params[:20],
+           "stats": {"visits": visits_done,
+                     "traffic_seen": len(records),
+                     "routes_seen": len(watched_routes),
+                     "truncated": len(urls) > caps["urls"]
+                     or len(api) > caps["api"]}}
     if capture_traffic:
         from core.discovery import classify_endpoint
         summary = summarize_traffic(records, base, scope_hosts)
         for u in summary["pool"] + summary["api"]:
             if u not in urls and u not in api:
                 (api if classify_endpoint(u) == "api" else urls).append(u)
-        out.update({"traffic": summary["graph"][:40],
-                    "websockets": summary["websockets"],
-                    "sse": summary["sse"],
-                    "routes": watched_routes[:20]})
+        out.update({"traffic": summary["graph"][:caps["traffic"]],
+                    "websockets": summary["websockets"][:caps["ws"]],
+                    "sse": summary["sse"][:10],
+                    "routes": watched_routes[:caps["routes"]]})
+        out["stats"]["truncated"] = out["stats"]["truncated"] or \
+            len(summary["graph"]) > caps["traffic"]
     return out

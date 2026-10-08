@@ -196,12 +196,14 @@ def _swagger_paths(session, base: str, timeout: int,
 def crawl(session, base: str, html: str, timeout: int,
           max_pages: int = 8, depth: int = 2,
           scope_hosts: set[str] | None = None,
-          js_files: int = 5, swagger_paths: int = 20) -> dict[str, str]:
+          js_files: int = 5, swagger_paths: int = 20,
+          stats: dict | None = None) -> dict[str, str]:
     """{url: html}. Base always included. BFS + sitemap + JS, capped.
 
     When scope_hosts is set, the final URL's host must be listed or the
     page stays out of the pool (blocks redirecting out of scope).
-    js_files/swagger_paths scale with the coverage profile.
+    js_files/swagger_paths scale with the coverage profile. stats (when
+    given) receives discovered/scanned/js/swagger counters.
     """
     pages: dict[str, str] = {base + "/": html or ""}
     if max_pages <= 1 or not html:
@@ -217,7 +219,8 @@ def crawl(session, base: str, html: str, timeout: int,
     _enqueue_links(html, base, seen, queue, 1, max_pages, pages)
     for u in _sitemap_urls(session, base, timeout):
         _offer(u, 1)
-    for u in _swagger_paths(session, base, timeout, limit=swagger_paths):
+    sw_specs = _swagger_paths(session, base, timeout, limit=swagger_paths)
+    for u in sw_specs:
         _offer(u, 1)
     for u, _kind in extract_js_endpoints(html, base):  # inline, no fetch
         _offer(_clean(u, base), 1)
@@ -262,4 +265,13 @@ def crawl(session, base: str, html: str, timeout: int,
                     queue.append((u, d + 1))
     finally:
         sp.stop()
+    if stats is not None:
+        try:
+            stats["pages_discovered"] = len(pages)
+            stats["pages_scanned"] = sum(1 for h in pages.values() if h)
+            stats["js_files"] = max(0, js_files - js_budget[0])
+            stats["swagger_paths"] = len(sw_specs)
+            stats["truncated"] = bool(len(pages) >= max_pages)
+        except Exception:
+            pass
     return pages

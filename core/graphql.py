@@ -203,3 +203,62 @@ def has_sensitive_data(data: dict) -> str | None:
         if any(s in leaf for s in SENSITIVE_FIELDS) and val:
             return name
     return None
+
+
+SENSITIVE_ARGS = ("role", "roles", "permissions", "admin", "isadmin",
+                  "is_admin", "owner", "ownerid", "owner_id",
+                  "internalid", "internal_id", "privileged", "root")
+
+
+def schema_graph(parsed: dict, endpoint: str = "") -> dict:
+    """Query/mutation/object graph with sensitive flags. Pure.
+
+    Nodes carry kind+name+args; sensitive marks spread from field names
+    and returned scalars. Consumers: verbose reports, IDOR id-args,
+    contract review (nullable sensitive inputs).
+    """
+    sens_q = {q.get("name") for q in sensitive_queries(parsed)}
+    queries = []
+    for q in parsed.get("queries", []) or []:
+        queries.append({
+            "kind": "query", "name": q.get("name", ""),
+            "args": [a.get("name", "") for a in q.get("args", []) or []],
+            "returns": q.get("returns", ""),
+            "sensitive": q.get("name") in sens_q,
+            "has_id_arg": id_arg(q) is not None,
+        })
+    mutations = []
+    for m in parsed.get("mutations", []) or []:
+        args = [a.get("name", "") for a in m.get("args", []) or []]
+        mutations.append({
+            "kind": "mutation", "name": m.get("name", ""),
+            "args": args,
+            "sensitive": any(a.lower() in SENSITIVE_ARGS for a in args),
+        })
+    return {"endpoint": endpoint, "queries": queries,
+            "mutations": mutations,
+            "objects": {k: list(v)
+                        for k, v in (parsed.get("objects", {}) or {}).items()},
+            "sensitive": sorted(
+                {q["name"] for q in queries if q["sensitive"]} |
+                {m["name"] for m in mutations if m["sensitive"]})}
+
+
+def weak_contracts(parsed: dict) -> list[dict]:
+    """Mutations taking nullable sensitive args (static contract review).
+
+    A nullable `role`/`permissions` input invites escalation: no request
+    is sent (mutations never execute) — the schema alone is evidence.
+    INFO surface for manual review, capped.
+    """
+    out: list[dict] = []
+    for m in parsed.get("mutations", []) or []:
+        for a in m.get("args", []) or []:
+            name = (a.get("name") or "")
+            if name.lower() in SENSITIVE_ARGS and not a.get("required"):
+                out.append({"mutation": m.get("name", ""), "arg": name,
+                            "issue": "nullable sensitive input"})
+                break
+        if len(out) >= 4:
+            break
+    return out

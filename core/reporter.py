@@ -37,16 +37,24 @@ def _check_errors(check_status) -> list:
 
 def print_findings(findings, verbose: bool = False,
                    incomplete: bool = False,
-                   check_status=None) -> None:
+                   check_status=None, coverage=None) -> None:
     errors = _check_errors(check_status)
     degraded = bool(errors)
+    truncated = bool((coverage or {}).get("truncated"))
     print(info("\n[+] SCAN Results"))
-    if not findings and not incomplete and not degraded:
+    if not findings and not incomplete and not degraded and not truncated:
         print(success("[+] Clean: no findings."))
         return
     if incomplete:
         print(warn("  [!] INCOMPLETE scan — coverage stopped early, "
                    "absence of findings means nothing."))
+    if truncated:
+        cov = coverage or {}
+        print(warn(f"  [!] COVERAGE TRUNCATED — caps cut the scan short "
+                   f"(pages {cov.get('pages_scanned')}/"
+                   f"{cov.get('pages_discovered')}, urls tested "
+                   f"{cov.get('xss_urls_tested')}); absence of findings "
+                   "means nothing for the untested surface."))
     if degraded:
         print(warn(f"  [!] SCAN DEGRADED — {len(errors)} check(s) failed, "
                    "results are partial:"))
@@ -122,7 +130,7 @@ def print_summary_table(findings) -> None:
 def build_report(target: str, mode: str, version: str,
                  recon=None, findings=None, elapsed: float = 0.0,
                  diff: dict | None = None, incomplete: bool = False,
-                 check_status=None) -> dict:
+                 check_status=None, coverage=None) -> dict:
     findings = findings or []
     errors = _check_errors(check_status)
     degraded = bool(errors)
@@ -151,12 +159,15 @@ def build_report(target: str, mode: str, version: str,
                     "OBSERVATIONS": len(obs)},
         "diff": diff or {},
         "incomplete": bool(incomplete),
+        "coverage": dict(coverage or {}),
         "scan_health": {
             "degraded": degraded,
             "errors": [{"check": e.get("check"),
                         "error": (e.get("error_type", "") + " " +
                                   e.get("error", e.get("reason", ""))).strip()}
                        for e in errors],
+            "partial": sorted({c.get("check", "?") for c in (check_status or [])
+                               if c.get("partial_sections")}),
             "skipped": skipped,
             "ran": sum(1 for c in (check_status or [])
                        if c.get("status") in ("passed", "findings")),
@@ -268,6 +279,16 @@ def _render_txt(report: dict) -> str:
         names = ", ".join(e.get("check", "?") for e in health.get("errors", [])[:5])
         L.append(f"WARNING: SCAN DEGRADED ({len(health.get('errors', []))} "
                  f"failed checks: {names}) — partial results, NOT a clean bill.")
+    cov = report.get("coverage") or {}
+    if cov:
+        L.append(
+            f"Coverage: pages {cov.get('pages_scanned')}/"
+            f"{cov.get('pages_discovered')} scanned, "
+            f"{cov.get('xss_urls_tested')} urls tested, "
+            f"{cov.get('api_targets_tested')}/{cov.get('api_targets_discovered')} "
+            f"api bodies tested, {cov.get('requests_sent')} requests"
+            f"{' (budget ' + str(cov.get('request_budget')) + ')' if cov.get('request_budget') else ''}"
+            f"{'; TRUNCATED' if cov.get('truncated') else ''}")
     df = report.get("diff") or {}
     if df and df.get("onceki_toplam") is not None:
         L.append(f"Diff  : {len(df.get('yeni', []))} new / "
@@ -444,7 +465,8 @@ def _render_html(report: dict) -> str:
     total = max(1, s["TOTAL"])
 
     def badge(sev: str) -> str:
-        cls = {"CRITICAL": "crit", "MEDIUM": "mid"}.get(sev, "low")
+        cls = {"CRITICAL": "crit", "MEDIUM": "mid",
+               "LOW": "low"}.get(sev, "info")
         return f'<span class="badge {cls}">{esc(sev)}</span>'
 
     def bar(n: int, cls: str) -> str:
@@ -463,44 +485,64 @@ def _render_html(report: dict) -> str:
         f"<tr><td>{esc(t)}</td><td>{c}</td></tr>" for t, c in cats.most_common()
     ) or "<tr><td colspan='2'>—</td></tr>"
 
-    # findings grouped by severity, evidence inside <details>
+    def _ctx_line(f: dict) -> str:
+        bits = []
+        for label, key in (("method", "method"), ("param", "param"),
+                           ("location", "location"),
+                           ("auth", "auth_context"),
+                           ("confirm", "confirm"), ("check", "check")):
+            if f.get(key):
+                bits.append(f"<span class='chip'>{label}: "
+                            f"{esc(str(f[key]))}</span>")
+        return (f"<div class='chips'>{''.join(bits)}</div>" if bits else "")
+
+    def _card(f: dict) -> str:
+        sev = f.get("severity", "")
+        cls = {"CRITICAL": "crit", "MEDIUM": "mid",
+               "LOW": "low"}.get(sev, "info")
+        parts = [
+            f"<article class='finding {cls}'>",
+            f"<div class='fhead'>{badge(sev)}"
+            f"<span class='ftitle'>{esc(f.get('title') or '')}</span></div>",
+            f"<div class='furl'>{esc(f.get('url') or '')}</div>",
+            f"<p class='fdetail'>{esc(f.get('detail') or '')}</p>",
+            _ctx_line(f),
+            f"<div class='fmeta'>confidence: {esc(f.get('confidence') or '?')}"
+            f" · {_cwe_link(f.get('cwe') or '', esc)}"
+            f" · {esc(f.get('cvss') or '')} (template estimate)</div>",
+        ]
+        if f.get("remediation"):
+            parts.append(f"<div class='rem'>Fix: "
+                         f"{esc(f.get('remediation') or '')}</div>")
+        if f.get("evidence"):
+            parts.append(
+                f"<details><summary>evidence</summary>"
+                f"<code>{esc(f.get('evidence') or '')}</code></details>")
+        parts.append("</article>")
+        return "".join(parts)
+
+    # findings grouped by severity, newest evidence style per card
     sections = []
     for sev in ("CRITICAL", "MEDIUM", "LOW"):
         items = [f for f in report["findings"] if f["severity"] == sev]
         if not items:
             continue
-        rows = "\n".join(
-            f"<tr><td>{badge(f['severity'])}<div class='url'>{_cwe_link(f.get('cwe') or '', esc)}</div></td>"
-            f"<td>{esc(f['title'])}<div class='url'>{esc(f.get('url') or '')}</div></td>"
-            f"<td>{esc(f.get('detail') or '')}"
-            f"<div class='url'>{esc(f.get('cvss') or '')} (template estimate)</div>"
-            f"<div class='conf'>confidence: {esc(f.get('confidence') or '?')}</div>"
-            + (f"<div class='rem'>🛠 {esc(f.get('remediation') or '')}</div>"
-               if f.get("remediation") else "")
-            + (f"<details><summary>evidence</summary><code>{esc(f.get('evidence') or '')}</code></details>"
-               if f.get("evidence") else "")
-            + "</td></tr>"
-            for f in items
-        )
+        cards = "\n".join(_card(f) for f in items)
         sections.append(
-            f"<div class='sevsec' id='sec-{sev}'>"
+            f"<section class='sevsec' id='sec-{sev}'>"
             f"<h2>{sev} <span class='cnt'>({len(items)})</span></h2>"
-            f"<table><tr><th>Severity</th><th>Title</th><th>Detail</th></tr>{rows}</table></div>")
-    findings_html = "\n".join(sections) if sections else "<p>Clean: no findings.</p>"
+            f"{cards}</section>")
+    findings_html = "\n".join(sections) if sections else \
+        "<p class='empty'>Clean: no findings.</p>"
     obs_items = report.get("observations", [])
     if obs_items:
-        obs_rows = "\n".join(
-            f"<tr><td>{badge('INFO')}</td>"
-            f"<td>{esc(f.get('title') or '')}"
-            f"<div class='url'>{esc(f.get('url') or '')}</div></td>"
-            f"<td>{esc(f.get('detail') or '')}</td></tr>"
-            for f in obs_items
-        )
+        obs_cards = "\n".join(_card({**f, "severity": "INFO"})
+                               for f in obs_items)
         sections.append(
-            f"<div class='sevsec' id='sec-INFO'>"
+            f"<section class='sevsec' id='sec-INFO'>"
             f"<h2>OBSERVATIONS <span class='cnt'>({len(obs_items)})</span></h2>"
             f"<p class='meta'>Discovery notes — not vulnerabilities, not scored.</p>"
-            f"<table><tr><th>Severity</th><th>Title</th><th>Detail</th></tr>{obs_rows}</table></div>")
+            f"{obs_cards}</section>")
         findings_html = "\n".join(sections)
 
     r = report.get("recon") or {}
@@ -508,34 +550,80 @@ def _render_html(report: dict) -> str:
                       for k, v in (r.get("dns_records") or {}).items() if isinstance(v, list))
     hdrs = "".join(f"<tr><td>{esc(str(k))}</td><td>{esc(str(v))[:120]}</td></tr>"
                    for k, v in list((r.get("headers") or {}).items())[:12])
+    warn_incomplete = ("<div class='warn'>Incomplete scan (rate limit / budget) — "
+                       "partial results, NOT a clean bill.</div>"
+                       if report.get("incomplete") else "")
+    warn_degraded = ("<div class='warn'>SCAN DEGRADED — failed checks mean "
+                     "partial results, NOT a clean bill.</div>"
+                     if (report.get("scan_health") or {}).get("degraded") else "")
+    cov = report.get("coverage") or {}
+    cov_line = ""
+    if cov:
+        cov_line = (f"<div class='cov'>Coverage: pages "
+                    f"{cov.get('pages_scanned')}/{cov.get('pages_discovered')}"
+                    f" · urls tested {cov.get('xss_urls_tested')} · "
+                    f"api {cov.get('api_targets_tested')}/"
+                    f"{cov.get('api_targets_discovered')} · "
+                    f"requests {cov.get('requests_sent')}"
+                    f"{' · TRUNCATED' if cov.get('truncated') else ''}</div>")
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>GASH Report — {esc(report['target'])}</title>
 <style>
-body{{background:#0a0a0a;color:#c8c8c8;font-family:Consolas,Menlo,monospace;margin:2em;max-width:1100px}}
-h1{{color:#ff2b2b}}h2{{color:#39ff14}}.meta,.pct,.url{{color:#888}}
-table{{border-collapse:collapse;width:100%;margin:.5em 0}}td,th{{border:1px solid #333;padding:6px 10px;text-align:left;vertical-align:top}}
-.badge{{padding:2px 8px;border-radius:4px;font-weight:bold;white-space:nowrap}}
-.crit{{background:#ff2b2b;color:#fff}}.mid{{background:#b58900;color:#000}}.low{{background:#175c17;color:#fff}}
-.track{{display:inline-block;width:min(420px,50vw);background:#222;border-radius:4px;overflow:hidden;vertical-align:middle}}
-.fill{{height:14px}}.fill.crit{{background:#ff2b2b}}.fill.mid{{background:#e6c200}}.fill.low{{background:#39ff14}}
-.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1em}}
-.card{{border:1px solid #333;border-radius:8px;padding:1em}}
-.risk{{font-size:1.6em}}.url{{font-size:.85em;word-break:break-all}}
-.rem{{color:#9ecbff;font-size:.85em;margin-top:4px}}
-.conf{{color:#e6c200;font-size:.85em;margin-top:2px}}
-.fbtn{{background:#1a1a1a;color:#c8c8c8;border:1px solid #555;border-radius:6px;padding:4px 12px;margin:2px;cursor:pointer;font-family:inherit}}
-.fbtn.on{{border-color:#39ff14;color:#39ff14}}
-.exec{{border-left:4px solid #ff2b2b;background:#160808;padding:.6em 1em;border-radius:0 8px 8px 0}}
-.meta-table td:first-child{{color:#888;width:130px}}
-details{{margin-top:4px}}summary{{cursor:pointer;color:#888}}code{{color:#e6c200;font-size:.85em;word-break:break-all}}
-@media print{{body{{background:#fff;color:#000}}h1{{color:#a00}}h2{{color:#060}}.card,td,th{{border-color:#999}}}}
-</style></head><body>
-<h1>█ GASH <span style="font-size:.5em">// Vulnerability &amp; Penetration Engine v{esc(report['version'])}</span></h1>
+:root{{color-scheme:light;--bg:#eef1f7;--card:#ffffff;--ink:#1f2937;--muted:#6b7280;--line:#e5e7eb;--crit:#e11d48;--crit-bg:#ffe4e6;--mid:#b45309;--mid-bg:#fef3c7;--low:#047857;--low-bg:#d1fae5;--info:#4f46e5;--info-bg:#e0e7ff}}
+*{{box-sizing:border-box}}
+body{{background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Inter,sans-serif;margin:0;padding:0}}
+.wrap{{max-width:1080px;margin:0 auto;padding:28px 20px 60px}}
+.hero{{background:linear-gradient(135deg,#312e81,#7c3aed 55%,#db2777);color:#fff;border-radius:20px;padding:28px 30px;box-shadow:0 12px 30px rgba(124,58,237,.25)}}
+.hero h1{{margin:0;font-size:1.7em;letter-spacing:.5px}}
+.hero .sub{{opacity:.85;font-size:.85em;margin-top:4px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin:16px 0}}
+.card{{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px 18px;box-shadow:0 4px 14px rgba(15,23,42,.06)}}
+.card h2{{margin:.1em 0 .6em;font-size:1em;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}}
+.badge{{display:inline-block;padding:3px 12px;border-radius:999px;font-size:.75em;font-weight:700;letter-spacing:.04em}}
+.badge.crit{{background:var(--crit-bg);color:var(--crit)}}
+.badge.mid{{background:var(--mid-bg);color:var(--mid)}}
+.badge.low{{background:var(--low-bg);color:var(--low)}}
+.badge.info{{background:var(--info-bg);color:var(--info)}}
+.track{{height:10px;background:#eef2f7;border-radius:999px;overflow:hidden;margin:6px 0}}
+.fill{{height:100%;border-radius:999px}}.fill.crit{{background:linear-gradient(90deg,#fb7185,#e11d48)}}.fill.mid{{background:linear-gradient(90deg,#fcd34d,#d97706)}}.fill.low{{background:linear-gradient(90deg,#6ee7b7,#059669)}}
+.pct,.meta{{color:var(--muted)}}.meta{{font-size:.85em}}
+.risk{{font-size:1.5em;margin:.2em 0}}
+table.meta-table,table.plain{{width:100%;border-collapse:collapse;background:var(--card);border-radius:12px;overflow:hidden}}
+.meta-table td,.plain td,.plain th{{padding:8px 12px;border-bottom:1px solid var(--line);font-size:.9em;text-align:left;vertical-align:top}}
+.meta-table td:first-child{{color:var(--muted);width:140px}}
+.exec{{background:#fffbeb;border:1px solid #fde68a;border-radius:14px;padding:12px 16px;margin:14px 0}}
+.warn{{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:14px;padding:12px 16px;margin:14px 0;font-weight:600}}
+.cov{{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;border-radius:14px;padding:10px 16px;margin:14px 0;font-size:.9em}}
+.toolbar{{position:sticky;top:0;z-index:5;background:rgba(238,241,247,.9);backdrop-filter:blur(6px);padding:10px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center}}
+.fbtn{{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:6px 16px;cursor:pointer;font:inherit;font-size:.85em;box-shadow:0 1px 3px rgba(15,23,42,.06)}}
+.fbtn.on{{border-color:#7c3aed;color:#6d28d9;font-weight:700}}
+h2.sec{{margin:26px 4px 10px}}
+.cnt{{color:var(--muted);font-weight:400;font-size:.8em}}
+.finding{{background:var(--card);border:1px solid var(--line);border-left:6px solid var(--info);border-radius:14px;padding:14px 18px;margin:10px 0;box-shadow:0 3px 10px rgba(15,23,42,.05)}}
+.finding.crit{{border-left-color:var(--crit)}}
+.finding.mid{{border-left-color:var(--mid)}}
+.finding.low{{border-left-color:var(--low)}}
+.finding.info{{border-left-color:var(--info)}}
+.fhead{{display:flex;gap:10px;align-items:center;flex-wrap:wrap}}
+.ftitle{{font-weight:700}}
+.furl{{font-size:.82em;color:var(--muted);word-break:break-all;margin-top:4px}}
+.fdetail{{margin:.5em 0}}
+.fmeta{{font-size:.82em;color:var(--muted);margin-top:6px}}
+.chips{{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}}
+.chip{{background:#f1f5f9;border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:.75em;color:#475569}}
+.rem{{background:#f0fdfa;border:1px dashed #99f6e4;border-radius:10px;padding:8px 12px;font-size:.85em;margin-top:8px}}
+details{{margin-top:8px}}summary{{cursor:pointer;color:var(--muted);font-size:.85em}}
+code{{display:block;background:#0f172a;color:#a5f3fc;border-radius:10px;padding:10px 12px;font-size:.8em;word-break:break-all;white-space:pre-wrap;margin-top:6px}}
+.empty{{background:var(--card);border-radius:14px;padding:20px;text-align:center;color:var(--muted)}}
+.foot{{color:var(--muted);font-size:.8em;text-align:center;margin-top:30px}}
+@media print{{body{{background:#fff}}.hero{{box-shadow:none}}.toolbar{{display:none}}}}
+</style></head><body><div class="wrap">
+<div class="hero"><h1>GASH Report</h1>
+<div class="sub">Vulnerability &amp; Penetration Engine v{esc(report['version'])} · {esc(report['target'])}</div></div>
 <div class="card exec"><b>Executive summary:</b> {_exec_summary(report, risk)}</div>
- {"<div class='card exec'><b>WARNING:</b> incomplete scan (rate limit / budget) — partial results, NOT a clean bill.</div>" if report.get("incomplete") else ""}
- {"<div class='card exec'><b>WARNING:</b> SCAN DEGRADED — failed checks mean partial results, NOT a clean bill.</div>" if (report.get("scan_health") or {}).get("degraded") else ""}
-<h2>Scan info</h2>
+{warn_incomplete}{warn_degraded}{cov_line}
+<h2 class="sec">Scan info</h2>
 <table class="meta-table">
 <tr><td>Target</td><td>{esc(report['target'])}</td></tr>
 <tr><td>Mode</td><td>{esc(report['mode'])}</td></tr>
@@ -553,17 +641,17 @@ details{{margin-top:4px}}summary{{cursor:pointer;color:#888}}code{{color:#e6c200
 <p class="risk"><span class="badge {risk_cls}">{risk}</span> <b>{score}</b>/100</p>
 <p class="meta">Static estimate: CRITICAL×25 + MEDIUM×10 + LOW×3 (max 100). Fix the red ones first.</p></div>
 <div class="card"><h2>Categories</h2>
-<table><tr><th>Type</th><th>Count</th></tr>{cat_rows}</table></div>
+<table class="plain"><tr><th>Type</th><th>Count</th></tr>{cat_rows}</table></div>
 </div>
-<h2>Recon</h2><p>IP: {esc(str(r.get('ip')))} | Server: {esc(str(r.get('server')))} |
-HTTP {esc(str(r.get('status_code')))} | Ports: {esc(str(r.get('open_ports')))}<br>{dns}</p>
-{"<h2>HTTP Headers</h2><table><tr><th>Header</th><th>Value</th></tr>" + hdrs + "</table>" if hdrs else ""}
-<div><b>Filter:</b>
+<h2 class="sec">Recon</h2><div class="card"><p>IP: {esc(str(r.get('ip')))} | Server: {esc(str(r.get('server')))} |
+HTTP {esc(str(r.get('status_code')))} | Ports: {esc(str(r.get('open_ports')))}<br>{dns}</p></div>
+{"<h2 class='sec'>HTTP Headers</h2><div class='card'><table class='plain'><tr><th>Header</th><th>Value</th></tr>" + hdrs + "</table></div>" if hdrs else ""}
+<div class="toolbar"><b>Filter:</b>
 <button class="fbtn on" onclick="flt('all',this)">All</button><button class="fbtn" onclick="flt('CRITICAL',this)">Critical</button><button class="fbtn" onclick="flt('MEDIUM',this)">Medium</button><button class="fbtn" onclick="flt('LOW',this)">Low</button><button class="fbtn" onclick="flt('INFO',this)">Observations</button>
 </div>
 <script>
 function flt(sev,btn){{document.querySelectorAll('.fbtn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');document.querySelectorAll('.sevsec').forEach(d=>{{d.style.display=(sev==='all'||d.id==='sec-'+sev)?'':'none';}});}}
 </script>
 {findings_html}
-<p class="meta">Generated by GASH · developed by Xmar1881. Authorized testing only.</p></body></html>
+<p class="foot">Generated by GASH · developed by Xmar1881. Authorized testing only.</p></div></body></html>
 """

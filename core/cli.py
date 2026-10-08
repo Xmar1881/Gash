@@ -151,6 +151,13 @@ def build_parser() -> argparse.ArgumentParser:
              "confirmation). Must differ from --cookie",
     )
     p.add_argument(
+        "--cookie-admin",
+        metavar="'a=b'",
+        default=None,
+        help="Admin session cookie for privilege-boundary checks "
+             "(authz-matrix admin confirm). Must differ from --cookie",
+    )
+    p.add_argument(
         "--header",
         metavar="'K: V'",
         action="append",
@@ -163,6 +170,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=None,
         help="Second user's extra header (with --cookie-b, cross-session)",
+    )
+    p.add_argument(
+        "--header-admin",
+        metavar="'K: V'",
+        action="append",
+        default=None,
+        help="Admin session extra header (with --cookie-admin)",
     )
     p.add_argument(
         "--login-user",

@@ -31,6 +31,10 @@ DOM_MARKER = "gxdom"
 DOM_QUERY_PAYLOAD = DOM_MARKER + '"><img src=x onerror="alert(\'gxdom\')">'
 DOM_FRAG_PAYLOAD = DOM_MARKER + '"><svg onload=alert(\'gxdom\')>'
 
+# Tagged into every marker-carrying dispatch we evaluate ourselves, so
+# note() can tell our scaffolding apart from genuine page data flow.
+DISPATCH_TAG = "/*__gash_dispatch*/"
+
 # Per-source canaries (all carry DOM_MARKER so hooks catch them).
 PM_PAYLOAD = DOM_MARKER + '-pm"><svg onload=alert(1)>'
 STORAGE_KEY = "gashdom"
@@ -154,10 +158,13 @@ SINK_HOOK_JS = """
   const note = (sink, v) => {
     try {
       const s = String(v == null ? '' : v).slice(0, 300);
-      if (s.indexOf(MARK) !== -1) {
+      if (s.indexOf(MARK) === -1) return;
+      // our own probe dispatches travel through the same sinks
+      // (page.evaluate source carries the canary): anything quoting
+      // our scaffolding is the scanner echoing itself, not page flow.
+      if (s.indexOf('__gash_') !== -1) return;
         window.__gash_sinks.push(sink);
         if (!window.__gash_sink_samples[sink]) window.__gash_sink_samples[sink] = s;
-      }
     } catch (e) {}
   };
   const hookProp = (proto, prop) => {
@@ -437,9 +444,12 @@ def _probe_page(browser, url: str, base: str, timeout: int,
         if hit:
             return hit
         # postMessage: canary as string + object; new sinks are attributed.
+        # (Self-echo is filtered inside note(): our dispatch source quotes
+        # __gash_ scaffolding, genuine page flows never do.)
         try:
             page.evaluate(
-                "() => { try { window.postMessage('" + PM_PAYLOAD + "', '*');"
+                DISPATCH_TAG + "() => { try { window.postMessage('"
+                + PM_PAYLOAD + "', '*');"
                 " window.postMessage({gash:'" + PM_PAYLOAD + "'}, '*'); }"
                 " catch(e) {} }")
             page.wait_for_timeout(1200)
@@ -451,9 +461,10 @@ def _probe_page(browser, url: str, base: str, timeout: int,
         # storage: plant then reload so boot code reads it back.
         try:
             page.evaluate(
-                "() => { try { localStorage.setItem('" + STORAGE_KEY + "', '"
-                + STORAGE_PAYLOAD + "'); sessionStorage.setItem('"
-                + STORAGE_KEY + "', '" + STORAGE_PAYLOAD + "'); }"
+                DISPATCH_TAG + "() => { try { localStorage.setItem('"
+                + STORAGE_KEY + "', '" + STORAGE_PAYLOAD
+                + "'); sessionStorage.setItem('" + STORAGE_KEY + "', '"
+                + STORAGE_PAYLOAD + "'); }"
                 " catch(e) {} }")
             page.reload(wait_until="domcontentloaded")
             page.wait_for_timeout(2500)
