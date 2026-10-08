@@ -18,6 +18,18 @@ class ScanBudgetExceeded(Exception):
     """--max-requests spent (or scan cancelled): stop with partial results."""
 
 
+class PartialResults(ScanBudgetExceeded):
+    """A scan phase stopped early but has findings worth keeping.
+
+    Raised by run_scan instead of returning silently, so callers know
+    the result is INCOMPLETE (never "clean") and must skip history/diff.
+    """
+
+    def __init__(self, findings, msg: str = "scan stopped with partial results"):
+        super().__init__(msg)
+        self.findings = findings or []
+
+
 @dataclass
 class AuthState:
     """Session identity: cookies + extra headers. Updated in place
@@ -28,8 +40,11 @@ class AuthState:
 
 @dataclass
 class ScanContext:
-    """Per-scan HTTP state. One context per scan keeps parallel scans and
-    threads from stepping on each other (the counter update is locked)."""
+    """Per-scan HTTP state. Main-thread scans switch to a fresh copy via
+    enter_scan_scope(); worker threads always see the shared default
+    (threads don't inherit ContextVar), so budget/rate/dead state stays
+    coherent for sequential scans. Truly parallel scans must set an
+    explicit context per thread with run_with_context()."""
     delay: float = 0.0
     max_requests: int = 0
     count: int = 0
@@ -37,7 +52,14 @@ class ScanContext:
     user_agent: str | None = None
     insecure: bool = False
     cancelled: bool = False
+    dead: bool = False
+    rate_wait_total: float = 0.0
     _lock: Lock = field(default_factory=Lock, repr=False, compare=False)
+
+
+#: Cumulative 429-sleep budget per scan. Past this, the scan stops with
+#: partial results instead of sleeping through a rate-limit black hole.
+RATE_WAIT_BUDGET = 120.0
 
 
 _DEFAULT = ScanContext()
@@ -54,6 +76,21 @@ def run_with_context(ctx: ScanContext):
     """Switch pace()/sessions to ctx. Returns a token; pass it back to
     _current.reset(token) when done."""
     return _current.set(ctx)
+
+
+def scan_dead() -> bool:
+    """Did the budget/rate limiter die mid-scan? Checks both the current
+    scope and the shared default, because worker threads (which do the
+    actual requesting) always see the default."""
+    try:
+        if _current.get().dead:
+            return True
+    except Exception:
+        pass
+    try:
+        return bool(_DEFAULT.dead)
+    except Exception:
+        return False
 
 
 def enter_scan_scope():
@@ -86,6 +123,8 @@ def configure_net(delay: float = 0.0, max_requests: int = 0,
     d.insecure = bool(insecure)
     d.count = 0
     d.cancelled = False
+    d.dead = False
+    d.rate_wait_total = 0.0
 
 
 def proxies() -> dict:

@@ -79,7 +79,9 @@ def show_banner(version: str = "0.1.0") -> None:
         f"{GREEN}modular{RESET} {DIM}|{RESET} "
         f"{RED}thorough{RESET}"
     )
-    _safe_print(f"{sub.center(width + 10) if width > 60 else sub}\n")
+    _safe_print(f"{sub.center(width + 10) if width > 60 else sub}")
+    byline = f"{DIM}developed by {WHITE}Xmar1881{RESET}"
+    _safe_print(f"{byline.center(width + 10) if width > 60 else byline}\n")
 
     _safe_print(f"  {DIM}{WARNING}{RESET}\n")
 

@@ -11,7 +11,7 @@
 [![GASH CI](https://github.com/Xmar1881/Gash/actions/workflows/ci.yml/badge.svg)](https://github.com/Xmar1881/Gash/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
-![Version](https://img.shields.io/badge/version-0.3.0-red)
+![Version](https://img.shields.io/badge/version-0.4.0-red)
 
 ```text
   ██████╗  █████╗ ███████╗██╗  ██╗
@@ -21,7 +21,7 @@
  ╚██████╔╝██║  ██║███████║██║  ██║
   ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
   [ GASH // Vulnerability & Penetration Engine ]
-  v0.3.0  //  fast | modular | thorough
+  v0.4.0  //  fast | modular | thorough
 ```
 
 > [!WARNING]
@@ -91,9 +91,10 @@ py -m playwright install chromium
 | `py gash.py -t URL --full --user-agent "MyScanner/1.0"` | Custom User-Agent |
 | `py gash.py -t https://host/app --full` | Sub-app scope: the path is kept (`/app` stays `/app`) |
 | `py gash.py -t URL --full --insecure` | Skip TLS verification (self-signed labs only) |
-| `py gash.py --list-checks` | List the 39 checks |
+| `py gash.py --list-checks` | List the 42 checks |
 | `py gash.py -t URL --full --skip-checks sqli-blind,ssti` | Disable unwanted checks |
 | `py gash.py -t URL --full --cookie "session=abc" --header "Authorization: Bearer X"` | Authenticated scan |
+| `py gash.py -t URL --full --cookie "a=1" --cookie-b "b=2"` | Cross-session IDOR confirmation with a second user |
 | `py gash.py -t URL --full --login-user admin --login-pass 1234` | Try auto-login, scan with session |
 | `py gash.py -t URL --full --max-pages 15 --depth 3` | Larger crawler |
 | `py gash.py -t URL --full --dom` | Verify DOM XSS with headless Chromium (slow) |
@@ -105,7 +106,7 @@ py -m playwright install chromium
 
 `targets.txt` format: one target per line, `#` comments and blank lines are skipped.
 
-## Checks (39)
+## Checks (42)
 
 Output of `py gash.py --list-checks`:
 
@@ -150,6 +151,9 @@ Output of `py gash.py --list-checks`:
 | `wp-user-enum` | WordPress username disclosure |
 | `swagger-exposed` | Public API docs (Swagger/OpenAPI) |
 | `mass-assignment` | Client-controllable role field |
+| `login-enum` | Login username enumeration |
+| `ldap-injection` | LDAP wildcard auth bypass |
+| `cache-poisoning` | Cache poisoning via Host reflection |
 
 Every finding is enriched with `CWE + OWASP Top 10 + estimated CVSS + remediation`
 (`core/knowledge.py`) and carries a `confidence` rating (High/Medium/Low) set
@@ -272,3 +276,7 @@ PRs and issues welcome. Please:
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE).
+
+## Author
+
+Developed by **[Xmar1881](https://github.com/Xmar1881)**.

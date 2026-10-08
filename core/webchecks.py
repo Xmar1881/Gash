@@ -12,7 +12,7 @@ from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from core.colors import warn
 from core.net import ScanBudgetExceeded, pace
 from core.registry import check as register_check
-from core.scanner import Finding, _get, _inject, _raw_reflected
+from core.scanner import Finding, _get, _inject, _post, _post_form_targets, _raw_reflected
 
 EVIL_ORIGIN = "https://evil-gash.test"
 EVIL_HOST = "evil-gash.test"
@@ -27,7 +27,9 @@ REQUIRED_HEADERS = [
 ]
 
 REDIRECT_KEYS = {"next", "redirect", "return", "url", "u", "dest",
-                 "destination", "continue", "ref", "target", "r"}
+                 "destination", "continue", "ref", "target", "r",
+                 "redirect_uri", "redirect_url", "return_url", "continue_url",
+                 "callback", "callback_url", "forward", "goto", "to", "next_url"}
 
 TRAVERSAL_KEYS = {"file", "path", "page", "include", "template", "dir",
                   "folder", "doc", "document", "filename", "pg"}
@@ -77,7 +79,7 @@ def _mask(secret: str) -> str:
 
 # ---------- 1. security headers ----------
 
-@register_check("security-headers", "Missing security headers (passive)", order=11)
+@register_check("security-headers", "Missing/weak security headers (passive)", order=11)
 def test_security_headers(headers: dict, base: str,
                            verbose: bool = False) -> list[Finding]:
     """No requests: reads the base-page headers the scan already fetched."""
@@ -93,6 +95,90 @@ def test_security_headers(headers: dict, base: str,
             ))
             if verbose:
                 print(warn(f"    [!] Header missing: {h}"))
+    out += _audit_csp(headers or {}, base, verbose)
+    out += _audit_hsts(headers or {}, base, verbose)
+    return out
+
+
+def _header_ci(headers: dict, name: str) -> str:
+    """Case-insensitive header lookup (HTTP/2 loves lowercase)."""
+    low = name.lower()
+    for k, v in (headers or {}).items():
+        if str(k).lower() == low:
+            return str(v or "")
+    return ""
+
+
+def _audit_csp(headers: dict, base: str, verbose: bool = False) -> list[Finding]:
+    """A present-but-toothless CSP is worse than none: it looks protected
+    while waving injections through. unsafe-inline kills XSS defense."""
+    out: list[Finding] = []
+    csp = _header_ci(headers, "Content-Security-Policy")
+    if not csp:
+        return out  # missing-header finding already covers it
+    directives: dict[str, str] = {}
+    for part in csp.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        name, _, value = part.partition(" ")
+        directives[name.strip().lower()] = value.strip().lower()
+    script = directives.get("script-src", directives.get("default-src", ""))
+    if "'unsafe-inline'" in script:
+        out.append(Finding(
+            title="Weak CSP (unsafe-inline)", severity="MEDIUM",
+            url=base + "/",
+            detail="script-src allows 'unsafe-inline': any injected inline "
+                   "script executes, CSP gives no XSS containment",
+            evidence="unsafe-inline",
+            confidence="High",
+        ))
+        if verbose:
+            print(warn("    [!] CSP allows unsafe-inline"))
+    if "'unsafe-eval'" in script:
+        out.append(Finding(
+            title="Weak CSP (unsafe-eval)", severity="MEDIUM",
+            url=base + "/",
+            detail="script-src allows 'unsafe-eval': string-to-code execution "
+                   "stays available to injected scripts",
+            evidence="unsafe-eval",
+            confidence="High",
+        ))
+        if verbose:
+            print(warn("    [!] CSP allows unsafe-eval"))
+    wild = [w for w in ("*", "http:", "https:", "data:") if w in script.split()]
+    if wild:
+        out.append(Finding(
+            title="Weak CSP (wildcard sources)", severity="MEDIUM",
+            url=base + "/",
+            detail=f"script-src trusts broad sources ({', '.join(wild)}); "
+                   "attacker-hosted scripts may load",
+            evidence=",".join(wild),
+            confidence="High",
+        ))
+        if verbose:
+            print(warn("    [!] CSP wildcard sources"))
+    return out
+
+
+def _audit_hsts(headers: dict, base: str, verbose: bool = False) -> list[Finding]:
+    """HSTS with a short max-age barely protects; note it once."""
+    out: list[Finding] = []
+    hsts = _header_ci(headers, "Strict-Transport-Security")
+    if not hsts:
+        return out  # missing-header finding already covers it
+    m = re.search(r"max-age\s*=\s*(\d+)", hsts, re.I)
+    if m and int(m.group(1)) < 31536000:
+        out.append(Finding(
+            title="Weak HSTS (short max-age)", severity="LOW",
+            url=base + "/",
+            detail=f"max-age={m.group(1)} is under a year; short-lived "
+                   "protection against sslstrip-style downgrades",
+            evidence=m.group(0),
+            confidence="High",
+        ))
+        if verbose:
+            print(warn("    [!] HSTS short max-age"))
     return out
 
 
@@ -141,6 +227,19 @@ def test_open_redirect(session, urls: list[str], timeout: int,
                     evidence=loc[:120],
                     confidence="High",
                 )
+            low_loc = loc.lower()
+            if r.status_code in (301, 302, 303, 307, 308) and (
+                    low_loc.startswith("javascript:") or low_loc.startswith("data:")):
+                if verbose:
+                    print(warn(f"    [!] Dangerous redirect scheme: {inj}"))
+                return Finding(
+                    title="Possible Open Redirect", severity="MEDIUM",
+                    url=inj,
+                    detail=f"?{key} redirects to an active scheme "
+                           f"({low_loc.split(':')[0]}:); script execution on click",
+                    evidence=loc[:120],
+                    confidence="High",
+                )
             try:
                 body = r.text or ""
             except Exception:
@@ -157,6 +256,19 @@ def test_open_redirect(session, urls: list[str], timeout: int,
                     evidence="meta refresh",
                     confidence="Medium",
                 )
+            # no redirect taken, but the evil host echoes in the page: a
+            # window.location / link sink waiting to happen. Surface only.
+            if r.status_code == 200 and EVIL_HOST in body:
+                if verbose:
+                    print(warn(f"    [!] Redirect target reflected: {inj}"))
+                return Finding(
+                    title="Reflected redirect target", severity="LOW",
+                    url=inj,
+                    detail=f"?{key} value is reflected in the page; check JS "
+                           "sinks (location, open) manually",
+                    evidence=EVIL_HOST,
+                    confidence="Low",
+                )
         return None
 
     targets = urls[:8]
@@ -168,6 +280,33 @@ def test_open_redirect(session, urls: list[str], timeout: int,
 
 
 # ---------- 3. path traversal ----------
+
+def _filter_proof(session, p, q, key: str, timeout: int) -> str:
+    """php://filter base64 proof: decode the response, look for <?php.
+
+    Stronger than a marker: markers can echo, but a decoded PHP source
+    means the file was actually read. Returns the resource name or "".
+    """
+    import base64
+    for resource in ("index.php", "index"):
+        inj = urlunparse((p.scheme, p.netloc, p.path, p.params,
+                          urlencode({**{k: v[0] for k, v in q.items()},
+                                     key: "php://filter/convert.base64-encode/resource=" + resource}),
+                          p.fragment))
+        got = _get(session, inj, timeout)
+        if not got:
+            continue
+        m = re.search(r"[A-Za-z0-9+/]{200,}={0,2}", got[1] or "")
+        if not m:
+            continue
+        try:
+            decoded = base64.b64decode(m.group(0)).decode("utf-8", "ignore")
+        except Exception:
+            continue
+        if "<?php" in decoded:
+            return resource
+    return ""
+
 
 @register_check("path-traversal", "Path traversal via file/page params", order=11)
 def test_path_traversal(session, urls: list[str], timeout: int,
@@ -202,6 +341,18 @@ def test_path_traversal(session, urls: list[str], timeout: int,
                     hit = next((m for m in markers if m in body), None)
                     if not (hit and not base_has_marker):
                         continue
+                    proven = _filter_proof(session, p, q, key, timeout)
+                    if proven:
+                        if verbose:
+                            print(warn(f"    [!] Path traversal (filter proof): {inj}"))
+                        return Finding(
+                            title="Possible Path Traversal", severity="MEDIUM",
+                            url=inj,
+                            detail=f"?{key} reads source via php://filter "
+                                   f"(decoded <?php from {proven})",
+                            evidence=hit,
+                            confidence="High",
+                        )
                     # confirm with a second, different file — one marker
                     # could be a coincidence, two independent files is not.
                     cfile, cmarker = TRAVERSAL_CONFIRM
@@ -275,6 +426,58 @@ def test_cors(session, base: str, timeout: int,
             evidence="*",
             confidence="High",
         )]
+    # null origin: browsers really send "null" (sandboxed iframes, data:
+    # URLs, redirects) — trusting it is a classic CORS bug.
+    pace()
+    try:
+        rn = session.get(base + "/", timeout=timeout,
+                         headers={"Origin": "null"})
+    except ScanBudgetExceeded:
+        raise
+    except Exception:
+        rn = None
+    try:
+        nheaders = rn.headers or {} if rn else {}
+    except Exception:
+        nheaders = {}
+    if nheaders.get("Access-Control-Allow-Origin", "").strip().lower() == "null":
+        if verbose:
+            print(warn(f"    [!] CORS trusts null origin: {base}/"))
+        return [Finding(
+            title="Permissive CORS (null origin trusted)", severity="MEDIUM",
+            url=base + "/",
+            detail="Access-Control-Allow-Origin echoes 'null'; sandboxed "
+                   "contexts can read responses cross-origin",
+            evidence="null",
+            confidence="High",
+        )]
+    # preflight: does the server bless arbitrary methods for evil origins?
+    pace()
+    try:
+        r = session.options(base + "/", timeout=timeout,
+                            headers={"Origin": EVIL_ORIGIN,
+                                     "Access-Control-Request-Method": "PUT"})
+    except ScanBudgetExceeded:
+        raise
+    except Exception:
+        return []
+    try:
+        headers = r.headers or {}
+    except Exception:
+        return []
+    if EVIL_HOST in headers.get("Access-Control-Allow-Origin", ""):
+        allowed = headers.get("Access-Control-Allow-Methods", "")
+        if "PUT" in allowed.upper():
+            if verbose:
+                print(warn(f"    [!] CORS preflight blesses PUT: {base}/"))
+            return [Finding(
+                title="Permissive CORS (methods reflected)", severity="MEDIUM",
+                url=base + "/",
+                detail="Preflight reflects the evil origin and blesses PUT; "
+                       "cross-site writes may be possible",
+                evidence=allowed[:120],
+                confidence="High",
+            )]
     return []
 
 
@@ -304,17 +507,36 @@ def test_http_methods(session, base: str, timeout: int,
              "PUT": "PUT may allow file writes (verify manually)",
              "DELETE": "DELETE may allow object removal (verify manually)"}
     for m, detail in notes.items():
-        if m in methods:
-            out.append(Finding(
-                title=f"Risky HTTP method advertised: {m}", severity="LOW",
-                url=base + "/",
-                detail=f"OPTIONS advertises {m}: {detail} (advertised only — "
-                       "verify it really works before treating this as a vuln)",
-                evidence=allow[:120],
-                confidence="High",
-            ))
-            if verbose:
-                print(warn(f"    [!] HTTP method: {m} on {base}/"))
+        if m not in methods:
+            continue
+        confirmed = ""
+        if m == "TRACE":
+            # advertised is cheap talk: send one and see it echo back.
+            pace()
+            try:
+                tr = session.request("TRACE", base + "/", timeout=timeout)
+                echoed = tr is not None and getattr(tr, "status_code", 0) == 200 \
+                    and "TRACE" in (tr.text or "").upper()
+            except ScanBudgetExceeded:
+                raise
+            except Exception:
+                echoed = False
+            if echoed:
+                confirmed = " (live: TRACE echoed)"
+                detail = ("TRACE is enabled and echoes requests: "
+                          "Cross-Site Tracing works")
+        out.append(Finding(
+            title=f"Risky HTTP method advertised: {m}", severity="LOW",
+            url=base + "/",
+            detail=f"OPTIONS advertises {m}: {detail} (advertised only — "
+                   "verify it really works before treating this as a vuln)"
+            if not confirmed else
+            f"OPTIONS advertises {m}{confirmed}: {detail}",
+            evidence=allow[:120],
+            confidence="High",
+        ))
+        if verbose:
+            print(warn(f"    [!] HTTP method: {m} on {base}/"))
     return out[:3]
 
 
@@ -416,28 +638,125 @@ def test_graphql_introspection(session, base: str, pages: dict, timeout: int,
 
 # ---------- 9. Host header reflection ----------
 
+CACHE_HINT_HEADERS = ("x-cache", "x-cache-status", "cf-cache-status",
+                      "x-served-by", "via", "x-cdn", "cdn-cache",
+                      "x-cache-hits")
+
+RESET_HINT = re.compile(r"forgot|reset|recover|remind", re.I)
+
+
+def _reset_poison_probe(session, base: str, pages: dict | None, timeout: int,
+                        verbose: bool, oob) -> list[Finding]:
+    """Password reset poisoning: submit a reset flow with an evil Host.
+
+    Uses a random nonexistent address, so no real user gets mail. Without
+    OOB this stays silent (a reflection alone was already reported above);
+    with OOB a callback proves token theft and reports CRITICAL.
+    """
+    from urllib.parse import urljoin
+    if oob is None:
+        return []
+    target = None
+    for html in list((pages or {}).values())[:6]:
+        for m in re.finditer(r'href=["\']([^"\']+)["\']', html or "", re.I):
+            if RESET_HINT.search(m.group(1)) and _same_host(
+                    urljoin(base + "/", m.group(1)), base):
+                target = urljoin(base + "/", m.group(1))
+                break
+        if target:
+            break
+    if not target:
+        return []
+    from core.oob import new_token
+    token = new_token()
+    evil = f"{token}.{oob.session_domain}"
+    try:
+        pace()
+        r = session.post(target, timeout=timeout,
+                         headers={"Host": evil},
+                         data={"email": f"gashnouser{token}@example.com"})
+    except ScanBudgetExceeded:
+        raise
+    except Exception:
+        return []
+    if r is None:
+        return []
+    oob.pending.append({"kind": "reset", "target": target, "token": token})
+    if verbose:
+        print(warn(f"    [!] Reset poisoning probe sent: {target}"))
+    return []
+
+
 @register_check("host-header", "Host header reflected (cache-poison surface)", order=11)
 def test_host_header(session, base: str, timeout: int,
-                     verbose: bool = False) -> list[Finding]:
+                     verbose: bool = False, pages: dict | None = None,
+                     oob=None) -> list[Finding]:
     """Sends Host: evil-gash.test. A reflection means password-reset links,
-    cache keys or analytics can be poisoned downstream."""
-    got = _get(session, base + "/", timeout,
-               headers={"Host": "evil-gash.test"})
-    if not got:
-        return []
-    body = got[1] or ""
-    if _raw_reflected(body, "evil-gash"):
-        if verbose:
-            print(warn(f"    [!] Host header reflected: {base}/"))
-        return [Finding(
-            title="Host header reflected", severity="LOW",
-            url=base + "/",
-            detail="The Host header is reflected in the response; check "
-                   "password-reset and cache behavior manually",
-            evidence="evil-gash",
-            confidence="High",
-        )]
+    cache keys or analytics can be poisoned downstream. Falls back to
+    X-Forwarded-Host (WSTG method), then tries reset-poisoning proof."""
+    for header in ({"Host": "evil-gash.test"},
+                   {"Host": urlparse(base).hostname or "x",
+                    "X-Forwarded-Host": "evil-gash.test"}):
+        got = _get(session, base + "/", timeout, headers=header)
+        if not got:
+            continue
+        body = got[1] or ""
+        if _raw_reflected(body, "evil-gash"):
+            if verbose:
+                via = "X-Forwarded-Host" if "X-Forwarded-Host" in header \
+                    else "Host"
+                print(warn(f"    [!] Host header reflected ({via}): {base}/"))
+            out = [Finding(
+                title="Host header reflected", severity="LOW",
+                url=base + "/",
+                detail="The Host header is reflected in the response; check "
+                       "password-reset and cache behavior manually",
+                evidence="evil-gash",
+                confidence="High",
+            )]
+            out += _reset_poison_probe(session, base, pages, timeout,
+                                       verbose, oob)
+            return out
     return []
+
+
+@register_check("cache-poisoning", "Cache poisoning via Host reflection", order=11)
+def test_cache_poisoning(session, base: str, timeout: int,
+                         verbose: bool = False) -> list[Finding]:
+    """Evil Host reflected AND the response looks cached (Age, HIT, CDN).
+    A poisoned entry would serve to everyone — but proving it takes a
+    victim fetch, so this stays a surface note."""
+    pace()
+    try:
+        r = session.get(base + "/", timeout=timeout,
+                        headers={"Host": "evil-gash.test"})
+    except ScanBudgetExceeded:
+        raise
+    except Exception:
+        return []
+    try:
+        body, headers = r.text or "", r.headers or {}
+    except Exception:
+        return []
+    if not _raw_reflected(body, "evil-gash"):
+        return []
+    low = {str(k).lower(): v for k, v in headers.items()}
+    cached = [h for h in CACHE_HINT_HEADERS if h in low]
+    try:
+        age = int(str(low.get("age", "0")).split(",")[0].strip() or 0)
+    except Exception:
+        age = 0
+    if not cached and age <= 0:
+        return []
+    return [Finding(
+        title="Cache poisoning surface", severity="LOW",
+        url=base + "/",
+        detail="Evil Host reflects and the response looks cached "
+               f"({', '.join(cached) or f'Age: {age}'}); fetch twice to "
+               "confirm a stored poisoned entry",
+        evidence="evil-gash",
+        confidence="Medium",
+    )]
 
 
 # ---------- 10. security.txt ----------
@@ -464,27 +783,34 @@ def test_security_txt(session, base: str, timeout: int,
 @register_check("js-secrets", "Hardcoded secrets in JavaScript", order=11)
 def test_js_secrets(session, base: str, pages: dict, timeout: int,
                     verbose: bool = False) -> list[Finding]:
-    """AI-built frontends love shipping live keys. Scans inline scripts plus
-    up to 3 same-host .js files (200KB cap each). Placeholders are skipped,
-    real secrets are masked in the report."""
+    """AI-built frontends love shipping live keys. Scans inline scripts on
+    every crawled page plus up to 5 same-host .js files (200KB cap each).
+    Placeholders are skipped, real secrets are masked in the report."""
     from urllib.parse import urljoin
     texts: list[str] = []
-    for html in list((pages or {}).values())[:4]:
+    for html in list((pages or {}).values()):
         for m in re.finditer(
                 r"<script(?![^>]*src=)[^>]*>(.*?)</script>",
                 html or "", re.I | re.S):
             chunk = m.group(1) or ""
             if chunk.strip():
                 texts.append(chunk[:200_000])
+            if len(texts) >= 12:
+                break
+        if len(texts) >= 12:
+            break
     try:
-        srcs = [m for m in re.findall(
-            r'<script[^>]*src=["\']([^"\']+)["\']',
-            (pages or {}).get(base + "/", ""), re.I)]
+        srcs = []
+        for html in list((pages or {}).values()):
+            for m in re.findall(r'<script[^>]*src=["\']([^"\']+)["\']',
+                                html or "", re.I):
+                if m not in srcs:
+                    srcs.append(m)
     except Exception:
         srcs = []
     fetched = 0
     for src in srcs:
-        if fetched >= 3:
+        if fetched >= 5:
             break
         full = urljoin(base + "/", src)
         if not _same_host(full, base):
@@ -530,7 +856,8 @@ OS_CMD_RES = [
 @register_check("os-command-injection", "OS command injection via ;id/|id", order=11)
 def test_os_command_injection(session, urls: list[str], timeout: int,
                               verbose: bool = False,
-                              threads: int = 10) -> list[Finding]:
+                              threads: int = 10, pages: dict | None = None,
+                              base: str = "", deep: bool = True) -> list[Finding]:
     """Same shape as error-based SQLi: break out, run `id`, look for uid=."""
     from concurrent.futures import ThreadPoolExecutor
     out: list[Finding] = []
@@ -564,6 +891,35 @@ def test_os_command_injection(session, urls: list[str], timeout: int,
         for f in ex.map(_probe, targets):
             if f:
                 out.append(f)
+
+    if deep:
+        for action, field, filler in _post_form_targets(pages, base):
+            rb = _post(session, action, timeout,
+                       data={**filler, field: "gash1"})
+            if rb and any(rx.search(rb.text or "") for rx in OS_CMD_RES):
+                continue
+            for cmd in OS_CMD_PAYLOADS:
+                r = _post(session, action, timeout,
+                          data={**filler, field: "gash1" + cmd})
+                if not r:
+                    continue
+                body = r.text or ""
+                hit = next((m for rx in OS_CMD_RES
+                            if (m := rx.search(body))), None)
+                if hit:
+                    if verbose:
+                        print(warn(f"    [!] OS command injection (POST {field}): {action}"))
+                    out.append(Finding(
+                        title="Possible OS Command Injection", severity="CRITICAL",
+                        url=action,
+                        detail=f"Command output marker returned via POST body: "
+                               f"'{hit.group(0)[:40]}'",
+                        evidence=hit.group(0)[:60],
+                        confidence="High",
+                    ))
+                    break
+            if len(out) >= 6:
+                break
     return out
 
 
@@ -944,8 +1300,9 @@ def test_mass_assignment(pages: dict, base: str,
             out.append(Finding(
                 title="Client-controllable role field", severity="INFO",
                 url=f.get("action", ""),
-                detail=f"Form exposes {', '.join(hits)}; escalate only if the "
-                       "server trusts it (verify manually)",
+                detail=f"Form exposes {', '.join(hits)}; to confirm: register, "
+                       "replay the request with role=admin, then re-GET the "
+                       "profile — escalation only counts if it sticks",
                 evidence=",".join(hits),
                 confidence="Low",
             ))

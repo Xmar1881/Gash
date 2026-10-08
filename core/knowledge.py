@@ -62,11 +62,43 @@ KB: list[tuple[str, dict]] = [
         remediation="Proven script execution in another user's browser: apply "
                     "the Stored XSS procedure urgently, then find how the "
                     "payload reached the victim (stored source).")),
+    ("SQLi (confirmed via OOB)", dict(
+        cwe="CWE-89", owasp="A03:2021 – Injection",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H (9.8)",
+        remediation="Proven: the database resolved our callback domain. Treat "
+                    "as fully injectable — prepared statements, least "
+                    "privilege, no dynamic SQL.")),
+    ("Login username enumeration", dict(
+        cwe="CWE-204", owasp="A07:2021 – Identification and Authentication Failures",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N (5.3)",
+        remediation="Return identical errors for bad-user vs bad-password; "
+                    "add login throttling and CAPTCHA.")),
+    ("Possible LDAP injection (auth bypass)", dict(
+        cwe="CWE-90", owasp="A03:2021 – Injection",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N (9.1)",
+        remediation="Escape LDAP filters (or bind with parameterized APIs); "
+                    "never concatenate usernames into search filters.")),
+    ("Reflected redirect target", dict(
+        cwe="CWE-601", owasp="A01:2021 – Broken Access Control",
+        cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:N/I:L/A:N (3.1)",
+        remediation="Informational: a redirect parameter echoes in the page; "
+                    "check JS sinks before calling it open redirect.")),
+    ("Cache poisoning surface", dict(
+        cwe="CWE-444", owasp="A08:2021 – Software and Data Integrity Failures",
+        cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:L/A:N (3.7)",
+        remediation="Informational: confirm with two fetches (poison, then "
+                    "victim request); key caches on Host, fix origin "
+                    "validation.")),
     ("SSRF (confirmed via OOB)", dict(
         cwe="CWE-918", owasp="A10:2021 – SSRF",
         cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H (9.8)",
         remediation="Proven server-side fetch: allowlist the parameter, block "
                     "internal/metadata egress, never mirror fetched content.")),
+    ("Password reset poisoning", dict(
+        cwe="CWE-640", owasp="A07:2021 – Identification and Authentication Failures",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:N (8.1)",
+        remediation="Build reset links from configured app URLs, never from "
+                    "the Host header; reject unknown hosts at the edge.")),
     ("Possible SSTI", dict(
         cwe="CWE-1336", owasp="A03:2021 – Injection",
         cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H (9.8)",
@@ -84,6 +116,12 @@ KB: list[tuple[str, dict]] = [
         remediation="Check ownership/permission server-side on every object access "
                     "(object-level, not just function-level); prefer unguessable "
                     "references (UUID) over sequential IDs.")),
+    ("Confirmed IDOR", dict(
+        cwe="CWE-639", owasp="A01:2021 – Broken Access Control",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N (8.1)",
+        remediation="PROVEN: a second user reads another user's object. Enforce "
+                    "object-level authorization immediately, audit access logs "
+                    "for exploitation, prefer unguessable references.")),
     ("Possible SQLi Auth Bypass", dict(
         cwe="CWE-89", owasp="A03:2021 – Injection",
         cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N (9.1)",
@@ -130,6 +168,12 @@ KB: list[tuple[str, dict]] = [
         remediation="Move sensitive files (.env, backups, .git) out of the web root; "
                     "add secret scanning to the deploy pipeline; ROTATE any leaked "
                     "keys immediately.")),
+    ("Sensitive File (unverified", dict(
+        cwe="CWE-538", owasp="A05:2021 – Security Misconfiguration",
+        cvss="no estimate",
+        remediation="A secret-looking path answers HTTP 200 but its content "
+                    "doesn't validate — fetch it manually before calling it "
+                    "an exposure.")),
     ("Sensitive Directory", dict(
         cwe="CWE-538", owasp="A05:2021 – Security Misconfiguration",
         cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N (5.3)",
@@ -168,6 +212,16 @@ KB: list[tuple[str, dict]] = [
         cvss="no estimate",
         remediation="Emit the header; start with a report-only CSP, then enforce. "
                     "HSTS needs max-age + includeSubDomains.")),
+    ("Weak CSP", dict(
+        cwe="CWE-693", owasp="A05:2021 – Security Misconfiguration",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N (5.4)",
+        remediation="Remove 'unsafe-inline'/'unsafe-eval' and wildcards from "
+                    "script-src; use nonces or hashes for inline scripts.")),
+    ("Weak HSTS", dict(
+        cwe="CWE-693", owasp="A05:2021 – Security Misconfiguration",
+        cvss="no estimate",
+        remediation="Raise max-age to at least a year (31536000) with "
+                    "includeSubDomains; consider preload.")),
     ("Possible Open Redirect", dict(
         cwe="CWE-601", owasp="A01:2021 – Broken Access Control",
         cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N (6.1)",

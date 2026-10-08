@@ -17,7 +17,7 @@ from urllib.parse import urljoin, urlparse, parse_qs, urlencode, urlunparse
 
 from core.colors import success, info, warn, DIM, RESET
 from core.recon import normalize_target
-from core.net import pace, get_context, ScanBudgetExceeded
+from core.net import pace, get_context, scan_dead, ScanBudgetExceeded, RATE_WAIT_BUDGET, PartialResults
 from core.knowledge import enrich
 from core.registry import check as register_check
 
@@ -62,9 +62,31 @@ SQL_ERRORS = [
 
 SQLI_PAYLOADS = ["'", '"', "' OR '1'='1"]
 
+# Which database produced this error? First match wins; unknown stays honest.
+DBMS_FINGERPRINTS = [
+    ("MySQL/MariaDB", ["you have an error in your sql syntax",
+                        "warning: mysql", "mysqli_", "mysql_fetch"]),
+    ("PostgreSQL", ["pg_query()", "postgresql", "psql:", "pg_exec",
+                     "unterminated quoted"]),
+    ("MSSQL", ["unclosed quotation mark",
+               "quoted string not properly terminated", "sql server",
+               "odbc sql server", "80040e"]),
+    ("Oracle", ["ora-", "oracle error", "pls-"]),
+    ("SQLite", ["sqlite3", "sqlite error"]),
+]
+
+
+def fingerprint_dbms(hit: str) -> str:
+    """Map a matched error signature to a backend name, or 'Unknown'."""
+    low = (hit or "").lower()
+    for name, marks in DBMS_FINGERPRINTS:
+        if any(m in low for m in marks):
+            return name
+    return "Unknown"
+
 XSS_PAYLOAD = 'gashxss"><svg onload=alert(1)>'
 
-# Context-aware probe demeti: (baglam, marker, payload). Ilk vuran yeterli.
+# Context-aware probe set: (context, marker, payload). First hit wins.
 XSS_PROBES = [
     ("html-attr", "gx1", 'gx1"><svg onload=alert(1)>'),
     ("attr-js", "gx2", 'gx2"autofocus/onfocus=alert(1)>\'-alert(1)-'),
@@ -75,10 +97,13 @@ XSS_PROBES = [
 ESCAPED_HINTS = ["&lt;", "&gt;", "&quot;", "&#039;", "&#x27;", "&#39;",
                  "\\u003c", "\\u003e", "\\x3c", "\\x3e"]
 
-# Common params to try when a page has no links (high hit rate)
-FUZZ_PARAMS = ["id", "q", "query", "s", "search", "keyword", "name", "term"]
+# Probe params when a page has no links. Overlaps redirect/traversal/IDOR
+# key names on purpose, so the newer checks find targets automatically.
+FUZZ_PARAMS = ["id", "q", "query", "s", "search", "keyword", "name", "term",
+               "file", "page", "lang", "redirect", "next", "preview",
+               "template", "theme"]
 
-# Upload olabilecek endpoint'ler
+# Endpoints that may accept uploads
 UPLOAD_PATHS = [
     "/upload", "/uploads", "/upload.php", "/file-upload",
     "/admin/upload", "/admin/uploads", "/wp-admin/media-new.php",
@@ -242,18 +267,44 @@ def _tls_session(template):
 
 
 def _calm_down(wait: float, where: str) -> None:
-    """After a 429: wait politely + throttle globally (max 10s)."""
-    wait = min(max(1.0, wait), 30.0)
+    """After a 429: wait politely + throttle globally (max 10s per hit).
+
+    Gives up after RATE_WAIT_BUDGET cumulative seconds: partial results
+    now beat a 10-minute black hole against a rate-limiting WAF.
+    """
+    wait = min(max(1.0, wait), 10.0)
     ctx = get_context()
     with ctx._lock:
         ctx.delay = min(ctx.delay + 2.0, 10.0)
-    print(warn(f"  [!] 429 ({where}): waiting {wait:.0f}s, throttling down."))
-    time.sleep(wait)
+        if ctx.rate_wait_total + wait > RATE_WAIT_BUDGET:
+            raise ScanBudgetExceeded(
+                f"rate-limited by target ({RATE_WAIT_BUDGET:.0f}s waited) — "
+                "stopping with partial results")
+        ctx.rate_wait_total += wait
+    from core.spinner import countdown
+    countdown(f"  [!] 429 ({where}): waiting", wait)
+
+
+def _mark_dead() -> None:
+    """Flag budget/rate death where every thread can see it (shared default)."""
+    try:
+        get_context().dead = True
+    except Exception:
+        pass
+    try:
+        from core.net import _DEFAULT
+        _DEFAULT.dead = True
+    except Exception:
+        pass
 
 
 def _get(session, url: str, timeout: int, headers: dict | None = None):
-    """(status, text, final_url) or None. Never throws. Raises on budget."""
-    pace()
+    """(status, text, final_url) or None. Never throws; degrades on budget."""
+    try:
+        pace()
+    except ScanBudgetExceeded:
+        _mark_dead()
+        return None
     session = _tls_session(session)
     try:
         r = session.get(url, timeout=timeout, allow_redirects=True,
@@ -265,14 +316,19 @@ def _get(session, url: str, timeout: int, headers: dict | None = None):
                             headers=headers)
         return r.status_code, r.text, r.url
     except ScanBudgetExceeded:
-        raise
+        _mark_dead()
+        return None
     except Exception:
         return None
 
 
 def _post(session, url: str, timeout: int, **kwargs):
-    """POST equivalent (response or None). Raises on budget overrun."""
-    pace()
+    """POST equivalent (response or None). Degrades on budget overrun."""
+    try:
+        pace()
+    except ScanBudgetExceeded:
+        _mark_dead()
+        return None
     session = _tls_session(session)
     try:
         r = session.post(url, timeout=timeout, allow_redirects=True, **kwargs)
@@ -282,7 +338,8 @@ def _post(session, url: str, timeout: int, **kwargs):
             r = session.post(url, timeout=timeout, allow_redirects=True, **kwargs)
         return r
     except ScanBudgetExceeded:
-        raise
+        _mark_dead()
+        return None
     except Exception:
         return None
 
@@ -352,6 +409,10 @@ def _fetch_base(session, base_url: str, timeout: int,
     for u in cands:
         try:
             pace()
+        except ScanBudgetExceeded:
+            _mark_dead()
+            break
+        try:
             r = session.get(u, timeout=timeout, allow_redirects=True)
             if r.status_code:
                 if scope_hosts:
@@ -426,9 +487,41 @@ def _inject(url: str, payload: str) -> str:
 
 # ---------- testler ----------
 
+def _post_form_targets(pages, base: str, limit: int = 6) -> list:
+    """[(action, field, filler)] POST fuzz targets from crawled pages.
+
+    filler fills sibling text fields with "1" so lone-field posts don't
+    get rejected outright. Password forms are never touched (same rule
+    as stored-xss). Capped — POST bodies change state.
+    """
+    from core.advanced import _forms, UNFUZZABLE_TYPES
+    out = []
+    for purl, html in list((pages or {}).items()):
+        try:
+            forms = _forms(html, purl.rsplit("/", 1)[0] if "/" in purl else base)
+        except Exception:
+            continue
+        for f in forms:
+            if f.get("method") != "POST":
+                continue
+            fields = f.get("fields", {})
+            if any(t == "password" for t in fields.values()):
+                continue
+            fuzzable = [n for n in f.get("inputs", [])
+                        if fields.get(n, "text") not in UNFUZZABLE_TYPES][:2]
+            if not fuzzable:
+                continue
+            filler = {n: "1" for n in fuzzable}
+            for n in fuzzable:
+                out.append((f["action"], n, dict(filler)))
+                if len(out) >= limit:
+                    return out
+    return out
+
 @register_check("sqli-error", "Error-based SQLi (DB error signature)", order=10)
 def test_sqli(session, urls: list[str], timeout: int, verbose: bool,
-              threads: int = 10) -> list[Finding]:
+              threads: int = 10, pages: dict | None = None, base: str = "",
+              deep: bool = True) -> list[Finding]:
     from concurrent.futures import ThreadPoolExecutor
     out: list[Finding] = []
 
@@ -451,7 +544,8 @@ def test_sqli(session, urls: list[str], timeout: int, verbose: bool,
                     title="Possible SQL Injection",
                     severity="CRITICAL",
                     url=inj,
-                    detail=f"DB error signature returned: '{hit}'",
+                    detail=f"DB error signature returned: '{hit}' "
+                           f"[Backend: {fingerprint_dbms(hit)}]",
                     evidence=body[max(0, low.find(hit) - 40):low.find(hit) + 80].strip(),
                     confidence="High",
                 )
@@ -461,6 +555,43 @@ def test_sqli(session, urls: list[str], timeout: int, verbose: bool,
         for f in ex.map(_probe, urls):
             if f:
                 out.append(f)
+
+    if deep:
+        out += _post_sqli(session, pages, base, timeout, verbose)
+    return out
+
+
+def _post_sqli(session, pages, base: str, timeout: int,
+               verbose: bool = False) -> list[Finding]:
+    """Same error-signature test through POST bodies (deep only)."""
+    out: list[Finding] = []
+    for action, field, filler in _post_form_targets(pages, base):
+        rb = _post(session, action, timeout,
+                   data={**filler, field: "gash1"})
+        base_has_err = rb is not None and any(
+            e in (rb.text or "").lower() for e in SQL_ERRORS)
+        for p in SQLI_PAYLOADS:
+            r = _post(session, action, timeout,
+                      data={**filler, field: "gash1" + p})
+            if not r:
+                continue
+            low = (r.text or "").lower()
+            hit = next((e for e in SQL_ERRORS if e in low), None)
+            if hit and not base_has_err:
+                if verbose:
+                    print(warn(f"    [!] SQLi (POST {field}): {action}"))
+                out.append(Finding(
+                    title="Possible SQL Injection",
+                    severity="CRITICAL",
+                    url=action,
+                    detail=f"DB error signature returned via POST body: '{hit}' "
+                           f"[Backend: {fingerprint_dbms(hit)}]",
+                    evidence=(r.text or "")[max(0, low.find(hit) - 40):low.find(hit) + 80].strip(),
+                    confidence="High",
+                ))
+                break
+        if len(out) >= 4:
+            break
     return out
 
 
@@ -476,7 +607,8 @@ def _raw_reflected(body: str | None, marker: str) -> bool:
 
 @register_check("xss-reflected", "Reflected XSS (3 contexts + escape filter)", order=10)
 def test_xss(session, urls: list[str], timeout: int, verbose: bool,
-             threads: int = 10) -> list[Finding]:
+             threads: int = 10, pages: dict | None = None, base: str = "",
+             deep: bool = True) -> list[Finding]:
     from concurrent.futures import ThreadPoolExecutor
     out: list[Finding] = []
 
@@ -519,7 +651,37 @@ def test_xss(session, urls: list[str], timeout: int, verbose: bool,
     # keep info notes from spamming: max 3
     hits = [f for f in out if f.severity != "LOW"]
     infos = [f for f in out if f.severity == "LOW"][:3]
-    return hits + infos
+    out = hits + infos
+    if deep:
+        out += _post_xss(session, pages, base, timeout, verbose)
+    return out
+
+
+def _post_xss(session, pages, base: str, timeout: int,
+              verbose: bool = False) -> list[Finding]:
+    """Same reflection test through POST bodies (deep only, raw hits only)."""
+    out: list[Finding] = []
+    for action, field, filler in _post_form_targets(pages, base):
+        for ctx, marker, payload in XSS_PROBES:
+            r = _post(session, action, timeout,
+                      data={**filler, field: payload})
+            if not r:
+                continue
+            if _raw_reflected(r.text, marker):
+                if verbose:
+                    print(warn(f"    [!] XSS({ctx}, POST {field}): {action}"))
+                out.append(Finding(
+                    title="Possible Reflected XSS",
+                    severity="MEDIUM",
+                    url=action,
+                    detail=f"Payload reflected raw in '{ctx}' context via POST body",
+                    evidence=payload,
+                    confidence="High",
+                ))
+                break
+        if len(out) >= 4:
+            break
+    return out
 
 
 @register_check("xss-errpage", "404 + header reflection", order=10)
@@ -603,6 +765,26 @@ def _looks_like_baseline(status: int, body: str, base_status: int,
     return ratio > 0.9
 
 
+def _secret_file_proof(path: str, body: str) -> str:
+    """Content proof that a sensitive file is REALLY exposed, or "".
+
+    A 403 block page or a redirect is not exposure — Cloudflare and friends
+    serve those for every secret-looking path. Only a 200 with matching
+    content counts. Callers must check status == 200 first.
+    """
+    low_path = (path or "").lower()
+    seg = low_path.rsplit("/", 1)[-1]
+    text = body or ""
+    if ".git" in low_path or seg in ("head", "config"):
+        if text.lstrip().startswith("ref:"):
+            return "git ref disclosed"
+    if seg == ".env" or ".env." in seg or seg.endswith(".env"):
+        keys = re.findall(r"(?m)^[A-Z_][A-Z0-9_]{1,30}\s*=", text)
+        if len(set(keys)) >= 2:
+            return f"{len(set(keys))} KEY= assignments readable"
+    return ""
+
+
 def _probe_dir(session, base: str, path: str, timeout: int,
                base_status: int, base_len: int, base_text: str = "") -> Finding | None:
     url = base + "/" + path.lstrip("/")
@@ -620,12 +802,30 @@ def _probe_dir(session, base: str, path: str, timeout: int,
         is_admin = bool(ADMIN_HINT.search(path) or (body and ADMIN_HINT.search(body[:2000] or "")))
         pl = path.lower()
         seg = pl.rsplit("/", 1)[-1]  # nested paths like /admin/web.config
-        if path in (".git/HEAD", ".env") or (body and "ref: refs/heads" in (body[:500] or "")):
-            return Finding(title=f"Critical File Exposure: {path}", severity="CRITICAL",
+        # exact secret files: 200 + content proof, nothing less. A 403 here
+        # is usually a WAF block page, not an exposed file.
+        if path in (".git/HEAD", ".env"):
+            if status == 200:
+                proof = _secret_file_proof(path, body or "")
+                if proof:
+                    return Finding(title=f"Critical File Exposure: {path}", severity="CRITICAL",
+                                   detail=f"HTTP 200, {proof}", url=url,
+                                   confidence="High")
+                return Finding(title=f"Sensitive File (unverified content): {path}",
+                               severity="MEDIUM",
+                               detail="HTTP 200 but content doesn't validate; verify manually",
+                               url=url, confidence="Medium")
+            if status in (401, 403):
+                return Finding(title=f"Restricted Area: {path}", severity="INFO",
+                               detail=f"HTTP {status} (access controlled, path exists)", url=url,
+                               confidence="Medium")
+            return Finding(title=f"Redirect: {path}", severity="INFO",
                            detail=f"HTTP {status}", url=url,
                            confidence="High")
-        # smart-tech: sir/konfig/yedek dosyalari kritik (basename bak!)
-        if (seg.endswith((".env", ".sql", ".bak", ".old", ".zip", ".tar.gz"))
+        # smart-tech: secret/config/backup basenames — 200 only. A 401/403
+        # or redirect proves control/absence, not exposure.
+        if status == 200 and (
+                seg.endswith((".env", ".sql", ".bak", ".old", ".zip", ".tar.gz"))
                 or seg in ("package.json", "composer.json", ".npmrc", "web.config",
                            ".htaccess", ".htpasswd", ".git", "head", "config")
                 or "wp-config" in seg or seg == "web.xml" or seg == "env"):
@@ -640,17 +840,17 @@ def _probe_dir(session, base: str, path: str, timeout: int,
                                detail=f"HTTP {status}" + (" (login form)" if is_admin else ""),
                                url=url,
                                confidence="High")
-        # forbidden but confirmed present: medium
+        # forbidden but confirmed present: controlled, not exposed
         if status in (401, 403):
             return Finding(title=f"Restricted Area: {path}", severity="INFO",
                            detail=f"HTTP {status} (access controlled, path exists)", url=url,
                            confidence="Medium")
-        # hassas gorunumlu yol: orta
-        if SENSITIVE_HINT.search(pl):
+        # sensitive-looking path served with 200: medium
+        if status == 200 and SENSITIVE_HINT.search(pl):
             return Finding(title=f"Sensitive Directory: {path}", severity="MEDIUM",
                            detail=f"HTTP {status}", url=url,
                            confidence="Medium")
-        # siradan sayfa / yonlendirme: dusuk bilgi (gurultu degil)
+        # ordinary page / redirect: low-value info, not noise
         if status == 200:
             return Finding(title=f"General Page: {path}", severity="INFO",
                            detail=f"HTTP {status}", url=url,
@@ -687,25 +887,31 @@ def dir_brute(session, base: str, timeout: int, threads: int,
     paths = list(dict.fromkeys(base_list + (extra_paths or [])))[:80]
     bs, bl, bt = _baseline_404(session, base, timeout)
     out: list[Finding] = []
-    with ThreadPoolExecutor(max_workers=max(1, threads)) as ex:
-        fut = {ex.submit(_probe_dir, session, base, p, timeout, bs, bl, bt): p
-               for p in paths}
-        for f in as_completed(fut):
-            try:
-                r = f.result()
-                if r:
-                    out.append(r)
-                    if ctx is not None:
-                        ctx.setdefault("found_paths", []).append(r.url)
-                    if verbose:
-                        print(warn(f"    [!] {r.severity}: {r.title} -> {r.url}"))
-            except Exception:
-                pass
+    from core.spinner import spin
+    with spin(f"  [*] Brute-forcing {len(paths)} paths...", enabled=not verbose):
+        with ThreadPoolExecutor(max_workers=max(1, threads)) as ex:
+            fut = {ex.submit(_probe_dir, session, base, p, timeout, bs, bl, bt): p
+                   for p in paths}
+            for f in as_completed(fut):
+                try:
+                    r = f.result()
+                    if r:
+                        out.append(r)
+                        if ctx is not None:
+                            ctx.setdefault("found_paths", []).append(r.url)
+                        if verbose:
+                            print(warn(f"    [!] {r.severity}: {r.title} -> {r.url}"))
+                except Exception:
+                    pass
     return out
 
 
 RECURSE_FILE_SUFFIX = [".bak", ".old", "~", ".swp", ".save"]
 RECURSE_DIR_EXTRA = ["backup.zip", ".git/HEAD", "index.php.bak", "web.config"]
+# Backup mutations of a found directory itself: /admin -> /admin.bak, ...
+RECURSE_DIR_MUTATIONS = [".bak", ".old", ".zip", "~"]
+# Same name, different handler: /admin -> /admin.php, /admin.aspx, ...
+RECURSE_DIR_FILE_EXT = [".php", ".aspx", ".jsp", ".html"]
 
 
 @register_check("smart-recurse", "Recurse under found paths + backup extensions", order=31)
@@ -730,29 +936,34 @@ def smart_recurse(session, base: str, timeout: int, threads: int = 10,
     for u in found:
         path = urlparse(u).path
         seg = path.rsplit("/", 1)[-1]
-        if "." in seg:  # dosya -> yedek varyantlari
+        if "." in seg:  # file -> backup variants
             probes += [path + s for s in RECURSE_FILE_SUFFIX]
-        else:  # dir -> go deeper
+        else:  # dir -> go deeper + mutate the dirname itself
             d = path if path.endswith("/") else path + "/"
             probes += [d + x for x in RECURSE_DIR_EXTRA]
+            bare = path.rstrip("/")
+            probes += [bare + s for s in RECURSE_DIR_MUTATIONS]
+            probes += [bare + e for e in RECURSE_DIR_FILE_EXT]
     probes = list(dict.fromkeys(probes))[:15]
     if not probes:
         return []
     out: list[Finding] = []
     bs, bl, bt = _baseline_404(session, base, timeout)
-    with ThreadPoolExecutor(max_workers=max(1, min(threads, len(probes)))) as ex:
-        fut = {ex.submit(_probe_dir, session, base, p.lstrip("/"),
-                         timeout, bs, bl, bt): p for p in probes}
-        for f in as_completed(fut):
-            try:
-                r = f.result()
-                if r and "RECURSE" not in r.title:
-                    r.title = f"{r.title} (recursive)"
-                    out.append(r)
-                    if verbose:
-                        print(warn(f"    [!] recurse: {r.title} -> {r.url}"))
-            except Exception:
-                pass
+    from core.spinner import spin
+    with spin(f"  [*] Recursing under {len(found)} paths...", enabled=not verbose):
+        with ThreadPoolExecutor(max_workers=max(1, min(threads, len(probes)))) as ex:
+            fut = {ex.submit(_probe_dir, session, base, p.lstrip("/"),
+                             timeout, bs, bl, bt): p for p in probes}
+            for f in as_completed(fut):
+                try:
+                    r = f.result()
+                    if r and "RECURSE" not in r.title:
+                        r.title = f"{r.title} (recursive)"
+                        out.append(r)
+                        if verbose:
+                            print(warn(f"    [!] recurse: {r.title} -> {r.url}"))
+                except Exception:
+                    pass
     return out
 
 
@@ -778,7 +989,7 @@ def run_scan(target: str, threads: int = 20, timeout: int = 8,
               no_crawl: bool = False, dom: bool = False,
               blind_callback: str | None = None,
               scope_hosts: set[str] | None = None,
-              oob=None) -> list[Finding]:
+              oob=None, auth_b=None) -> list[Finding]:
     import core.advanced  # noqa: F401 — registers checks with the registry
     import core.domxss  # noqa: F401 — registers the dom-xss check
     import core.webchecks  # noqa: F401 — registers modern web checks
@@ -790,8 +1001,15 @@ def run_scan(target: str, threads: int = 20, timeout: int = 8,
         t0 = time.time()
         _, base0 = normalize_target(target)
         session = _session(timeout, auth)
+        session_b = None
+        if auth_b is not None and (getattr(auth_b, "cookies", None)
+                                   or getattr(auth_b, "headers", None)):
+            session_b = _session(timeout, auth_b)
 
-        html, base, headers = _fetch_base(session, base0, timeout, scope_hosts)
+        try:
+            html, base, headers = _fetch_base(session, base0, timeout, scope_hosts)
+        except ScanBudgetExceeded as e:
+            raise PartialResults([], str(e))
         if not html and verbose:
             print(warn("    [i] base page unreachable, scanning blind"))
 
@@ -830,13 +1048,23 @@ def run_scan(target: str, threads: int = 20, timeout: int = 8,
                "headers": headers, "timeout": timeout, "threads": threads,
                "verbose": verbose, "deep": deep, "wordlist": wordlist,
                "techs": [], "extra_paths": [], "dom": dom,
-               "blind_callback": blind_callback, "oob": oob}
+           "blind_callback": blind_callback, "oob": oob,
+               "session_b": session_b}
         findings: list[Finding] = []
         try:
             findings += run_checks(session, ctx, skip=skip_checks or set(),
                                    deep=deep, verbose=verbose)
+        except PartialResults as e:
+            findings = e.findings
+            print(warn(f"  [!] {e}"))
+            for f in findings:
+                enrich(f)
+            raise PartialResults(findings, str(e))
         except ScanBudgetExceeded as e:
             print(warn(f"  [!] {e}"))
+            for f in findings:
+                enrich(f)
+            raise PartialResults(findings, str(e))
         if oob is not None:
             try:
                 from core.oob import drain
@@ -856,6 +1084,11 @@ def run_scan(target: str, threads: int = 20, timeout: int = 8,
 
         for f in findings:
             enrich(f)
+
+        if scan_dead():
+            # budget/rate death mid-scan: checks degraded to None instead of
+            # raising, so surface it here — partial, never "clean".
+            raise PartialResults(findings, "request budget spent or rate limit hit mid-scan")
 
         elapsed = round(time.time() - t0, 2)
         print(success(f"  [+] SCAN done: {len(findings)} findings ({elapsed}s)"))

@@ -12,7 +12,7 @@
 [![GASH CI](https://github.com/Xmar1881/Gash/actions/workflows/ci.yml/badge.svg)](https://github.com/Xmar1881/Gash/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
-![Version](https://img.shields.io/badge/version-0.3.0-red)
+![Version](https://img.shields.io/badge/version-0.4.0-red)
 
 ```text
   ██████╗  █████╗ ███████╗██╗  ██╗
@@ -22,7 +22,7 @@
  ╚██████╔╝██║  ██║███████║██║  ██║
   ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
   [ GASH // Vulnerability & Penetration Engine ]
-  v0.3.0  //  fast | modular | thorough
+  v0.4.0  //  fast | modular | thorough
 ```
 
 > [!WARNING]
@@ -32,7 +32,7 @@
 
 ## Neden GASH?
 
-- **Tek komutla full tarama:** recon + crawl + 39 güvenlik kontrolü + rapor
+- **Tek komutla full tarama:** recon + crawl + 42 güvenlik kontrolü + rapor
   (zafiyet tespiti, saldırı yüzeyi keşfi ve yapılandırma denetimi)
 - **Akıllı:** tech fingerprint'e göre wordlist seçer (WordPress / PHP / Node / Java / Python)
 - **Modern web:** yapay zekâyla üretilmiş sitelerin tipik hastalıkları — eksik
@@ -90,9 +90,10 @@ py -m playwright install chromium
 | `py gash.py -t URL --full --user-agent "MyScanner/1.0"` | Özel User-Agent |
 | `py gash.py -t https://host/app --full` | Alt-uygulama kapsamı: path korunur (`/app`, `/app` olarak kalır) |
 | `py gash.py -t URL --full --insecure` | TLS doğrulamayı kapat (yalnızca self-signed lab) |
-| `py gash.py --list-checks` | 39 kontrolü listele |
+| `py gash.py --list-checks` | 42 kontrolü listele |
 | `py gash.py -t URL --full --skip-checks sqli-blind,ssti` | İstemediğin check'i kapat |
 | `py gash.py -t URL --full --cookie "session=abc" --header "Authorization: Bearer X"` | Login arkası tarama |
+| `py gash.py -t URL --full --cookie "a=1" --cookie-b "b=2"` | İkinci kullanıcıyla cross-session IDOR doğrulama |
 | `py gash.py -t URL --full --login-user admin --login-pass 1234` | Oto-login dene, oturumla tara |
 | `py gash.py -t URL --full --max-pages 15 --depth 3` | Crawler'ı büyüt |
 | `py gash.py -t URL --full --dom` | Headless Chromium ile DOM XSS doğrula (yavaş) |
@@ -103,7 +104,7 @@ py -m playwright install chromium
 
 `targets.txt` formatı: satır başına 1 hedef, `#` yorum ve boş satır atlanır.
 
-## Kontroller (39)
+## Kontroller (42)
 
 `py gash.py --list-checks` çıktısı:
 
@@ -148,6 +149,9 @@ py -m playwright install chromium
 | `wp-user-enum` | WordPress kullanıcı adı ifşası |
 | `swagger-exposed` | Herkese açık API dokümanı (Swagger/OpenAPI) |
 | `mass-assignment` | İstemciden kontrol edilebilen rol alanı |
+| `login-enum` | Login kullanıcı adı sayımı |
+| `ldap-injection` | LDAP jokerkarakter auth bypass |
+| `cache-poisoning` | Host yansımasıyla cache zehirlenmesi |
 
 Her bulgu `CWE + OWASP Top 10 + tahmini CVSS + remediation` ile zenginleştirilir
 (`core/knowledge.py`) ve üreten kontrolün verdiği `confidence` notunu taşır
@@ -250,3 +254,7 @@ PR ve issue'lara açık. Lütfen:
 ## Lisans
 
 Apache-2.0 — bkz. [LICENSE](LICENSE).
+
+## Geliştirici
+
+**[Xmar1881](https://github.com/Xmar1881)** tarafından geliştirildi.

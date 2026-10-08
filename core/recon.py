@@ -143,14 +143,16 @@ def scan_ports(ip: str, ports: list[int] | None = None,
     if len(ports) == 0:  # --skip-ports
         return [], 0
     open_ports: list[int] = []
-    with ThreadPoolExecutor(max_workers=max(1, threads)) as ex:
-        fut = {ex.submit(_probe_port, ip, p, timeout): p for p in ports}
-        for f in as_completed(fut):
-            try:
-                if f.result():
-                    open_ports.append(fut[f])
-            except Exception:
-                pass
+    from core.spinner import spin
+    with spin(f"  [*] Probing {len(ports)} ports on {ip}..."):
+        with ThreadPoolExecutor(max_workers=max(1, threads)) as ex:
+            fut = {ex.submit(_probe_port, ip, p, timeout): p for p in ports}
+            for f in as_completed(fut):
+                try:
+                    if f.result():
+                        open_ports.append(fut[f])
+                except Exception:
+                    pass
     open_ports.sort()
     return open_ports, len(ports) - len(open_ports)
 

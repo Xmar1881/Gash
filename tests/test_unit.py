@@ -66,6 +66,7 @@ def test_knowledge_coverage():
         "Possible SSTI (Template Injection)", "Possible SSRF (cloud metadata)",
         "SSRF surface (manual testing advised)",
         "Possible IDOR / BOLA (single session)",
+        "Confirmed IDOR / BOLA (cross-session)",
         "Possible Unrestricted File Upload (confirmed)",
         "Upload Filter Bypass (RCE vector)",
         "Admin Panel", "Critical File Exposure: x", "Sensitive Directory: y",
@@ -82,6 +83,12 @@ def test_knowledge_coverage():
         "Exposed Supabase table (no login)", "Next.js middleware bypass",
         "WordPress username disclosure", "API docs exposed (Swagger/OpenAPI)",
         "Client-controllable role field",
+        "Possible SQL Injection (ORDER BY differential)",
+        "SQLi (confirmed via OOB)",
+        "Possible Stored XSS (SVG upload)",
+        "Login username enumeration",
+        "Possible LDAP injection (auth bypass)",
+        "Cache poisoning surface",
     ]
     for t in titles:
         assert lookup(t)["remediation"] != "Manual review advised.", t
@@ -186,6 +193,62 @@ def test_probe_tiers():
     assert r.severity == "CRITICAL" and "Critical File" in r.title
     r = _probe_dir(s, "http://h.test", "secret", 5, 404, 9, "not found")
     assert (r.severity, r.title) == ("INFO", "Restricted Area: secret")
+
+
+def test_probe_dir_forbidden_is_not_exposure():
+    """Regression: a 403 WAF block page on /.env is INFO, never CRITICAL."""
+    from core.scanner import _probe_dir
+
+    block = ("<!DOCTYPE html><html><head><title>403</title></head>"
+             "<body>blocked by WAF</body></html>")
+
+    class Resp:
+        def __init__(self, st, body):
+            self.status_code = st
+            self.text = body
+            self.url = ""
+
+    class FakeSession:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp(403, block)
+
+    s = FakeSession()
+    for path in (".env", ".git/HEAD", "config.php.bak", ".htaccess",
+                 "index.php.old", ".git/config/backup.zip"):
+        r = _probe_dir(s, "http://h.test", path, 5, 404, 9, "not found")
+        assert r is not None and r.severity == "INFO", path
+        assert "Critical" not in r.title, path
+
+
+def test_probe_dir_secret_content_proof():
+    """200 + validating content is still CRITICAL; 200 without is not."""
+    from core.scanner import _probe_dir
+
+    class Resp:
+        def __init__(self, st, body):
+            self.status_code = st
+            self.text = body
+            self.url = ""
+
+    routes = {
+        ".env": (200, "DB_HOST=x\nDB_PASS=y\nAPP_KEY=z\n"),
+        ".git/HEAD": (200, "ref: refs/heads/main\n"),
+    }
+
+    class FakeSession:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            for k, (st, b) in routes.items():
+                if url.rstrip("/").endswith("/" + k):
+                    return Resp(st, b)
+            if "unproven" in url:
+                return Resp(200, "<html>generic landing</html>")
+            return Resp(404, "not found")
+
+    s = FakeSession()
+    r = _probe_dir(s, "http://h.test", ".env", 5, 404, 9, "not found")
+    assert r.severity == "CRITICAL" and "KEY=" in r.detail
+    r = _probe_dir(s, "http://h.test", ".git/HEAD", 5, 404, 9, "not found")
+    assert r.severity == "CRITICAL" and "ref" in r.detail
 
 
 def test_diff(tmp_path, monkeypatch):
@@ -451,6 +514,29 @@ def test_unknown_skip_warns(capsys):
     assert "unknown check" in capsys.readouterr().out
 
 
+def test_dispatcher_binds_sessionless_checks():
+    """Checks whose first param is NOT session must still run through
+    run_checks (regression: they were silently skipped with TypeError)."""
+    import core.scanner  # noqa: F401
+    import core.advanced  # noqa: F401
+    import core.domxss  # noqa: F401
+    import core.webchecks  # noqa: F401
+    from core.registry import REGISTRY, run_checks
+    none_tok = "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+    pages = {"http://h.test/": (
+        f"<script>var t='{none_tok}';</script>"
+        "<form method='post' action='/register'>"
+        "<input name='email'><input name='role'></form>")}
+    ctx = {"headers": {}, "base": "http://h.test", "verbose": False,
+           "pages": pages, "urls": [], "timeout": 3, "dom": False}
+    keep = {"security-headers", "jwt-none", "mass-assignment", "dom-xss"}
+    out = run_checks(object(), ctx, skip=set(REGISTRY) - keep, deep=False)
+    titles = [f.title for f in out]
+    assert any(t.startswith("Missing Security Header") for t in titles)
+    assert "JWT using alg:none observed" in titles
+    assert "Client-controllable role field" in titles
+
+
 def test_bodies_differ():
     """IDOR evidence must exceed the echoed id itself."""
     from core.advanced import _bodies_differ
@@ -630,3 +716,589 @@ def test_fetch_base_scope_guard():
 
     html, base, _ = _fetch_base(S(), "http://h.test", 3, {"h.test"})
     assert html == ""  # redirect escaped scope -> refused
+
+
+def test_idor_cross_session_confirmed():
+    """Second user sees the same object -> CRITICAL, not a heuristic."""
+    import core.advanced as A
+    from core.net import configure_net
+    configure_net()
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    body5 = "order of alice " + "x" * 200
+    body6 = "order of alice plus extras y" + "y" * 200
+
+    class A_Sess:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if url.endswith("/api/orders/5"):
+                return Resp(body5, 200, url)
+            return Resp(body6, 200, url)
+
+    class B_Sess:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp(body6, 200, url)  # same object, other user
+
+    pages = {"http://h.test/": "<a href='/api/orders/5'>o</a>"}
+    out = A.test_idor(A_Sess(), pages, "http://h.test", 3, session_b=B_Sess())
+    assert len(out) == 1
+    assert out[0].title == "Confirmed IDOR / BOLA (cross-session)"
+    assert out[0].severity == "CRITICAL" and out[0].confidence == "High"
+
+
+def test_idor_cross_session_isolated():
+    """Second user gets 403 -> heuristic stands, no upgrade."""
+    import core.advanced as A
+    from core.net import configure_net
+    configure_net()
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    body6 = "order data 6 " + "y" * 230
+
+    class A_Sess:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if url.endswith("/api/orders/5"):
+                return Resp("order data 5 " + "x" * 200, 200, url)
+            return Resp(body6, 200, url)
+
+    class B_Sess:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("forbidden", 403, url)
+
+    pages = {"http://h.test/": "<a href='/api/orders/5'>o</a>"}
+    out = A.test_idor(A_Sess(), pages, "http://h.test", 3, session_b=B_Sess())
+    assert len(out) == 1
+    assert out[0].title.startswith("Possible IDOR")
+
+
+def test_idor_param_cross_session():
+    import core.advanced as A
+    from core.net import configure_net
+    configure_net()
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    body6 = "invoice 6 details " + "z" * 250
+
+    class A_Sess:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if "id=5" in url:
+                return Resp("invoice 5 details " + "z" * 200, 200, url)
+            return Resp(body6, 200, url)
+
+    class B_Sess:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp(body6, 200, url)
+
+    out = A.test_idor_param(A_Sess(), ["http://h.test/?id=5"], 3,
+                            session_b=B_Sess())
+    assert len(out) == 1
+    assert out[0].title == "Confirmed IDOR / BOLA (cross-session)"
+
+
+def test_oob_reset_drain():
+    import core.oob as O
+
+    class FakeClient:
+        wait = 0
+        pending = [{"kind": "reset", "target": "http://h.test/forgot",
+                    "token": "greset"}]
+
+        def poll(self):
+            return [{"full-id": "greset.oob.test", "protocol": "http",
+                     "remote-address": "9.9.9.9"}]
+
+        def deregister(self):
+            pass
+
+    out = O.drain(FakeClient(), verbose=False)
+    assert len(out) == 1
+    assert out[0].title == "Password reset poisoning (confirmed via OOB)"
+    assert out[0].severity == "CRITICAL"
+
+
+def _post_fuzz_session(posted, responder):
+    from core.net import configure_net
+    configure_net()
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("<html>ok</html>", url=url)
+
+        def post(self, url, timeout=None, allow_redirects=True, **kw):
+            data = kw.get("data", {})
+            posted.append((url, dict(data)))
+            return Resp(responder(data, url), url=url)
+
+    return S()
+
+
+PAGES_POST = {"http://h.test/": (
+    "<form method='post' action='/submit'>"
+    "<input name='comment'><input name='nick'></form>"
+    "<form method='post' action='/pw'>"
+    "<input name='u'><input type='password' name='p'></form>"
+    "<form method='get' action='/go'><input name='q'></form>")}
+
+
+def test_post_form_targets():
+    from core.scanner import _post_form_targets
+    targets = _post_form_targets(PAGES_POST, "http://h.test")
+    assert targets and all(a == "http://h.test/submit" for a, _, _ in targets)
+    _, _, filler = targets[0]
+    assert filler == {"comment": "1", "nick": "1"}
+
+
+def test_sqli_post_body():
+    import core.scanner as SC
+    posted = []
+    s = _post_fuzz_session(
+        posted,
+        lambda d, u: "You have an error in your SQL syntax"
+        if any("'" in str(v) for v in d.values()) else "ok")
+    out = SC.test_sqli(s, [], 3, False, pages=PAGES_POST, base="http://h.test")
+    assert any(f.title == "Possible SQL Injection"
+               and f.url == "http://h.test/submit" for f in out)
+    assert all("/pw" not in u for u, _ in posted)
+
+
+def test_post_fuzz_respects_quick():
+    import core.scanner as SC
+    posted = []
+    s = _post_fuzz_session(posted, lambda d, u: "uid=0(root)")
+    out = SC.test_sqli(s, [], 3, False, pages=PAGES_POST, base="http://h.test",
+                       deep=False)
+    assert posted == [] and out == []
+
+
+def test_xss_post_body():
+    import core.scanner as SC
+    posted = []
+    s = _post_fuzz_session(posted, lambda d, u: str(d.get("comment", "")))
+    out = SC.test_xss(s, [], 3, False, pages=PAGES_POST, base="http://h.test")
+    assert any(f.title == "Possible Reflected XSS"
+               and f.url == "http://h.test/submit" for f in out)
+
+
+def test_ssti_post_body():
+    import core.advanced as A
+    posted = []
+    s = _post_fuzz_session(
+        posted,
+        lambda d, u: "61126761" if "{{7719*7919}}" in str(d.get("comment", ""))
+        else "ok")
+    pages = {"http://h.test/": (
+        "<form method='post' action='/render'>"
+        "<input name='comment'></form>")}
+    out = A.test_ssti(s, [], 3, pages=pages, base="http://h.test")
+    assert any(f.title == "Possible SSTI (Template Injection)"
+               and f.url == "http://h.test/render" for f in out)
+
+
+def test_oscmd_post_body():
+    import core.webchecks as W
+    posted = []
+    s = _post_fuzz_session(
+        posted,
+        lambda d, u: "uid=0(root)" if ";" in str(d.get("comment", ""))
+        else "ok")
+    pages = {"http://h.test/": (
+        "<form method='post' action='/ping'>"
+        "<input name='comment'></form>")}
+    out = W.test_os_command_injection(s, [], 3, pages=pages,
+                                      base="http://h.test")
+    assert any(f.title == "Possible OS Command Injection"
+               and f.url == "http://h.test/ping" for f in out)
+
+
+def test_crawler_queues_post_forms():
+    """POST forms join the crawl as GET probes (crawler stays read-only)."""
+    from collections import deque
+    from core.crawler import _enqueue_links
+    seen, queue, pages = set(), deque(), {}
+    html = ("<form method='post' action='/submit'>"
+            "<input name='comment'></form>")
+    _enqueue_links(html, "http://h.test", seen, queue, 1, 8, pages)
+    assert any("submit?comment=" in u for u, _ in queue)
+
+
+def test_fuzz_params_cover_redirect_traversal():
+    from core.scanner import FUZZ_PARAMS, discover_test_urls
+    assert len(FUZZ_PARAMS) >= 16
+    for p in ("redirect", "next", "file", "page", "template"):
+        assert p in FUZZ_PARAMS
+    urls = discover_test_urls("<html>no links here</html>", "http://h.test")
+    assert any("redirect=1" in u for u in urls)
+    assert any("file=1" in u for u in urls)
+
+
+def test_recurse_dir_mutations():
+    """Found dirs get backup-name mutations: /backup -> /backup.bak."""
+    from core.net import configure_net
+    from core.scanner import smart_recurse
+    configure_net()
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if url.endswith("/backup.bak"):
+                return Resp("backup stuff", 200, url)
+            return Resp("not found", 404, url)
+
+    ctx = {"found_paths": ["http://h.test/backup"]}
+    out = smart_recurse(S(), "http://h.test", 3, ctx=ctx)
+    assert any("backup.bak" in f.url and "(recursive)" in f.title for f in out)
+
+
+def _union_session():
+    from core.net import configure_net
+    configure_net()
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class S:
+        mode = "hit"
+
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if "ORDER" not in url:
+                return Resp("<html>rows</html>", 200, url)
+            if "100" in url:
+                if self.mode == "hit":
+                    return Resp("SQL error", 500, url)
+                return Resp("<html>rows</html>", 200, url)
+            return Resp("<html>rows</html>", 200, url)
+
+    return S()
+
+
+def test_union_differential():
+    import core.advanced as A
+    s = _union_session()
+    out = A.test_sqli_blind(s, ["http://h.test/?id=1"], 3, deep=False)
+    assert any(f.title == "Possible SQL Injection (ORDER BY differential)"
+               for f in out)
+    s.mode = "clean"
+    out = A.test_sqli_blind(s, ["http://h.test/?id=1"], 3, deep=False)
+    assert all("ORDER BY" not in f.title for f in out)
+
+
+def test_fingerprint_dbms():
+    from core.scanner import fingerprint_dbms
+    assert fingerprint_dbms("you have an error in your sql syntax") == "MySQL/MariaDB"
+    assert fingerprint_dbms("pg_query() failed") == "PostgreSQL"
+    assert fingerprint_dbms("unclosed quotation mark") == "MSSQL"
+    assert fingerprint_dbms("ORA-00933 blah") == "Oracle"
+    assert fingerprint_dbms("sqlite3 oops") == "SQLite"
+    assert fingerprint_dbms("weird stuff") == "Unknown"
+
+
+def test_oob_sqli_pending_and_drain():
+    import core.advanced as A
+    import core.oob as O
+    from core.net import configure_net
+    configure_net()
+
+    class FakeOob:
+        def __init__(self):
+            self.pending = []
+            self.wait = 0
+            self.session_domain = "x.oob.test"
+
+        def url_for(self, token):
+            return f"https://{token}.oob.test/x"
+
+        def deregister(self):
+            pass
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("<html>ok</html>", 200, url)
+
+    fake = FakeOob()
+    A.test_sqli_blind(S(), ["http://h.test/?id=1"], 3, deep=True, oob=fake)
+    assert any(p["kind"] == "sqli" for p in fake.pending)
+    fake2 = FakeOob()
+    fake2.pending = [{"kind": "sqli", "target": "http://h.test/?id=1",
+                      "token": "gsql"}]
+    hits = [{"full-id": "gsql.oob.test", "protocol": "dns",
+             "remote-address": "9.9.9.9"}]
+
+    class FakeClient:
+        wait = 0
+        pending = fake2.pending
+
+        def poll(self):
+            return hits
+
+        def deregister(self):
+            pass
+
+    out = O.drain(FakeClient(), verbose=False)
+    assert len(out) == 1 and out[0].title == "SQLi (confirmed via OOB)"
+    assert out[0].severity == "CRITICAL"
+
+
+def test_login_enum():
+    import core.advanced as A
+    from core.net import configure_net
+    configure_net()
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class Diff:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("<html>ok</html>", 200, url)
+
+        def post(self, url, timeout=None, allow_redirects=True, **kw):
+            data = kw.get("data", {})
+            user = str(data.get("user", ""))
+            if user == "admin":
+                return Resp("<html>invalid password</html>", 200, url)
+            return Resp("<html>invalid username</html>", 200, url)
+
+    class Same:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("<html>ok</html>", 200, url)
+
+        def post(self, url, timeout=None, allow_redirects=True, **kw):
+            return Resp("<html>invalid credentials</html>", 200, url)
+
+    pages = {"http://h.test/login":
+             "<form method='post' action='/login'>"
+             "<input type='text' name='user'>"
+             "<input type='password' name='pass'></form>"}
+    out = A.test_login_enum(Diff(), pages, "http://h.test", 3)
+    assert len(out) == 1 and out[0].severity == "LOW"
+    assert A.test_login_enum(Same(), pages, "http://h.test", 3) == []
+
+
+def test_partial_results_carry_findings():
+    from core.net import PartialResults, ScanBudgetExceeded
+    from core.scanner import Finding
+    f = Finding(title="T", severity="LOW", url="http://h/")
+    p = PartialResults([f], "budget out")
+    assert isinstance(p, ScanBudgetExceeded)
+    assert p.findings == [f]
+
+
+def test_run_scan_raises_partial_on_budget(monkeypatch):
+    """Budget death mid-scan surfaces partial findings, not silence."""
+    import pytest
+    import core.scanner as S
+    import core.advanced  # noqa: F401
+    import core.domxss  # noqa: F401
+    import core.webchecks  # noqa: F401
+    from core.net import configure_net, PartialResults
+    from core.registry import REGISTRY
+    monkeypatch.setattr(S, "_fetch_base",
+                        lambda *a, **k: ("", "http://h.test", {}))
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class FakeSession:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if "'" in url or "%27" in url:
+                return Resp("You have an error in your SQL syntax", 200, url)
+            return Resp("<html>ok</html>", 200, url)
+
+    import core.scanner as _S
+    monkeypatch.setattr(_S, "_session", lambda timeout, auth=None: FakeSession())
+    configure_net(0.0, 2)
+    try:
+        with pytest.raises(PartialResults) as ei:
+            S.run_scan("http://h.test", threads=1, timeout=3, verbose=False,
+                       deep=False, no_crawl=True,
+                       skip_checks=set(REGISTRY) - {"sqli-error"})
+    finally:
+        configure_net()
+    assert len(ei.value.findings) == 1
+
+
+def test_print_findings_incomplete_never_clean(capsys):
+    from core.reporter import print_findings
+    print_findings([], verbose=False, incomplete=True)
+    out = capsys.readouterr().out
+    assert "INCOMPLETE" in out and "Clean" not in out
+    print_findings([], verbose=False, incomplete=False)
+    assert "Clean" in capsys.readouterr().out
+
+
+def test_report_marks_incomplete():
+    from core.reporter import build_report, save_report
+    r = build_report("http://h.test", "full", "0", findings=[],
+                     elapsed=1.0, incomplete=True)
+    assert r["incomplete"] is True
+    import tempfile, os
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "r.txt")
+        save_report(r, p)
+        txt = open(p, encoding="utf-8").read()
+        assert "WARNING" in txt and "INCOMPLETE" in txt
+
+
+def test_incomplete_scan_skips_history_and_clean_claim(monkeypatch, tmp_path,
+                                                       capsys):
+    """Rate-limited scan: report saved, history untouched, no 'Clean'."""
+    import os
+    import gash
+    from core.net import PartialResults
+    from core.scanner import Finding
+    from types import SimpleNamespace
+    monkeypatch.chdir(tmp_path)
+
+    conf = Finding(title="Possible SQL Injection", severity="CRITICAL",
+                   url="http://h.test/?id=1")
+
+    def boom(*a, **k):
+        raise PartialResults([conf], "rate-limited by target")
+
+    monkeypatch.setattr(gash, "run_scan", boom)
+    args = SimpleNamespace(delay=0.0, max_requests=0, cookie=None,
+                           header=None, login_user=None, login_pass=None,
+                           login_url=None, timeout=3, skip_ports=True,
+                           ports=None, threads=5, verbose=False,
+                           wordlist=None, quick=False, deep=False,
+                           skip_checks=None, max_pages=1, depth=1,
+                           no_crawl=True, dom=False, blind_callback=None,
+                           scope=None, fail_on=None, resume=False,
+                           output=str(tmp_path / "r.json"), output_dir=None,
+                           oob=False, oob_server=None, oob_wait=0, proxy=None,
+                           user_agent=None, insecure=False, cookie_b=None,
+                           header_b=None)
+    assert gash.run_single("http://h.test", args, "scan") == 0
+    out = capsys.readouterr().out
+    assert "INCOMPLETE" in out and "Clean" not in out
+    assert os.path.exists(tmp_path / "r.json")
+    assert not os.path.exists(tmp_path / ".gash_history")
+
+
+def test_calm_down_caps_and_budget(monkeypatch):
+    """Single 429 wait capped at 10s; cumulative budget aborts the scan."""
+    import time as _time
+    from core.net import configure_net, get_context, ScanBudgetExceeded
+    from core.scanner import _calm_down
+    configure_net()
+    slept = []
+    monkeypatch.setattr(_time, "sleep", lambda s: slept.append(s))
+    _calm_down(30, "x")
+    assert slept == [10]
+    assert get_context().rate_wait_total == 10
+    get_context().rate_wait_total = 115.0
+    try:
+        _calm_down(30, "x")
+        assert False, "should have raised"
+    except ScanBudgetExceeded:
+        pass
+    assert slept == [10]  # no extra sleep on abort
+    configure_net()
+
+
+def test_save_report_creates_dirs(tmp_path):
+    import gash
+    from gash import ScanResult
+    path = str(tmp_path / "reports" / "sub" / "r.json")
+    assert gash._save_report("http://h.test", "full", ScanResult(), path) is True
+    import os
+    assert os.path.exists(path)
+
+
+def test_spinner_noop_when_piped():
+    """Piped/CI output: no threads, no escape codes, no crash."""
+    import threading
+    import time as _time
+    from core import spinner as SP
+    assert SP._tty() is False  # pytest captures stdout
+    before = set(threading.enumerate())
+    with SP.spin("working..."):
+        _time.sleep(0.05)
+    extra = [t for t in threading.enumerate()
+             if t not in before and t.is_alive()]
+    assert extra == []
+
+
+def test_spinner_runs_on_tty(monkeypatch):
+    from core import spinner as SP
+    monkeypatch.setattr(SP, "_tty", lambda: True)
+    with SP.spin("working...") as sp:
+        assert sp._thread is not None
+        sp.update("still working...")
+    assert sp._thread is None  # joined on exit
+
+
+def test_countdown_piped(monkeypatch, capsys):
+    import time as _time
+    from core.spinner import countdown
+    slept = []
+    monkeypatch.setattr(_time, "sleep", lambda s: slept.append(s))
+    countdown("waiting", 3)
+    assert slept == [3]
+    assert "waiting 3s" in capsys.readouterr().out
+
+
+def test_countdown_tty(monkeypatch, capsys):
+    import time as _time
+    from core import spinner as SP
+    monkeypatch.setattr(SP, "_tty", lambda: True)
+    now = [1000.0]
+    slept = []
+    monkeypatch.setattr(_time, "time", lambda: now[0])
+
+    def fake_sleep(s):
+        slept.append(s)
+        now[0] += s
+
+    monkeypatch.setattr(_time, "sleep", fake_sleep)
+    SP.countdown("waiting", 3)
+    assert slept == [1, 1, 1]
+    assert "waiting" in capsys.readouterr().out

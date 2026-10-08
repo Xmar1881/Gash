@@ -52,18 +52,19 @@ def run_checks(session, ctx: dict, skip: set[str] | None = None,
         skipped_n = len(ordered) - total
         if skipped_n:
             from core.colors import info
-            print(info(f"  [-] atlandi: {skipped_n} kontrol"))
+            print(info(f"  [-] skipped: {skipped_n} checks"))
     for i, (name, meta) in enumerate(active, 1):
         from core.colors import info as _info
         print(_info(f"  [{i:>2}/{total}] {name} — {meta['desc'][:60]}"))
         fn = meta["fn"]
         params = inspect.signature(fn).parameters
         if list(params)[:1] == ["ctx"]:
-            kwargs = {"ctx": ctx}  # paylasimli-durum fonksiyonu, session almaz
+            kwargs = {"ctx": ctx}  # shared-state fn, takes no session
             try:
                 res = fn(**kwargs)
-            except ScanBudgetExceeded:
-                raise
+            except ScanBudgetExceeded as e:
+                from core.net import PartialResults
+                raise PartialResults(out, str(e))
             except Exception as e:
                 if verbose:
                     from core.colors import warn
@@ -71,6 +72,7 @@ def run_checks(session, ctx: dict, skip: set[str] | None = None,
                 continue
         else:
             kwargs = {}
+            takes_session = list(params)[:1] == ["session"]
             for p in params:
                 if p == "session":
                     continue
@@ -79,9 +81,13 @@ def run_checks(session, ctx: dict, skip: set[str] | None = None,
                 elif p in ctx:
                     kwargs[p] = ctx[p]
             try:
-                res = fn(session, **kwargs)
-            except ScanBudgetExceeded:
-                raise
+                # session goes in positionally ONLY when the check asks for
+                # it first; otherwise it would collide with that parameter
+                # (this silently killed every session-less check before).
+                res = fn(session, **kwargs) if takes_session else fn(**kwargs)
+            except ScanBudgetExceeded as e:
+                from core.net import PartialResults
+                raise PartialResults(out, str(e))
             except Exception as e:
                 if verbose:
                     from core.colors import warn

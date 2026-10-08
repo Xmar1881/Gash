@@ -143,11 +143,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Cookie for authenticated scans (e.g. 'session=abc')",
     )
     p.add_argument(
+        "--cookie-b",
+        metavar="'a=b'",
+        default=None,
+        help="Second user's cookie for cross-session checks (IDOR "
+             "confirmation). Must differ from --cookie",
+    )
+    p.add_argument(
         "--header",
         metavar="'K: V'",
         action="append",
         default=None,
         help="Extra HTTP header (repeatable, e.g. 'Authorization: Bearer X')",
+    )
+    p.add_argument(
+        "--header-b",
+        metavar="'K: V'",
+        action="append",
+        default=None,
+        help="Second user's extra header (with --cookie-b, cross-session)",
     )
     p.add_argument(
         "--login-user",

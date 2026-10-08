@@ -218,12 +218,15 @@ def drain(client: "OobClient", verbose: bool = False) -> list:
     """
     from core.colors import info as _info, warn as _warn
     from core.scanner import Finding
+    from core.spinner import spin
     pending = list(getattr(client, "pending", []) or [])
     out: list[Finding] = []
     if not pending:
         return out
     if verbose:
         print(_info(f"  [*] OOB verify: {len(pending)} callbacks pending..."))
+    sp = spin(f"  [*] Waiting on {len(pending)} OOB callbacks...",
+              enabled=not verbose).start()
     try:
         remaining = list(pending)
         for i, nap in enumerate(_poll_rounds(getattr(client, "wait", 20))):
@@ -242,10 +245,11 @@ def drain(client: "OobClient", verbose: bool = False) -> list:
                 if not hit:
                     continue
                 remaining.remove(p)
+                token = p.get("token", "")
                 proto = str(hit.get("protocol", "?"))
                 remote = str(hit.get("remote-address", "?"))
-                token = p.get("token", "")
-                if p.get("kind") == "ssrf":
+                kind = p.get("kind", "xss")
+                if kind == "ssrf":
                     out.append(Finding(
                         title="SSRF (confirmed via OOB)", severity="CRITICAL",
                         url=p.get("target", ""),
@@ -256,6 +260,30 @@ def drain(client: "OobClient", verbose: bool = False) -> list:
                     ))
                     if verbose:
                         print(_warn(f"    [!] SSRF confirmed via OOB: {token}"))
+                elif kind == "sqli":
+                    out.append(Finding(
+                        title="SQLi (confirmed via OOB)", severity="CRITICAL",
+                        url=p.get("target", ""),
+                        detail=f"Database resolved our URL ({proto} from "
+                               f"{remote}); token '{token}' called back",
+                        evidence=token,
+                        confidence="High",
+                    ))
+                    if verbose:
+                        print(_warn(f"    [!] SQLi confirmed via OOB: {token}"))
+                elif kind == "reset":
+                    out.append(Finding(
+                        title="Password reset poisoning (confirmed via OOB)",
+                        severity="CRITICAL",
+                        url=p.get("target", ""),
+                        detail=f"Reset flow fetched our host ({proto} from "
+                               f"{remote}); token '{token}' called back — "
+                               "reset links leak to attacker domains",
+                        evidence=token,
+                        confidence="High",
+                    ))
+                    if verbose:
+                        print(_warn(f"    [!] Reset poisoning confirmed: {token}"))
                 else:
                     out.append(Finding(
                         title="Blind XSS (confirmed via OOB)", severity="MEDIUM",
@@ -270,6 +298,7 @@ def drain(client: "OobClient", verbose: bool = False) -> list:
             if not remaining:
                 break
     finally:
+        sp.stop()
         try:
             client.deregister()
         except Exception:

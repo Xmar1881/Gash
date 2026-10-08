@@ -19,8 +19,9 @@ from core.colors import success, info, warn, danger, DIM, RESET
 # Category -> (title, blurb, check names). Covers every check.
 CATEGORIES: dict[str, tuple[str, str, set[str]]] = {
     "1": ("Injection",
-          "SQLi (error/blind/time/login) + SSTI",
-          {"sqli-error", "sqli-blind", "sqli-login", "ssti"}),
+          "SQLi (error/blind/time/login), SSTI, login enum, LDAP",
+          {"sqli-error", "sqli-blind", "sqli-login", "ssti", "login-enum",
+           "ldap-injection"}),
     "2": ("XSS",
           "reflected / stored / 404 / DOM",
           {"xss-reflected", "xss-errpage", "stored-xss", "dom-xss"}),
@@ -38,13 +39,27 @@ CATEGORIES: dict[str, tuple[str, str, set[str]]] = {
            "host-header", "security-txt", "os-command-injection",
            "crlf-injection", "csrf-surface", "firebase-open",
            "supabase-anon", "nextjs-middleware-bypass", "wp-user-enum",
-           "swagger-exposed", "mass-assignment"}),
+           "swagger-exposed", "mass-assignment", "cache-poisoning"}),
 }
 
 ALL_CHECKS: set[str] = set().union(*(c[2] for c in CATEGORIES.values()))
 
 # Checks needing active POST (deep mode).
 DEEP_ONLY_SELECTED = {"sqli-login", "upload-rce"}
+
+BYLINE = "by Xmar1881"
+
+
+def _step_head(n: int, total: int, title: str) -> None:
+    """Modern step banner with a progress trail: ● ○ ○."""
+    dots = " ".join("●" if i < n else "○" for i in range(total))
+    print(f"\n  {info(f'Step {n}/{total} — {title}')}  {DIM}{dots}{RESET}")
+    print(f"  {DIM}{'─' * 52}{RESET}")
+
+
+def _opt_line(i: int, text: str, is_default: bool = False) -> str:
+    mark = f"  {DIM}● default{RESET}" if is_default else ""
+    return f"    {success('›')} {success(str(i))}) {text}{mark}"
 
 
 def _ask(prompt: str, default: str = "") -> str:
@@ -60,8 +75,7 @@ def _ask(prompt: str, default: str = "") -> str:
 def _ask_choice(prompt: str, options: list[str], default: int = 1) -> int:
     print(f"\n  {info(prompt)}")
     for i, o in enumerate(options, 1):
-        mark = " (default)" if i == default else ""
-        print(f"    {success(str(i))}) {o}{DIM}{mark}{RESET}")
+        print(_opt_line(i, o, i == default))
     while True:
         ans = _ask("Choice", str(default))
         if ans.isdigit() and 1 <= int(ans) <= len(options):
@@ -73,7 +87,7 @@ def _ask_multi(prompt: str, options: list[str], default: str = "1,2,3,4,5") -> l
     """Comma-separated multi pick, e.g. 1,3. Empty means default."""
     print(f"\n  {info(prompt)}")
     for i, o in enumerate(options, 1):
-        print(f"    {success(str(i))}) {o}")
+        print(_opt_line(i, o))
     while True:
         ans = _ask("Choices (comma-separated)", default)
         try:
@@ -94,7 +108,7 @@ def _ask_yes_no(prompt: str, default_yes: bool = True) -> bool:
 
 def _step_targets() -> tuple[list[str], bool]:
     """(argv fragment, is_bulk?)."""
-    print(f"\n  {info('Step 1/3 — Target')}")
+    _step_head(1, 3, "Target")
     single = _ask_choice("Target source", [
         "Single target (URL / domain)",
         "Bulk targets from file (one per line)",
@@ -118,7 +132,7 @@ def _step_targets() -> tuple[list[str], bool]:
 
 def _step_profile() -> tuple[list[str], set[str], str]:
     """(argv fragment, selected checks, profile name)."""
-    print(f"\n  {info('Step 2/3 — Scan profile')}")
+    _step_head(2, 3, "Scan profile")
     prof = _ask_choice("Profile", [
         "FULL — recon + all checks, deep (recommended)",
         "QUICK — fast: skips time-based + active POST",
@@ -165,7 +179,7 @@ def _step_essentials(argv: list[str], is_bulk: bool, profile: str,
     """Step 3/3: the 3 things that actually matter. Everything else keeps
     smart defaults unless advanced settings are opened. Extends argv."""
     from core.bulk import safe_name
-    print(f"\n  {info('Step 3/3 — Essentials')}")
+    _step_head(3, 3, "Essentials")
     if _ask_yes_no("Authenticated scan (cookie / header / login)", False):
         cookie = _ask("Cookie (empty = none, e.g. session=abc)")
         if cookie:
@@ -177,6 +191,9 @@ def _step_essentials(argv: list[str], is_bulk: bool, profile: str,
         if lu:
             lp = _ask("Login password")
             argv += ["--login-user", lu, "--login-pass", lp]
+        sb = _ask("Second session cookie for cross-user IDOR checks (empty = none)")
+        if sb:
+            argv += ["--cookie-b", sb]
     if profile != "RECON ONLY" and ("stored-xss" in selected
                                     or profile in ("FULL (deep)", "QUICK")):
         if _ask_yes_no("Auto OOB verify for blind probes (--oob, public interactsh server)", False):
@@ -258,12 +275,13 @@ def _mask_argv(argv: list[str]) -> list[str]:
 
 
 def _confirm(target_desc: str, profile: str, argv: list[str]) -> bool:
-    print(f"\n  {DIM}{'─' * 52}{RESET}")
-    print(f"  {info('Summary')}")
-    print(f"    Target : {target_desc}")
-    print(f"    Profile: {profile}")
-    print(f"    Command: py gash.py {' '.join(_mask_argv(argv))}")
-    print(f"  {DIM}{'─' * 52}{RESET}")
+    print(f"\n  {DIM}┌{'─' * 50}┐{RESET}")
+    print(f"  {DIM}│{RESET} {info('Scan summary')}")
+    print(f"  {DIM}│{RESET}   Target : {target_desc}")
+    print(f"  {DIM}│{RESET}   Profile: {profile}")
+    print(f"  {DIM}│{RESET}   Command: py gash.py {' '.join(_mask_argv(argv))}")
+    print(f"  {DIM}└{'─' * 50}┘{RESET}")
+    print(f"  {DIM}GASH {BYLINE}{RESET}")
     return _ask_yes_no("Launch it", True)
 
 
@@ -272,7 +290,8 @@ def run_menu(version: str = "0.1.0") -> int:
     from gash import main  # lazy import: avoids a circular import
 
     show_banner(version)
-    print(success("  Scan wizard — 3 steps, smart defaults, review, launch.\n"))
+    print(success("  Scan wizard — 3 steps, smart defaults, review, launch."))
+    print(f"  {DIM}{BYLINE} · https://github.com/Xmar1881/Gash{RESET}\n")
 
     while True:
         try:

@@ -52,7 +52,12 @@ def _clean(raw: str, base: str) -> str | None:
 
 def _enqueue_links(body: str, base: str, seen: set, queue, depth: int,
                    max_pages: int, pages: dict) -> None:
-    """Href + GET-form submit + sitemap/JS yardimcilari tek noktadan kuyruga."""
+    """Hrefs + form submits + sitemap/JS helpers, all into one queue.
+
+    POST forms join too — as GET probes of the action URL (input names
+    intact), never as submissions. The crawler stays read-only; the
+    scanner decides what to POST.
+    """
     from urllib.parse import urlencode
     for m in HREF_RE.findall(body or ""):
         u = _clean(m, base)
@@ -63,20 +68,11 @@ def _enqueue_links(body: str, base: str, seen: set, queue, depth: int,
         am = ACTION_RE.search(m.group(0))
         if not am:
             continue
-        mm = __method_of(m.group(0))
-        if mm == "POST":
-            continue  # POST submit crawler'da yok (stored testi bakar)
         names = INPUT_RE.findall(m.group(1)) or ["q"]
         u = _clean((am.group(1) or "/") + "?" + urlencode({names[0]: "gashtest"}), base)
         if u and u not in seen and len(pages) + len(queue) < max_pages + 4:
             seen.add(u)
             queue.append((u, depth))
-
-
-def __method_of(tag: str) -> str:
-    import re
-    m = re.search(r'method=["\']([^"\']*)["\']', tag, re.I)
-    return (m.group(1).upper() if m else "GET")
 
 
 def _sitemap_urls(session, base: str, timeout: int) -> list[str]:
@@ -186,29 +182,35 @@ def crawl(session, base: str, html: str, timeout: int,
         if u not in seen and len(pages) + len(queue) < max_pages + 4:
             seen.add(u)
             queue.append((u, 1))
-    while queue and len(pages) < max_pages:
-        url, d = queue.popleft()
-        got = _get(session, url, timeout)
-        if not got or not got[0]:
-            continue
-        if scope_hosts:
-            try:
-                final_host = (urlparse(got[2] or url).hostname or "").lower()
-            except Exception:
-                final_host = ""
-            if final_host not in scope_hosts:
-                continue  # redirect kapsam disina tasirmis, havuza alma
-        body = got[1] or ""
-        head = body[:2000].lower()
-        if "<html" not in head and "<a " not in head and "<form" not in head:
-            pages[url] = ""  # HTML degil, param havuzuna girmez ama gezildi sayilir
-            continue
-        pages[url] = body
-        if d >= depth or len(pages) >= max_pages:
-            continue
-        _enqueue_links(body, base, seen, queue, d + 1, max_pages, pages)
-        for u in _js_endpoints(session, body, base, timeout, js_budget):
-            if u not in seen and len(pages) + len(queue) < max_pages + 4:
-                seen.add(u)
-                queue.append((u, d + 1))
+    from core.spinner import Spinner
+    sp = Spinner(f"  [*] Crawling {base}...").start()
+    try:
+        while queue and len(pages) < max_pages:
+            url, d = queue.popleft()
+            sp.update(f"  [*] Crawling {base} ({len(pages)}/{max_pages} pages)")
+            got = _get(session, url, timeout)
+            if not got or not got[0]:
+                continue
+            if scope_hosts:
+                try:
+                    final_host = (urlparse(got[2] or url).hostname or "").lower()
+                except Exception:
+                    final_host = ""
+                if final_host not in scope_hosts:
+                    continue  # redirect escaped scope, keep it out of the pool
+            body = got[1] or ""
+            head = body[:2000].lower()
+            if "<html" not in head and "<a " not in head and "<form" not in head:
+                pages[url] = ""  # not HTML: counts as visited, skips the probe pool
+                continue
+            pages[url] = body
+            if d >= depth or len(pages) >= max_pages:
+                continue
+            _enqueue_links(body, base, seen, queue, d + 1, max_pages, pages)
+            for u in _js_endpoints(session, body, base, timeout, js_budget):
+                if u not in seen and len(pages) + len(queue) < max_pages + 4:
+                    seen.add(u)
+                    queue.append((u, d + 1))
+    finally:
+        sp.stop()
     return pages

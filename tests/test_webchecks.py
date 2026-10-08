@@ -141,6 +141,30 @@ def test_js_secrets():
     assert W.test_js_secrets(S(), "http://h.test", pages, 3) == []  # placeholder
 
 
+def test_js_secrets_late_page():
+    """Secrets past the old 4-page window are still caught."""
+    from core.net import configure_net
+    configure_net()
+    import core.webchecks as W
+
+    class Resp:
+        def __init__(self, text="", status=200, url="", headers=None):
+            self.text = text
+            self.status_code = status
+            self.url = url
+            self.headers = headers or {}
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("", 404, url, {})
+
+    pages = {f"http://h.test/p{i}": "<html>ok</html>" for i in range(5)}
+    pages["http://h.test/p4"] = (
+        "<script>const k='sk-live-mN9pQrStUvWxYz7890';</script>")
+    out = W.test_js_secrets(S(), "http://h.test", pages, 3)
+    assert len(out) == 1 and "sk-l" in out[0].evidence
+
+
 def test_menu_covers_registry():
     """Menu categories must cover every registered check (or CUSTOM hides them)."""
     import core.scanner  # noqa: F401
@@ -442,3 +466,377 @@ def test_security_txt():
                                "http://h.test", 3) == []
     out = W.test_security_txt(S(404, "nope"), "http://h.test", 3)
     assert len(out) == 1 and out[0].severity == "INFO"
+
+
+def test_gcp_metadata():
+    _args_net()
+    import core.advanced as A
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class Hit:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            headers = headers or {}
+            if "metadata.google.internal" in url:
+                if headers.get("Metadata-Flavor") == "Google":
+                    return Resp("123456789012345678", 200, url)
+                return Resp("missing required header", 400, url)
+            return Resp("<html>ok</html>", 200, url)
+
+    out = A.test_ssrf(Hit(), ["http://h.test/?url=x"], 3)
+    assert any("cloud metadata" in f.title for f in out)
+
+    class Miss:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("<html>ok</html>", 200, url)
+
+    out = A.test_ssrf(Miss(), ["http://h.test/?url=x"], 3, verbose=False)
+    assert all("cloud metadata" not in f.title for f in out)
+
+
+def test_cors_preflight():
+    _args_net()
+    import core.webchecks as W
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url="", headers=None):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = headers or {}
+
+        def raise_for_status(self):
+            pass
+
+    class Open:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("<html>ok</html>", 200, url, {})
+
+        def options(self, url, timeout=None, **kw):
+            headers = (kw.get("headers") or {})
+            if "evil-gash" in str(headers.get("Origin", "")):
+                return Resp("", 204, url,
+                            {"Access-Control-Allow-Origin": "https://evil-gash.test",
+                             "Access-Control-Allow-Methods": "GET, PUT"})
+            return Resp("", 204, url, {})
+
+    out = W.test_cors(Open(), "http://h.test", 3)
+    assert any("methods reflected" in f.title for f in out)
+
+    class Closed:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("<html>ok</html>", 200, url, {})
+
+        def options(self, url, timeout=None, **kw):
+            return Resp("", 204, url, {})
+
+    assert W.test_cors(Closed(), "http://h.test", 3) == []
+
+
+def test_redirect_body_reflection():
+    _args_net()
+    import core.webchecks as W
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if "evil-gash" in url:
+                return Resp("<html><a href='https://evil-gash.test/x'>go</a></html>",
+                            200, url, {})
+            return Resp("<html>ok</html>", 200, url, {})
+
+    out = W.test_open_redirect(S(), ["http://h.test/?next=/home"], 3)
+    assert any(f.title == "Reflected redirect target" for f in out)
+
+
+def test_svg_upload_proof():
+    _args_net()
+    import core.advanced as A
+    from core.net import configure_net
+    configure_net()
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if url.endswith("gash_probe.svg"):
+                return Resp("<svg><script>/*gashsvgmarker*/</script></svg>",
+                            200, url)
+            return Resp("not found", 404, url)
+
+        def post(self, url, timeout=None, allow_redirects=True, **kw):
+            files = kw.get("files", {})
+            name = files.get("file", ("",))[0] if files.get("file") else ""
+            body = (f"File {name} uploaded! See '/uploads/{name}' "
+                    f"at \"http://h.test/uploads/{name}\"")
+            return Resp(body, 200, url)
+
+    pages = {"http://h.test/up":
+             "<form method='post' action='/up'>"
+             "<input type='file' name='file'></form>"}
+    out = A.test_upload_rce(S(), "http://h.test",
+                            pages["http://h.test/up"], 3)
+    assert any(f.title == "Possible Stored XSS (SVG upload)" for f in out)
+
+
+def test_recurse_dir_extensions():
+    from core.net import configure_net
+    from core.scanner import smart_recurse
+    configure_net()
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if url.endswith("/admin.php"):
+                return Resp("<?php // admin", 200, url)
+            return Resp("not found", 404, url)
+
+    ctx = {"found_paths": ["http://h.test/admin"]}
+    out = smart_recurse(S(), "http://h.test", 3, ctx=ctx)
+    assert any("admin.php" in f.url for f in out)
+
+
+def test_csp_weakness():
+    _args_net()
+    import core.webchecks as W
+    base = "http://h.test"
+    weak = {"Content-Security-Policy":
+            "default-src 'self'; script-src 'self' 'unsafe-inline'"}
+    out = W.test_security_headers(weak, base)
+    assert any(f.title == "Weak CSP (unsafe-inline)" and f.severity == "MEDIUM"
+               for f in out)
+    evil = {"Content-Security-Policy": "script-src 'self' https:"}
+    out = W.test_security_headers(evil, base)
+    assert any("wildcard" in f.title for f in out)
+    good = {"Content-Security-Policy": "default-src 'self'",
+            "Strict-Transport-Security": "max-age=63072000",
+            "X-Frame-Options": "DENY",
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+            "Permissions-Policy": "camera=()"}
+    assert W.test_security_headers(good, base) == []
+
+
+def test_hsts_short():
+    _args_net()
+    import core.webchecks as W
+    out = W.test_security_headers(
+        {"Strict-Transport-Security": "max-age=600"}, "http://h.test")
+    assert any(f.title == "Weak HSTS (short max-age)" for f in out)
+
+
+def test_cookie_prefix():
+    _args_net()
+    import core.advanced as A
+
+    class C:
+        def __init__(self, name, secure=False, path="/", rest=None):
+            self.name = name
+            self.secure = secure
+            self.path = path
+            self._rest = rest or {}
+
+    class S:
+        def __init__(self, cookies):
+            self.cookies = cookies
+
+    s = S([C("__Host-sess", secure=False, path="/")])
+    out = A.test_cookie_flags(s, "https://h.test", 3)
+    assert any("prefix" in f.detail for f in out)
+    s = S([C("plain", secure=False, path="/")])
+    out = A.test_cookie_flags(s, "https://h.test", 3)
+    assert all("prefix" not in f.detail for f in out)
+
+
+def test_trace_confirm():
+    _args_net()
+    import core.webchecks as W
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url="", headers=None):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = headers or {}
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("<html>ok</html>", 200, url, {})
+
+        def options(self, url, timeout=None, **kw):
+            return Resp("", 200, url, {"Allow": "GET, TRACE"})
+
+        def request(self, method, url, timeout=None, **kw):
+            if method == "TRACE":
+                return Resp("TRACE / HTTP/1.1\r\nHost: h", 200, url, {})
+            return Resp("", 405, url, {})
+
+    out = W.test_http_methods(S(), "http://h.test", 3)
+    assert any("live: TRACE echoed" in f.detail for f in out)
+
+
+def test_null_origin():
+    _args_net()
+    import core.webchecks as W
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url="", headers=None):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = headers or {}
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            origin = (headers or {}).get("Origin", "")
+            if origin == "null":
+                return Resp("<html>ok</html>", 200, url,
+                            {"Access-Control-Allow-Origin": "null"})
+            return Resp("<html>ok</html>", 200, url, {})
+
+        def options(self, url, timeout=None, **kw):
+            return Resp("", 204, url, {})
+
+    out = W.test_cors(S(), "http://h.test", 3)
+    assert any("null origin" in f.title for f in out)
+
+
+def test_host_xforwarded_fallback():
+    _args_net()
+    import core.webchecks as W
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            headers = headers or {}
+            if headers.get("X-Forwarded-Host") == "evil-gash.test":
+                return Resp("<html>evil-gash</html>", 200, url)
+            return Resp("<html>ok</html>", 200, url)
+
+    out = W.test_host_header(S(), "http://h.test", 3)
+    assert any(f.title == "Host header reflected" for f in out)
+
+
+def test_reset_poison_probe():
+    _args_net()
+    import core.webchecks as W
+
+    class FakeOob:
+        def __init__(self):
+            self.pending = []
+            self.wait = 0
+            self.session_domain = "x.oob.test"
+
+        def url_for(self, token):
+            return f"https://{token}.oob.test/x"
+
+        def deregister(self):
+            pass
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            headers = headers or {}
+            if headers.get("X-Forwarded-Host") == "evil-gash.test":
+                return Resp("<html>evil-gash</html>", 200, url)
+            return Resp("<html>ok</html>", 200, url)
+
+        def post(self, url, timeout=None, allow_redirects=True, **kw):
+            return Resp("<html>reset link sent</html>", 200, url)
+
+    pages = {"http://h.test/": "<a href='/forgot'>forgot password?</a>"}
+    fake = FakeOob()
+    out = W.test_host_header(S(), "http://h.test", 3,
+                             pages=pages, oob=fake)
+    assert any(f.title == "Host header reflected" for f in out)
+    assert len(fake.pending) == 1
+    assert fake.pending[0]["kind"] == "reset"
+
+
+def test_ldap_bypass():
+    _args_net()
+    import core.advanced as A
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class Hit:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("<html>login</html>", 200, url)
+
+        def post(self, url, timeout=None, allow_redirects=True, **kw):
+            data = kw.get("data", {})
+            if str(data.get("user", "")).startswith("*"):
+                return Resp("<html>logout dashboard</html>", 200, url)
+            return Resp("<html>invalid credentials</html>", 200, url)
+
+    class Miss:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("<html>login</html>", 200, url)
+
+        def post(self, url, timeout=None, allow_redirects=True, **kw):
+            return Resp("<html>invalid credentials</html>", 200, url)
+
+    pages = {"http://h.test/login":
+             "<form method='post' action='/login'>"
+             "<input type='text' name='user'>"
+             "<input type='password' name='pass'></form>"}
+    out = A.test_ldap_injection(Hit(), pages, "http://h.test", 3)
+    assert len(out) == 1 and out[0].severity == "CRITICAL"
+    assert A.test_ldap_injection(Miss(), pages, "http://h.test", 3) == []
+
+
+def test_cache_poisoning():
+    _args_net()
+    import core.webchecks as W
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url="", headers=None):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = headers or {}
+
+    class Cached:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("<html>evil-gash</html>", 200, url,
+                        {"X-Cache": "HIT", "Age": "42"})
+
+    class Fresh:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("<html>evil-gash</html>", 200, url, {})
+
+    out = W.test_cache_poisoning(Cached(), "http://h.test", 3)
+    assert len(out) == 1 and out[0].severity == "LOW"
+    assert W.test_cache_poisoning(Fresh(), "http://h.test", 3) == []

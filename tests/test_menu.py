@@ -28,7 +28,7 @@ def test_essentials_skip_report(monkeypatch):
 
 def test_essentials_auth(monkeypatch):
     argv = _run_essentials(monkeypatch,
-                           ["y", "session=abc", "", "boss", "s3cret",
+                           ["y", "session=abc", "", "boss", "s3cret", "",
                             "n", "", "", "n", "n"])
     assert "--cookie" in argv and "--login-user" in argv
     assert "s3cret" in argv  # real argv keeps it; display masks it
@@ -43,3 +43,11 @@ def test_confirm_masks_password(monkeypatch, capsys):
     assert menu._confirm("-t x", "FULL (deep)", argv) is True
     out = capsys.readouterr().out
     assert "s3cret" not in out and "****" in out
+    assert "Xmar1881" in out
+
+
+def test_banner_credit(capsys):
+    from core.banner import show_banner
+    show_banner("9.9.9-test")
+    out = capsys.readouterr().out
+    assert "Xmar1881" in out

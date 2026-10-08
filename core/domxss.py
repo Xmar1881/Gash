@@ -1,10 +1,11 @@
 """DOM XSS verification with a headless browser (opt-in --dom).
 
 How it works: the URL gets DOM payloads in query + fragment, a headless
-Chromium opens the page, and alert dialogs are watched. A dialog with the
-marker means CONFIRMED DOM XSS (CRITICAL). No dialog, but the marker shows
-up in the rendered DOM (and not in raw HTML), means JS wrote it there
-(LOW note, review manually).
+Chromium opens the page with JS sinks hooked (innerHTML/outerHTML,
+document.write, eval). If our marker reaches a sink, that's CONFIRMED
+DOM XSS (CRITICAL) — no alert() needed, so it works even under a CSP
+that blocks inline scripts. Alert dialogs are still watched as backup;
+a marker in the rendered DOM (but not raw HTML) is a LOW note.
 
 Skipped quietly without Playwright (prints the install hint instead).
 Slow (~4-6s/page), so it only runs with --dom.
@@ -18,6 +19,44 @@ from core.registry import check as register_check
 DOM_MARKER = "gxdom"
 DOM_QUERY_PAYLOAD = DOM_MARKER + '"><img src=x onerror="alert(\'gxdom\')">'
 DOM_FRAG_PAYLOAD = DOM_MARKER + '"><svg onload=alert(\'gxdom\')>'
+
+# Injected before page scripts run (CDP-level, so page CSP can't block
+# it). Records any marker-carrying value assigned to dangerous sinks.
+SINK_HOOK_JS = """
+() => {
+  window.__gash_sinks = [];
+  const MARK = 'gxdom';
+  const note = (sink, v) => {
+    try {
+      const s = String(v == null ? '' : v).slice(0, 200);
+      if (s.indexOf(MARK) !== -1) window.__gash_sinks.push(sink);
+    } catch (e) {}
+  };
+  const hookProp = (proto, prop) => {
+    try {
+      const desc = Object.getOwnPropertyDescriptor(proto, prop);
+      if (!desc || typeof desc.set !== 'function') return;
+      const orig = desc.set;
+      Object.defineProperty(proto, prop, {
+        set(v) { note(prop, v); return orig.call(this, v); },
+        get: desc.get, configurable: true
+      });
+    } catch (e) {}
+  };
+  try {
+    hookProp(Element.prototype, 'innerHTML');
+    hookProp(Element.prototype, 'outerHTML');
+    if (typeof ShadowRoot !== 'undefined') hookProp(ShadowRoot.prototype, 'innerHTML');
+    const _w = Document.prototype.write;
+    Document.prototype.write = function() {
+      for (const a of arguments) note('document.write', a);
+      return _w.apply(this, arguments);
+    };
+    const _ev = window.eval;
+    window.eval = function(x) { note('eval', x); return _ev(x); };
+  } catch (e) {}
+}
+"""
 
 
 def _targets(urls: list[str], limit: int = 6) -> list[str]:
@@ -80,8 +119,27 @@ def _probe_page(browser, url: str, base: str, timeout: int,
     page = browser.new_page(ignore_https_errors=True)
     try:
         page.on("dialog", lambda d: (fired.append(d.message), d.dismiss()))
+        try:
+            page.add_init_script(SINK_HOOK_JS)
+        except Exception:
+            pass
         page.goto(url, timeout=(timeout + 10) * 1000, wait_until="domcontentloaded")
         page.wait_for_timeout(2500)
+        try:
+            sinks = page.evaluate("() => (window.__gash_sinks || []).slice(0, 3)")
+        except Exception:
+            sinks = []
+        if sinks:
+            if verbose:
+                from core.colors import warn as _w
+                print(_w(f"    [!] DOM XSS (sink reached): {url}"))
+            return Finding(
+                title="DOM XSS (confirmed — sink reached)", severity="CRITICAL",
+                url=url.split("#")[0],
+                detail=f"Marker flowed into JS sink(s): "
+                       f"{', '.join(dict.fromkeys(sinks))}",
+                evidence=DOM_MARKER,
+                confidence="High",)
         if any(DOM_MARKER in m for m in fired):
             if verbose:
                 from core.colors import warn as _w

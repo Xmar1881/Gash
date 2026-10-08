@@ -18,17 +18,21 @@ import re
 import sys
 import time
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from core import __version__
 from core.banner import show_banner
 from core.bulk import (collect_targets, load_targets_file, looks_like_dir,
                        report_path_for, resolve_bulk_ext)
 from core.cli import build_parser, resolve_mode, parse_ports
 from core.colors import danger, info, success, warn
-from core.recon import run_recon, print_recon, normalize_target, ReconResult
+from core.recon import run_recon, print_recon, normalize_target
 from core.scanner import run_scan, load_wordlist
 from core.reporter import (print_findings, build_report, save_report,
                             diff_with_history, print_diff)
 from core.net import configure_net, parse_auth
+
+if TYPE_CHECKING:
+    from core.recon import ReconResult
 
 
 # ---------- small testable helpers ----------
@@ -101,11 +105,12 @@ class _NoColor:
 class ScanResult:
     """One target's scan result (possibly partial)."""
     target: str = ""
-    recon: ReconResult | None = None
+    recon: "ReconResult | None" = None
     findings: list = field(default_factory=list)
     diff: dict = field(default_factory=dict)
     elapsed: float = 0.0
     interrupted: bool = False
+    incomplete: bool = False
 
 
 def resolve_login_password(args) -> str | None:
@@ -134,6 +139,14 @@ def _scan_target(target: str, args, mode: str, wordlist) -> ScanResult:
                   getattr(args, "user_agent", None),
                   getattr(args, "insecure", False))
     auth = parse_auth(args.cookie, args.header)
+    auth_b = None
+    if getattr(args, "cookie_b", None) or getattr(args, "header_b", None):
+        auth_b = parse_auth(args.cookie_b, args.header_b)
+        if auth_b.cookies == auth.cookies and auth_b.headers == auth.headers:
+            print(warn("  [!] --cookie-b duplicates the primary session, ignoring."))
+            auth_b = None
+        elif args.verbose:
+            print(info(f"[i] second session ready: {len(auth_b.cookies)} cookie(s)"))
 
     oob_client = None
     if getattr(args, "oob", False):
@@ -218,6 +231,7 @@ def _scan_target(target: str, args, mode: str, wordlist) -> ScanResult:
             print(warn("  [!] Target unreachable (recon got HTTP 0) — "
                        "scan phase skipped, nothing to find."))
         else:
+            from core.net import PartialResults
             try:
                 res.findings = run_scan(
                     target,
@@ -232,11 +246,31 @@ def _scan_target(target: str, args, mode: str, wordlist) -> ScanResult:
                     crawl_depth=args.depth,
                     no_crawl=args.no_crawl,
                     dom=args.dom,
-            blind_callback=getattr(args, "blind_callback", None),
-                scope_hosts=scope,
-                oob=oob_client,
-            )
-                print_findings(res.findings, verbose=args.verbose)
+                    blind_callback=getattr(args, "blind_callback", None),
+                    scope_hosts=scope,
+                    oob=oob_client,
+                    auth_b=auth_b,
+                )
+            except PartialResults as e:
+                # Rate limit / budget hit mid-scan: keep what we have,
+                # mark it INCOMPLETE, never call it clean.
+                res.findings = e.findings
+                res.incomplete = True
+            except KeyboardInterrupt:
+                res.interrupted = True
+            except Exception as e:
+                print(danger(f"[!] SCAN error: {e}"))
+                if args.verbose:
+                    raise
+            if res.findings or not res.incomplete:
+                print_findings(res.findings, verbose=args.verbose,
+                               incomplete=res.incomplete)
+            if res.incomplete:
+                print(warn("  [!] INCOMPLETE scan (rate limit / budget) — "
+                           "results are partial, NOT a clean bill."))
+                print(info("  [i] Re-run with --delay 0.5 --threads 5 "
+                           "against rate-limiting targets."))
+            else:
                 try:
                     from core.recon import history_key
                     res.diff = diff_with_history(history_key(target), res.findings)
@@ -245,12 +279,6 @@ def _scan_target(target: str, args, mode: str, wordlist) -> ScanResult:
                         print(warn(f"  [!] history write failed: {e}"))
                     res.diff = {}
                 print_diff(res.diff)
-            except KeyboardInterrupt:
-                res.interrupted = True
-            except Exception as e:
-                print(danger(f"[!] SCAN error: {e}"))
-                if args.verbose:
-                    raise
 
     res.elapsed = time.time() - t0
     return res
@@ -258,9 +286,13 @@ def _scan_target(target: str, args, mode: str, wordlist) -> ScanResult:
 
 def _save_report(target: str, mode: str, res: ScanResult, path: str) -> bool:
     try:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         report = build_report(target, mode, __version__,
                               recon=res.recon, findings=res.findings,
-                              elapsed=res.elapsed, diff=res.diff)
+                              elapsed=res.elapsed, diff=res.diff,
+                              incomplete=res.incomplete)
         save_report(report, path)
         print(success(f"\n[+] Report written: {path}"))
         return True
@@ -360,7 +392,8 @@ def run_bulk(targets: list[str], args, mode: str, output_dir: str | None) -> int
         entry: dict = {"target": target, "skipped": False, "error": None,
                        "report": None, "summary": summary, "obs": obs_n,
                        "elapsed_s": round(res.elapsed, 2),
-                       "interrupted": res.interrupted}
+                       "interrupted": res.interrupted,
+                       "incomplete": res.incomplete}
         if rpath:
             if _save_report(target, mode, res, rpath):
                 entry["report"] = rpath
@@ -384,7 +417,7 @@ def run_bulk(targets: list[str], args, mode: str, output_dir: str | None) -> int
             print(danger(f"  FAIL  {r['target']} ({r['error']})"))
         else:
             s = r.get("summary", {})
-            mark = " (partial)" if r.get("interrupted") else ""
+            mark = " (partial)" if r.get("interrupted") or r.get("incomplete") else ""
             obs_mark = f" +{r.get('obs', 0)} obs" if r.get("obs") else ""
             print(success(f"  OK    {r['target']} "
                           f"(C:{s.get('CRITICAL', 0)} M:{s.get('MEDIUM', 0)} "
@@ -424,6 +457,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if getattr(args, "no_color", False):
         sys.stdout = _NoColor(sys.stdout)
+        import core.spinner as _spinner
+        _spinner.DISABLED = True
 
     if args.version:
         print(f"GASH v{__version__}")
