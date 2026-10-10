@@ -19,34 +19,40 @@ from core.colors import success, info, warn, danger, DIM, RESET
 # Category -> (title, blurb, check names). Covers every check.
 CATEGORIES: dict[str, tuple[str, str, set[str]]] = {
     "1": ("Injection",
-          "SQLi (error/blind/time/login), SSTI, login enum, LDAP",
-          {"sqli-error", "sqli-blind", "sqli-login", "ssti", "login-enum",
-           "ldap-injection"}),
+          "SQLi (error/blind/time/login), NoSQLi, SSTI, XXE, login enum, LDAP",
+          {"sqli-error", "sqli-blind", "sqli-login", "nosqli", "ssti", "xxe",
+           "login-enum", "ldap-injection"}),
     "2": ("XSS",
           "reflected / stored / 404 / DOM",
           {"xss-reflected", "xss-errpage", "stored-xss", "dom-xss"}),
     "3": ("SSRF / IDOR / API",
-          "SSRF, object-level auth gaps, prototype pollution",
-          {"ssrf", "idor", "idor-param", "authz-matrix", "protopollution"}),
+          "SSRF, object-level auth gaps, prototype pollution, WebSocket",
+          {"ssrf", "idor", "idor-param", "authz-matrix", "protopollution",
+           "websocket-fuzz"}),
     "4": ("Exposure",
           "robots, dir-brute, uploads, cookies, WAF note",
           {"robots", "smart-dirs", "smart-recurse", "smart-tech",
            "upload-form", "upload-rce", "cookie-flags", "waf-detect"}),
     "5": ("Modern Web",
           "headers, CORS, redirect, traversal, methods, JS secrets, JWT, GraphQL",
-          {"security-headers", "open-redirect", "path-traversal", "cors",
+          {"security-headers", "open-redirect", "oauth-redirect",
+           "path-traversal", "cors",
            "http-methods", "js-secrets", "jwt-none", "graphql-introspection",
+           "jwt-acceptance", "cache-deception",
            "host-header", "security-txt", "os-command-injection",
            "crlf-injection", "csrf-surface", "firebase-open",
-           "supabase-anon", "nextjs-middleware-bypass", "wp-user-enum",
-           "swagger-exposed", "mass-assignment", "cache-poisoning",
-           "tls-audit", "vuln-components"}),
+           "supabase-anon", "cloud-storage", "deserialize-surface",
+           "ci-workflow", "nextjs-middleware-bypass",
+           "wp-user-enum", "swagger-exposed", "mass-assignment",
+           "cache-poisoning", "tls-audit", "vuln-components",
+           "atlassian-fileread", "plugin-install-authz"}),
 }
 
 ALL_CHECKS: set[str] = set().union(*(c[2] for c in CATEGORIES.values()))
 
 # Checks needing active POST (deep mode).
-DEEP_ONLY_SELECTED = {"sqli-login", "upload-rce"}
+DEEP_ONLY_SELECTED = {"sqli-login", "upload-rce", "xxe", "jwt-acceptance",
+                      "cache-deception"}
 
 BYLINE = "by Xmar1881"
 
@@ -270,6 +276,8 @@ def _step_advanced(argv: list[str], profile: str) -> None:
         ua = _ask("Custom User-Agent (empty = default GASH identifier)", "")
         if ua:
             argv += ["--user-agent", ua]
+        if _ask_yes_no("Active HTTP/3/QUIC proof (--http3, one read-only GET; needs aioquic)", False):
+            argv.append("--http3")
         if _ask_yes_no("Disable TLS verification (--insecure, self-signed labs only)", False):
             argv.append("--insecure")
         fail = _ask_choice("CI gate (--fail-on)", [
@@ -303,7 +311,7 @@ def _confirm(target_desc: str, profile: str, argv: list[str]) -> bool:
     return _ask_yes_no("Launch it", True)
 
 
-def run_menu(version: str = "0.1.0") -> int:
+def run_menu(version: str = "0.6.0") -> int:
     """Wizard loop. Returns an exit code. main() is imported lazily."""
     from gash import main  # lazy import: avoids a circular import
 

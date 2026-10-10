@@ -102,6 +102,14 @@ def build_parser() -> argparse.ArgumentParser:
              "login tests. Default scans are safe (these are off)",
     )
     p.add_argument(
+        "--go-worker",
+        action="store_true",
+        help="Hybrid engine (opt-in): rank dir-brute wordlists and fan out "
+             "dir-brute/XSS probes with the Go worker (go/bin/gash-worker "
+             "or GASH_GO_BIN). Verdicts stay in Python; without the binary "
+             "the mirrored fallback gives identical results",
+    )
+    p.add_argument(
         "--scope",
         metavar="a.com,b.com",
         default=None,
@@ -124,6 +132,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable TLS certificate verification (lab/self-signed only; "
              "prints a warning, verification is ON by default)",
+    )
+    p.add_argument(
+        "--http3",
+        action="store_true",
+        help="Opt-in active HTTP/3/QUIC proof: one read-only GET, no fallback; "
+             "install the optional aioquic dependency with py -m pip install -e .[http3]",
     )
     p.add_argument(
         "--proxy",

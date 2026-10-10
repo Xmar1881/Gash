@@ -280,6 +280,9 @@ def _scan_target(target: str, args, mode: str, wordlist) -> ScanResult:
                     browser_caps={k: cov[k] for k in
                                   ("spa_visits", "traffic_cap", "route_cap",
                                    "ws_cap", "api_cap") if k in cov},
+                    go_worker=getattr(args, "go_worker", False),
+                    http3=getattr(args, "http3", False),
+                    insecure=getattr(args, "insecure", False),
                 )
             except PartialResults as e:
                 # Rate limit / budget hit mid-scan: keep what we have,
@@ -557,10 +560,11 @@ def main(argv: list[str] | None = None) -> int:
         import core.advanced  # noqa: F401 — registers advanced checks
         import core.domxss  # noqa: F401 — registers the dom check
         import core.webchecks  # noqa: F401 — registers modern web checks
-        from core.registry import list_checks
+        from core.registry import check_policy, list_checks
         print(info("\n[?] Registered checks (disable with --skip-checks):"))
-        for name, desc, deep_only in list_checks():
-            tag = " [deep]" if deep_only else ""
+        for name, desc, _deep_only in list_checks():
+            tags = check_policy(name)
+            tag = f" [{', '.join(tags)}]" if tags else ""
             print(f"    {success(name.ljust(18))} {desc[:60]}{tag}")
         print()
         return 0

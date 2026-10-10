@@ -1,0 +1,1 @@
+{"expected": ["wp-login.php", "admin", "images", "composer.json"], "input": {"limit": 4, "paths": ["admin", "wp-login.php", "admin", "images", "composer.json", "about"], "techs": ["php", "wordpress"]}}

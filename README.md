@@ -1,5 +1,37 @@
 # GASH // Vulnerability & Penetration Engine
 
+## XSS evidence and local triage
+
+Reflected, stored, and DOM-XSS findings are enriched by a deterministic
+two-pass local triage layer in `core/xss_triage.py`. It maps the reflection or
+sink to `HTML_Text`, `HTML_Attribute`, `JS_Literal`, `JS_Block`,
+`URL_Attribute`, or `CSS_Context` and emits the stable
+`XSSVulnerabilityTriageResult` JSON contract. Reflection alone is never an
+execution proof; an explicit breakout, browser, or OOB signal is required.
+The same module validates the result without an external AI service.
+
+JSON/SARIF-compatible findings expose the requested `VulnerabilityFinding`
+object under `vulnerability_finding` with target URL, parameter, vulnerable
+boolean, context, source/sink/AST evidence, and remediation. The legacy
+`triage` object remains for backwards-compatible consumers.
+
+`core/xss_context.py` also exposes a bounded, non-executing
+`double_parse_mutation()` parser-differential helper. It is an mXSS signal for
+offline tests and triage only; it never runs payloads or captures sessions.
+The same context pass recognizes JSON/import-map hydration scripts and CSS
+style attributes, while `decode_chain()` exposes bounded URL+HTML decoding
+layers for review without turning decoded text into proof.
+For optional JavaScript AST context resolution, install from this checkout with
+`py -m pip install -e ".[jsast]"`; without it the conservative Python
+context fallback remains active.
+
+With `--dom`, the headless verifier now attributes marker flow across
+`postMessage`, Web Storage, `history.state`, `window.name`, URL/referrer,
+modern `setHTMLUnsafe`/DOMParser paths, and Trusted Types policy methods.
+Parser and policy observations remain suspected until insertion or execution
+is independently observed. Chromium TLS verification follows `--insecure`;
+it is not silently disabled by the DOM check.
+
 <p align="center"><img src="docs/logo.png" alt="GASH logo" width="220"></p>
 
 > Türkçe sürüm için: [README.tr.md](README.tr.md)
@@ -13,7 +45,7 @@
 [![GASH CI](https://github.com/Xmar1881/Gash/actions/workflows/ci.yml/badge.svg)](https://github.com/Xmar1881/Gash/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
-![Version](https://img.shields.io/badge/version-0.5.0-red)
+![Version](https://img.shields.io/badge/version-0.6.0-red)
 
 ```text
   ██████╗  █████╗ ███████╗██╗  ██╗
@@ -23,7 +55,7 @@
  ╚██████╔╝██║  ██║███████║██║  ██║
   ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
   [ GASH // Vulnerability & Penetration Engine ]
-  v0.5.0  //  fast | modular | thorough
+  v0.6.0  //  fast | modular | thorough
 ```
 
 > [!WARNING]
@@ -31,9 +63,27 @@
 
 ---
 
+## 0.6.0 release highlights
+
+- **56 registered checks** with stable names and explicit safe/deep policy
+  contracts.
+- **Hybrid Python + Go worker** (`--go-worker`) for bounded, read-only batch
+  work with Python verdicts and a mirrored fallback when the binary is absent.
+- **Modern XSS evidence pipeline:** context-aware reflection analysis, optional
+  JavaScript AST context resolution, DOM source/sink tracing, local two-pass
+  triage, mXSS parser-differential signals, and validated JSON evidence.
+- **TLS chain-of-trust and HTTP/3/QUIC proof:** platform trust-store checks by
+  default; one bounded read-only QUIC GET only with explicit `--http3`.
+- **Honest scan health:** failed or skipped checks become `SCAN DEGRADED` /
+  `SCAN PARTIAL`, never a false clean result.
+
+The source tree and package metadata in this repository are **v0.6.0**. Install
+from the clone for these features; a plain `pip install gash[...]` may resolve an
+older published package instead of this checkout.
+
 ## Why GASH?
 
-- **Full scan in one command:** recon + crawl + 45 security checks + report
+- **Full scan in one command:** recon + crawl + 56 security checks + report
   (vulnerability detection, attack-surface discovery and config auditing)
 - **Smart:** picks wordlists from tech fingerprint (WordPress / PHP / Node / Java / Python)
 - **Modern-web aware:** the misconfigs AI-built sites ship with — missing
@@ -55,7 +105,12 @@ cd Gash
 
 # install (Windows: `py`, Linux/macOS: `python3`)
 py -m pip install -r requirements.txt
-# or: pip install -e .   (provides the `gash` command)
+# or: py -m pip install -e ".[test]"   (editable package + test dependency)
+
+# optional full capability set (DOM, JS AST, OOB, HTTP/3)
+py -m pip install -e ".[full]"
+# DOM/browser checks additionally need:
+py -m playwright install chromium
 
 # full scan (safe defaults: no time-based, no active POST/uploads/logins)
 py gash.py -t https://target.com --full
@@ -82,11 +137,12 @@ py -m playwright install chromium
 > **Maximum coverage in one command** (deep + thorough + browser + OOB):
 >
 > ```bash
-> py gash.py -t https://target.com --full --deep --profile thorough --dom --spa --browser-discovery --oob -o report.html -v
+> py gash.py -t https://target.com --full --deep --profile thorough --dom --spa --browser-discovery --http3 --go-worker --oob -o report.html -v
 > ```
 >
-> Needs `playwright` + Chromium (`--dom/--spa/--browser-discovery`) and
-> `pip install gash[oob]` (`--oob`). Add `--cookie "session=abc"` (plus
+> Needs `playwright` + Chromium (`--dom/--spa/--browser-discovery`), the local
+> `.[http3]` extra for `--http3`, and
+> `py -m pip install -e ".[oob]"` (`--oob`). Add `--cookie "session=abc"` (plus
 > `--cookie-b` / `--cookie-admin`) to also cover logged-in surfaces.
 
 | Command | What it does |
@@ -103,7 +159,8 @@ py -m playwright install chromium
 | `py gash.py -t URL --full --user-agent "MyScanner/1.0"` | Custom User-Agent |
 | `py gash.py -t https://host/app --full` | Sub-app scope: the path is kept (`/app` stays `/app`) |
 | `py gash.py -t URL --full --insecure` | Skip TLS verification (self-signed labs only) |
-| `py gash.py --list-checks` | List the 45 checks |
+| `py gash.py -t https://host --full --http3` | Active HTTP/3/QUIC proof: one read-only GET; install `py -m pip install -e ".[http3]"` first |
+| `py gash.py --list-checks` | List the 56 checks |
 | `py gash.py -t URL --full --skip-checks sqli-blind,ssti` | Disable unwanted checks |
 | `py gash.py -t URL --full --cookie "session=abc" --header "Authorization: Bearer X"` | Authenticated scan |
 | `py gash.py -t URL --full --cookie "a=1" --cookie-b "b=2"` | Cross-session IDOR confirmation with a second user |
@@ -118,45 +175,51 @@ py -m playwright install chromium
 | `py gash.py -t URL --full --blind-callback abc.interact.sh` | Enable Blind XSS canary placement |
 | `py gash.py -t URL --full --oob` | Auto out-of-band verify (Blind XSS + SSRF) via interactsh |
 | `py gash.py -t URL --full --delay 0.2 --max-requests 500` | Polite / budgeted scan |
+| `py gash.py -t URL --full --go-worker` | Hybrid engine: Go worker ranks dir-brute wordlists + fans out all independent probes (crawl seeds/levels, dir-brute/XSS/SQLi/SSTI/SSRF/IDOR/login/LDAP/upload/API bodies) in one round-trip each; timing/state-dependent probes (time-based, OOB, stored, upload-RCE, matrix, swagger early-exit) stay live; budgets enforced pre-batch; verdicts stay in Python (build: `cd go && go build -o bin/gash-worker .`; without the binary the mirrored fallback gives identical results; ranked pools may pick better candidates under the probe cap; proxy/`--insecure`/`--delay` force the Python path) |
 | `py gash.py --target-file targets.txt --full --output-dir reports/` | Bulk scan (per-target report + `bulk_summary.json`) |
 | `py gash.py --target-file targets.txt --full --output-dir reports/ --resume` | Resume (skip targets that already have reports) |
 
 `targets.txt` format: one target per line, `#` comments and blank lines are skipped.
 
-## Checks (45)
+## Checks (56)
 
 Output of `py gash.py --list-checks`:
 
 | Name | Description |
 |---|---|
 | `sqli-error` | Error-based SQLi (DB error signature) |
-| `xss-reflected` | Reflected XSS (context-aware + breakout check) |
+| `xss-reflected` | Reflected XSS (context-aware + breakout check + local two-pass triage) |
 | `xss-errpage` | 404 + header reflection |
 | `upload-form` | Upload form detection (passive) |
 | `robots` | robots.txt + Disallow harvesting |
 | `smart-dirs` | Smart dir-brute (tech wordlist) |
 | `smart-recurse` | Recurse under found paths + backup extensions |
 | `sqli-blind` | Boolean-blind + encoding bypass + time-based |
+| `nosqli` | NoSQL operator injection (Mongo-style `$ne`/`$eq`) |
 | `ssti` | SSTI template injection |
 | `ssrf` | SSRF cloud metadata (+verbose surface note) |
 | `idor` | IDOR/BOLA API object differential |
 | `idor-param` | IDOR query parameter (`?id=`, uuid-aware) |
 | `authz-matrix` | Anonymous vs user authorization matrix |
 | `protopollution` | Prototype Pollution reflection surface |
-| `stored-xss` | Stored XSS canary + second-order render check |
+| `stored-xss` | Stored XSS canary + second-order render check + structured triage |
 | `sqli-login` | Login form SQLi auth-bypass differential `[deep]` |
 | `waf-detect` | WAF fingerprint (passive note) |
 | `cookie-flags` | Cookie HttpOnly/Secure/SameSite audit |
 | `upload-rce` | Upload filter bypass (benign content) `[deep]` |
 | `smart-tech` | Tech fingerprint + targeted paths |
-| `dom-xss` | DOM XSS headless sinks+sources+oracle (`--dom`) |
+| `dom-xss` | DOM XSS headless sinks+sources+oracle (`--dom`) + structured triage |
 | `security-headers` | Missing/weak security headers (passive) |
 | `open-redirect` | Open redirect via next/redirect params |
-| `path-traversal` | Path traversal via file/page params |
+| `oauth-redirect` | OAuth/OIDC `redirect_uri` open redirect (code/token theft class) |
+| `path-traversal` | Path traversal via file/page params (+ app `.properties`) |
 | `cors` | Permissive CORS policy (evil origin probe) |
 | `http-methods` | Risky HTTP methods (TRACE/PUT/DELETE) |
-| `js-secrets` | Hardcoded secrets in JavaScript |
-| `jwt-none` | JWTs using alg:none (passive) |
+| `js-secrets` | Hardcoded secrets in JavaScript (incl. CI/CD tokens) |
+| `jwt-none` | JWTs using alg:none / dangerous `kid` (passive) |
+| `jwt-acceptance` | Controlled JWT alg:none / dangerous `kid` replay `[deep]` |
+| `deserialize-surface` | Client-controlled Java/PHP/.NET serialization markers (passive) |
+| `ci-workflow` | Public CI/CD workflow + supply-chain risk markers |
 | `graphql-introspection` | GraphQL introspection + schema analysis |
 | `host-header` | Host header reflected (cache-poison surface) |
 | `security-txt` | security.txt presence (RFC 9116) |
@@ -165,15 +228,21 @@ Output of `py gash.py --list-checks`:
 | `csrf-surface` | POST forms without anti-CSRF controls |
 | `firebase-open` | Public Firebase realtime database |
 | `supabase-anon` | Supabase table readable without login |
+| `cloud-storage` | Public S3/GCS/Azure Blob listing (content proof) |
 | `nextjs-middleware-bypass` | Next.js middleware auth bypass |
 | `wp-user-enum` | WordPress username disclosure |
 | `swagger-exposed` | Public API docs (Swagger/OpenAPI) |
 | `mass-assignment` | Client-controllable role field |
-| `tls-audit` | TLS certificate + protocol audit |
-| `vuln-components` | Known vulnerable component versions |
+| `tls-audit` | TLS certificate/protocol + chain-of-trust audit; passive or opt-in active HTTP/3 |
+| `vuln-components` | Known vulnerable component versions (CMS/plugins/Atlassian/Denodo) |
+| `atlassian-fileread` | Atlassian `::` web-resource file read (CVE-2026-21589) |
+| `plugin-install-authz` | Unauthenticated plugin-install API (Hunk Companion; no install) |
+| `xxe` | XXE via XML body entity expansion `[deep]` |
+| `websocket-fuzz` | WebSocket discovery + Upgrade + canary reflection |
 | `login-enum` | Login username enumeration differential `[deep]` |
 | `ldap-injection` | LDAP wildcard auth bypass `[deep]` |
 | `cache-poisoning` | Cache poisoning via Host reflection |
+| `cache-deception` | Authenticated cache deception via suffix/normalization `[deep]` |
 
 Every finding is enriched with `CWE + OWASP Top 10 + estimated CVSS + remediation`
 (`core/knowledge.py`) and carries a `confidence` rating (High/Medium/Low) set
@@ -188,7 +257,7 @@ With `--oob`, every Blind XSS and SSRF probe gets a unique subdomain on an
 interactsh server (default `https://interact.sh`, or `--oob-server` for your
 own). Callbacks upgrade guesses into proof: **"Blind XSS (confirmed via
 OOB)"** and **"SSRF (confirmed via OOB)"**. No callback means no finding.
-`--oob-wait` caps the wait (default 20s). Needs `pip install gash[oob]`
+`--oob-wait` caps the wait (default 20s). Needs the local `.[oob]` extra
 (`cryptography`); without it the scan continues OOB-less with a warning.
 
 ## Safety Model
@@ -201,6 +270,15 @@ JSON/XML/GraphQL body and PUT/PATCH/DELETE mutations are likewise
 deep-only and structure-preserving (one leaf value at a time); safe mode
 never mutates request bodies.
 TLS certificates are verified by default (`--insecure` opts out loudly).
+JWT acceptance replay and cache-deception probes are GET-only and deep-only;
+they require authenticated-looking content plus differential/cache-header
+evidence. A status code alone is never treated as proof.
+Certificate chain-of-trust is checked with the platform trust store; private
+CA or incomplete-chain failures are MEDIUM observations, while `--insecure`
+skips that verification. HTTP/3 is passive by default (`Alt-Svc`); explicit
+`--http3` enables one bounded, read-only QUIC GET using optional `aioquic`
+(`py -m pip install -e ".[http3]"`). It never falls back to HTTP/2 and is skipped
+when a proxy is configured.
 Severity labels in output are `CRITICAL/MEDIUM/LOW` plus unscored `INFO`
 observations; CLI messages are English.
 Check failures are never silent: a crashed check prints one line, the rest
@@ -213,14 +291,24 @@ ships in the report under `scan_health`.
 Honest scope, compared to Nuclei/ZAP/sqlmap:
 
 - **Scanner, not exploiter:** no payload execution, no session hijacking.
+- SSRF cloud-metadata CRITICAL results require a concrete AWS AMI identifier
+  (not a reflected bare `ami-` marker); OOB callbacks remain the strongest
+  independent confirmation when enabled.
 - IDOR findings are single-session heuristics unless a second session
   (`--cookie-b`) or anonymous access proves them (titles say so).
 - CVSS scores and the 0–100 risk score are **static estimates per finding
   class**, not environment-aware calculations.
 - OOB verification is opt-in — `--oob` (interactsh) covers Blind XSS/SSRF
   callbacks; without a listener there are no blind findings by design.
-- No checks yet for: XXE, HTTP/3 audit, certificate chain-of-trust,
-  WebSocket message fuzzing, JWT acceptance replay.
+- Active HTTP/3/QUIC proof requires the optional `aioquic` dependency, UDP
+  reachability to the target, and explicit `--http3`; failed/unavailable
+  probes are not findings. `tls-audit` uses the local trust store for
+  chain-of-trust evidence and respects `--insecure`. The passive `jwt-none`
+  sightings have a separate deep-only acceptance replay check;
+  it reports nothing without protected-response evidence.
+- `plugin-install-authz` proves missing auth on the install route with an
+  **incomplete** POST (no plugin slug) — it never installs or activates
+  plugins.
 
 ## Report Example
 
@@ -239,20 +327,33 @@ py gash.py -t https://target.com --full -o report.html
 ```text
 Gash/
 ├── gash.py              # entry point (CLI -> recon/scan -> report)
+├── go/                 # hybrid worker (go.mod + main.go, stdin JSON → stdout JSON)
 ├── core/
+│   ├── goworker.py      # Go bridge (subprocess+JSON, opt-in, mirrored fallback)
 │   ├── cli.py           # argparse flags
 │   ├── recon.py         # IP / DNS / ports / headers
-│   ├── scanner.py       # SQLi / XSS / dir-brute engine
-│   ├── advanced.py      # blind / SSTI / SSRF / IDOR / upload-RCE ...
+│   ├── scanner.py       # import hub (re-exports scan.*)
+│   ├── scan/            # scanner families: _shared/http/discovery/injection/enumeration/engine
+│   ├── advanced.py      # import hub (re-exports deep.*)
+│   ├── deep/            # deep families: _shared/sqli/server/stored/surface
 │   ├── bulk.py          # bulk scan helpers
 │   ├── crawler.py       # BFS crawler (sitemap + swagger + JS)
 │   ├── discovery.py     # unified discovery: canonicalize, JS/API/REST, profiles
 │   ├── api_params.py    # recursive body params (JSON/XML/GraphQL) + safe mutate
 │   ├── diff.py          # baseline/differential engine (all checks share it)
 │   ├── xss_context.py   # reflection context analysis
+│   ├── js_ast.py        # optional tree-sitter JS AST adapter
 │   ├── xss_payloads.py  # context-aware payload generator
+│   ├── xss_triage.py    # deterministic two-pass XSS evidence contract
 │   ├── xss_spa.py       # SPA runtime discovery (--spa)
 │   ├── domxss.py        # Playwright DOM verification (--dom)
+│   ├── checks/          # one module per check family
+│   │   ├── headers.py   # security headers, CORS, methods, host, CSRF…
+│   │   ├── movement.py  # open redirect, traversal, CRLF
+│   │   ├── secrets.py   # JS secrets, JWT, Firebase, Supabase
+│   │   └── apps.py      # command inject, GraphQL, Next.js, TLS, CVE…
+│   ├── webchecks.py     # import hub (re-exports checks.*)
+│   ├── wordlists.py     # static wordlists + FUZZ params (no logic)
 │   ├── authz.py         # IDOR/BOLA + authorization matrix engine
 │   ├── graphql.py       # GraphQL schema analysis
 │   ├── localaudit.py    # local machine profile (--local)
@@ -289,7 +390,8 @@ Adding a new check:
 ```python
 from core.registry import check
 
-@check("my-check", "Description", order=10)
+@check("my-check", "Description", order=10,
+       active=False, requires_auth=False, max_requests=0)
 def test_mine(session, urls, timeout, verbose=False):
     return []  # list[Finding]
 ```
@@ -305,6 +407,10 @@ py -m pip_audit -r requirements.txt
 
 CI (ubuntu+windows × 3.12/3.13) runs all of the above, then installs the
 package and smoke-tests the `gash` entry point.
+
+`py gash.py --list-checks` also shows each check's policy contract (`deep`,
+`active`, `auth`, and request cap). Skipped checks are reported as
+`SCAN PARTIAL`, never as a clean scan.
 
 ## Benchmark
 
@@ -330,6 +436,8 @@ vulnerable/fixed regression against a stdlib lab app locally.
 - [x] Blind-XSS/OOB verification (`--oob` via interactsh, silent without)
 - [x] CVE mapping (version → known vulnerability, `vuln-components`)
 - [x] SARIF / JUnit outputs
+- [x] 0.6.0 hybrid Go worker, TLS chain validation, HTTP/3 opt-in proof
+- [x] Context-aware XSS/DOM evidence and deterministic JSON triage contract
 - [ ] Webhook notifications
 - [x] Modern check classes: traversal, open redirect, CORS, security headers,
   risky methods, JS secrets

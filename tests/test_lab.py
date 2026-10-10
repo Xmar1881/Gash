@@ -183,6 +183,20 @@ def test_lab_jwt(lab):
     assert W.test_jwt_none({lab + "/jwt_fixed": html2}) == []
 
 
+def test_lab_jwt_acceptance_replay(lab):
+    import requests
+    import core.webchecks as W
+    from bench.lab import LAB_JWT
+    s = requests.Session()
+    s.headers.update({"Authorization": f"Bearer {LAB_JWT}"})
+    pages = {lab + "/jwt_accept": "<html>dashboard for user</html>"}
+    out = W.test_jwt_acceptance(s, lab, pages, 5)
+    assert "JWT alg:none accepted (replay confirmed)" in _titles(out)
+    fixed_pages = {lab + "/jwt_accept_fixed":
+                   "<html>dashboard for user</html>"}
+    assert W.test_jwt_acceptance(s, lab, fixed_pages, 5) == []
+
+
 def test_lab_graphql(lab):
     import core.webchecks as W
     out = W.test_graphql_introspection(_sess(), lab, {}, 5,
@@ -233,6 +247,19 @@ def test_lab_cache_poisoning(lab):
     out = W.test_cache_poisoning(_sess(), lab + "/cache", 5)
     assert "Cache poisoning surface" in _titles(out)
     assert W.test_cache_poisoning(_sess(), lab + "/cache_fixed", 5) == []
+
+
+def test_lab_cache_deception(lab):
+    import requests
+    import core.webchecks as W
+    s = requests.Session()
+    s.cookies.set("session", "lab-auth")
+    pages = {lab + "/cache_auth": "<html>dashboard private</html>"}
+    out = W.test_cache_deception(s, lab, pages, 5)
+    assert "Authenticated cache deception" in _titles(out)
+    fixed_pages = {lab + "/cache_auth_fixed":
+                   "<html>dashboard private</html>"}
+    assert W.test_cache_deception(s, lab, fixed_pages, 5) == []
 
 
 def test_lab_login_enum(lab):

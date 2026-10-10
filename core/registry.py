@@ -16,12 +16,23 @@ REGISTRY: dict[str, dict] = {}
 _SEQ = [0]
 
 
-def check(name: str, desc: str = "", deep_only: bool = False, order: int = 100):
-    """Register a check function. order: run-order weight."""
+def check(name: str, desc: str = "", deep_only: bool = False, order: int = 100,
+          *, active: bool = False, requires_auth: bool = False,
+          max_requests: int | None = None):
+    """Register a check and declare its safety/coverage contract.
+
+    The metadata is descriptive today; the dispatcher still owns the deep
+    gate and request budget. Keeping the contract beside the check prevents
+    the CLI and future policy tooling from guessing its behavior.
+    """
     def deco(fn):
         _SEQ[0] += 1
         REGISTRY[name] = {"fn": fn, "desc": desc or fn.__doc__ or "",
                           "deep_only": deep_only, "order": order,
+                          "active": bool(active),
+                          "requires_auth": bool(requires_auth),
+                          "max_requests": max_requests,
+                          "safe_default": not deep_only and not active,
                           "seq": _SEQ[0]}
         return fn
     return deco
@@ -30,6 +41,21 @@ def check(name: str, desc: str = "", deep_only: bool = False, order: int = 100):
 def list_checks() -> list[tuple[str, str, bool]]:
     return [(n, m["desc"].split("\n")[0][:70], m["deep_only"])
             for n, m in REGISTRY.items()]
+
+
+def check_policy(name: str) -> list[str]:
+    """Human-readable safety contract for CLI/listing consumers."""
+    meta = REGISTRY.get(name) or {}
+    tags = []
+    if meta.get("deep_only"):
+        tags.append("deep")
+    if meta.get("active"):
+        tags.append("active")
+    if meta.get("requires_auth"):
+        tags.append("auth")
+    if meta.get("max_requests"):
+        tags.append(f"max-{meta['max_requests']} req")
+    return tags
 
 
 def run_checks(session, ctx: dict, skip: set[str] | None = None,
@@ -121,6 +147,12 @@ def run_checks(session, ctx: dict, skip: set[str] | None = None,
             try:
                 if not getattr(f, "check", ""):
                     f.check = name
+                if name in {"xss-reflected", "xss-errpage", "stored-xss",
+                             "dom-xss"}:
+                    from core.xss_triage import (triage_finding,
+                                                 vulnerability_finding)
+                    f.triage = triage_finding(f)
+                    f.vulnerability_finding = vulnerability_finding(f, f.triage)
             except Exception:
                 pass
         n_find = (len(findings) if isinstance(res, tuple) and len(res) == 2

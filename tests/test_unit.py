@@ -25,6 +25,24 @@ def test_parse_ports():
     assert parse_ports("garbage") is None
 
 
+def test_release_version_is_aligned():
+    from core import __version__
+
+    root = Path(__file__).resolve().parents[1]
+    assert __version__ == "0.6.0"
+    assert 'version = "0.6.0"' in (root / "pyproject.toml").read_text(encoding="utf-8")
+    for name in ("README.md", "README.tr.md"):
+        text = (root / name).read_text(encoding="utf-8")
+        assert "version-0.6.0-red" in text
+        assert "v0.6.0  //  fast | modular | thorough" in text
+
+
+def test_http3_flag_is_explicit():
+    from core.cli import build_parser
+    args = build_parser().parse_args(["-t", "https://x.test", "--http3"])
+    assert args.http3 is True
+
+
 def test_parse_auth():
     from core.net import parse_auth
     a = parse_auth("a=b; c=d", ["Authorization: Bearer X", "bozuk"])
@@ -50,6 +68,98 @@ def test_knowledge():
     enrich(f)
     assert f.cwe == "CWE-89" and "9.8" in f.cvss and "prepared" in f.remediation.lower()
     assert lookup("No Such Thing")["cwe"] == "CWE-?"
+
+
+def test_xss_triage_schema_and_two_pass_proof():
+    from core.scan._shared import Finding
+    from core.xss_triage import (XSS_TRIAGE_SCHEMA, triage_finding,
+                                  validate_result)
+
+    proven = Finding(
+        title="Possible Reflected XSS", severity="MEDIUM",
+        detail="Breaker survives raw in 'url-attr' context",
+        url="https://h.test/?q=gx1", evidence="gx1\"><svg>",
+        confidence="Medium", confirm="breakout", check="xss-reflected")
+    result = triage_finding(proven)
+    assert result["is_vulnerable"] is True
+    assert result["vulnerability_type"] == "Reflected_XSS"
+    assert result["execution_context"] == "URL_Attribute"
+    assert result["confidence_score"] == 0.82
+    assert set(XSS_TRIAGE_SCHEMA["required"]) <= set(result)
+    assert validate_result(result) is result
+
+    unconfirmed = Finding(
+        title="Reflected input (unconfirmed)", severity="LOW",
+        detail="Marker reflects raw in 'html-text' context but breaker "
+               "chars were not observed; not proven executable",
+        confidence="Low", check="xss-reflected")
+    safe = triage_finding(unconfirmed)
+    assert safe["is_vulnerable"] is False
+    assert safe["vulnerability_type"] == "False_Positive"
+    assert safe["execution_context"] == "HTML_Text"
+
+
+def test_vulnerability_finding_contract_and_evidence_adapter():
+    from core.scan._shared import Finding
+    from core.xss_triage import (VULNERABILITY_FINDING_SCHEMA,
+                                 validate_vulnerability_finding,
+                                 vulnerability_finding)
+
+    finding = Finding(
+        title="DOM XSS (confirmed — executable sink)", severity="CRITICAL",
+        url="https://h.test/app", param="q", location="fragment",
+        detail="Marker flows location.search/fragment -> innerHTML (raw)",
+        evidence="gxdom<svg onload=alert(1)>", confidence="High",
+        confirm="browser", check="dom-xss",
+        evidence_meta={"source_used": "location.hash",
+                       "sink_triggered": "innerHTML",
+                       "ast_node_type": "HTMLFragment"})
+    result = vulnerability_finding(finding)
+    assert result["is_vulnerable"] is True
+    assert result["vulnerability_type"] == "DOM_XSS"
+    assert result["target_url"] == "https://h.test/app"
+    assert result["parameter"] == "q"
+    assert result["evidence"]["sink_triggered"] == "innerHTML"
+    assert set(VULNERABILITY_FINDING_SCHEMA["required"]) <= set(result)
+    assert validate_vulnerability_finding(result) is result
+
+
+def test_finding_serializes_xss_triage():
+    from core.scan._shared import Finding
+    f = Finding(title="Reflected input (unconfirmed)", severity="LOW",
+                triage={"finding_id": "xss-test"})
+    assert f.to_dict()["triage"]["finding_id"] == "xss-test"
+
+
+def test_xss_double_parse_is_bounded_and_non_executing():
+    from core.xss_context import double_parse_mutation
+
+    safe = double_parse_mutation("<p>gx1</p>", "<p>gx1</p>", "gx1")
+    assert safe["marker_preserved"] is True
+    assert safe["mutation_suspected"] is False
+
+    already_dangerous = double_parse_mutation(
+        "<svg onload=alert(1)>gx1</svg>",
+        "<svg onload=alert(1)>gx1</svg>", "gx1")
+    assert already_dangerous["dangerous_before"] is True
+    assert already_dangerous["dangerous_after"] is True
+    assert already_dangerous["mutation_suspected"] is False
+
+
+def test_modern_csp_and_trusted_types_signals():
+    from core.checks.headers import _audit_csp, parse_csp
+
+    csp = ("default-src 'self'; script-src 'self' 'strict-dynamic'; "
+           "script-src-attr 'unsafe-inline'; trusted-types *; "
+           "require-trusted-types-for 'script'")
+    parsed = parse_csp(csp)
+    assert parsed["trusted-types"] == ["*"]
+    findings = _audit_csp({"Content-Security-Policy": csp},
+                          "https://h.test")
+    titles = {f.title for f in findings}
+    assert "Weak CSP (unsafe-inline script attributes)" in titles
+    assert "Weak Trusted Types policy (wildcard)" in titles
+    assert "Weak CSP (strict-dynamic without nonce/hash)" in titles
 
 
 def test_knowledge_coverage():
@@ -122,11 +232,13 @@ def test_knowledge_coverage():
 def test_registry():
     import core.scanner  # noqa: F401
     import core.advanced  # noqa: F401
-    from core.registry import REGISTRY, list_checks, run_checks
+    import core.webchecks  # noqa: F401
+    from core.registry import REGISTRY, check_policy, list_checks, run_checks
     assert len(REGISTRY) >= 18
     names = [n for n, _, _ in list_checks()]
     for must in ("sqli-error", "sqli-login", "waf-detect", "smart-recurse",
-                 "cookie-flags", "idor-param", "smart-dirs"):
+                 "cookie-flags", "idor-param", "smart-dirs", "jwt-acceptance",
+                 "cache-deception"):
         assert must in names
     # sira: robots < smart-tech < smart-dirs
     order = {n: REGISTRY[n]["order"] for n in ("robots", "smart-tech", "smart-dirs")}
@@ -135,6 +247,9 @@ def test_registry():
     assert run_checks(None, {}, skip=set(names)) == []
     # upload-rce deep_only
     assert REGISTRY["upload-rce"]["deep_only"] is True
+    assert REGISTRY["jwt-acceptance"]["deep_only"] is True
+    assert REGISTRY["cache-deception"]["deep_only"] is True
+    assert check_policy("jwt-acceptance") == ["deep", "active", "auth", "max-3 req"]
 
 
 def test_raw_reflected():
@@ -620,6 +735,28 @@ def test_ssrf_baseline_marker_no_critical():
     assert [f for f in out if f.severity == "CRITICAL"] == []
 
 
+def test_ssrf_reflected_ami_marker_is_not_critical():
+    """The injected ami-id URL itself is not cloud metadata proof."""
+    import core.advanced as A
+    from core.net import configure_net
+    configure_net()
+
+    class Resp:
+        headers = {}
+
+        def __init__(self, text, url=""):
+            self.text = text
+            self.status_code = 200
+            self.url = url
+
+    class Echo:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp(f"<html>echo: {url}</html>", url)
+
+    out = A.test_ssrf(Echo(), ["http://h.test/?file=x"], 3)
+    assert [f for f in out if f.severity == "CRITICAL"] == []
+
+
 def test_ssti_needs_confirm():
     """A one-off template echo without a stable second hit is not SSTI."""
     import core.advanced as A
@@ -720,6 +857,10 @@ def test_readme_check_count_matches_registry():
     assert m, "README check count header missing"
     assert int(m.group(1)) == len(REGISTRY), (
         f"README says {m.group(1)}, registry has {len(REGISTRY)}")
+    readme_tr = open(os.path.join(os.path.dirname(__file__), "..", "README.tr.md"),
+                     encoding="utf-8").read()
+    mt = re.search(r"## Kontroller \((\d+)\)", readme_tr)
+    assert mt and int(mt.group(1)) == len(REGISTRY)
 
 
 def test_fetch_base_scope_guard():
@@ -1350,13 +1491,18 @@ def test_xss_context_breakout_vs_unconfirmed():
 
 
 def test_xss_context_attr_js_comment():
-    from core.xss_context import detect_context
+    from core.xss_context import decode_chain, detect_context
     b = '<input value="gx1">'
     assert detect_context(b, b.find("gx1"), "gx1")["context"] == "attr-double-quoted"
     b2 = "<input value='gx1'>"
     assert detect_context(b2, b2.find("gx1"), "gx1")["context"] == "attr-single-quoted"
     b3 = '<input value=gx1>'
     assert detect_context(b3, b3.find("gx1"), "gx1")["context"] == "attr-unquoted"
+    b_style = '<div style="background:url(gx1)">'
+    assert detect_context(b_style, b_style.find("gx1"), "gx1")["context"] == "style-attribute"
+    b_json = '<script type="application/json">{"x":"gx1"}</script>'
+    assert detect_context(b_json, b_json.find("gx1"), "gx1")["context"] == "json-script"
+    assert decode_chain("%26lt%3Bgx1%26gt%3B")[-1] == "<gx1>"
     b4 = '<div onclick="do(gx1)">'
     d = detect_context(b4, b4.find("gx1"), "gx1")
     assert d["context"] == "event-handler"
@@ -1426,8 +1572,31 @@ def test_xss_payload_generator_contexts():
         assert len({v[0] for v in vecs}) == len(vecs)  # deduped
     assert generate_for_context("html-text", "") == []
     muts = mutate_payload('gx1"><svg onload=alert(1)>')
-    assert 2 <= len(muts) <= 4 and muts[0].startswith("gx1")
+    assert 2 <= len(muts) <= 6 and muts[0].startswith("gx1")
     assert len(set(muts)) == len(muts)
+    assert any("%0a(" in m or "/**/(" in m for m in muts)  # keyword-split
+    assert any("SVG" in m or "ONLOAD" in m for m in muts)  # case variant
+    html_vecs = generate_for_context("html-text", "gx9")
+    assert any("confirm(" in v[0] for v in html_vecs)  # sink alternates
+
+
+def test_efficiency_and_filter_selection():
+    from core.xss_payloads import (efficiency, required_chars,
+                                   generate_bypass)
+    assert efficiency("gx1<>", "xx gx1<> yy") == 100
+    assert efficiency("gx1<>", None) == 0
+    assert efficiency("", "x") == 0
+    assert 0 < efficiency("gx1<>", "gx1&lt;&gt;") < 100
+    assert required_chars('gx1"><svg>') >= {"<", ">", '"'}
+    assert required_chars("plain") == set()
+    assert generate_bypass("html-text", "gx1", set()) == []
+    # <> dead: tag-injection can't fit, but quote/event breakouts can
+    from core.xss_payloads import FILTER_PROBE_CHARS
+    live = set(FILTER_PROBE_CHARS) - {"<"}
+    got = generate_bypass("attr-double-quoted", "gx9", live)
+    assert got and all("<" not in p for p, _, _ in got)
+    assert all(required_chars(p) <= live for p, _, _ in got)
+    assert len(got) <= 6
 
 
 def test_xss_stage2_generator_breakout():
@@ -1464,6 +1633,79 @@ def test_xss_stage2_generator_breakout():
     out = SC.test_xss(S(), ["http://h.test/?q=1"], 3, False, deep=False)
     assert any(f.title == "Possible Reflected XSS"
                and "Generated payload" in f.detail for f in out)
+
+
+def test_xss_bypass_stage_beats_keyword_signature():
+    """WAF blocks 'alert(' but prompt()/confirm() sail through."""
+    import core.scanner as SC
+    from urllib.parse import urlparse as _up, parse_qs as _pqs, unquote as _uq
+
+    class Resp:
+        def __init__(self, text=""):
+            self.status_code = 200
+            self.text = text
+            self.url = "http://h.test/?q=1"
+            self.headers = {}
+
+    def body_for(url: str) -> str:
+        try:
+            q = _pqs(_up(url).query, keep_blank_values=True)
+            vals = sum(q.values(), [])
+            val = _uq(vals[0] if vals else "")
+        except Exception:
+            val = ""
+        # keyword-signature WAF: everything echoes, alert( dies
+        return f"<html><p>{val.replace('alert(', 'X(')}</p></html>"
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp(body_for(url))
+
+    out = SC.test_xss(S(), ["http://h.test/?q=1"], 3, False, deep=False)
+    hit = next(f for f in out if f.title == "Possible Reflected XSS")
+    assert "prompt(" in hit.evidence or "confirm(" in hit.evidence
+
+
+def test_api_ct_confusion_retry():
+    import json as _json
+    from core.api_params import ApiTarget, ApiParam
+    from core.scanner import _api_body_xss
+
+    class Resp:
+        def __init__(self, text=""):
+            self.status_code = 200
+            self.text = text
+            self.url = "http://h.test/api/u"
+            self.headers = {}
+
+    def _body(kw):
+        obj = kw.get("json")
+        if obj is None:
+            import json as _j
+            obj = _j.loads(kw.get("data", "{}"))
+        return _json.dumps(obj)
+
+    class S:
+        def post(self, url, timeout=None, allow_redirects=True, **kw):
+            ct = (kw.get("headers", {}) or {}).get("Content-Type", "")
+            body = _body(kw)
+            if "application/json" in ct:
+                # WAF-facing content-type: breaker eaten
+                return Resp(body.replace(">", "&gt;").replace("<", "&lt;"))
+            return Resp(body)  # confused CT: raw echo
+
+        def request(self, method, url, timeout=None, allow_redirects=True,
+                    **kw):
+            return self.post(url, timeout=timeout,
+                             allow_redirects=allow_redirects, **kw)
+
+    target = ApiTarget(url="http://h.test/api/u", method="POST",
+                       content_type="application/json",
+                       params=[ApiParam(name="nick", location="json")],
+                       template='{"nick": "1"}')
+    out = _api_body_xss(S(), [target], 3)
+    hit = next(f for f in out if f.title == "Possible Reflected XSS")
+    assert "nick" in hit.detail and hit.param == "nick"
 
 
 def _stored_state_session(store: dict, requested: list):
@@ -1730,6 +1972,19 @@ def test_dom_referrer_and_new_sinks():
     assert "document.referrer" in f.detail
 
 
+def test_dom_modern_parser_and_trusted_types_are_not_auto_proof():
+    from core.domxss import classify_sink
+
+    parser = classify_sink("DOMParser.parseFromString",
+                           'gxdom"><svg onload=alert(1)>')
+    assert parser["verdict"] == "suspected"
+    assert "insertion" in parser["reason"]
+    tt = classify_sink("TrustedTypes.createHTML", "gxdom raw")
+    assert tt["verdict"] == "suspected"
+    unsafe = classify_sink("setHTMLUnsafe", 'gxdom<svg onload=alert(1)>')
+    assert unsafe["verdict"] == "confirmed"
+
+
 def test_finding_new_fields_roundtrip():
     from core.scanner import Finding
     f = Finding(title="T", severity="MEDIUM", url="http://h.test/?q=1",
@@ -1938,7 +2193,22 @@ def test_degraded_report_never_clean(capsys):
     assert "SCAN DEGRADED" in out and "Clean" not in out
     rep2 = build_report("http://h.test", "full", "0.0", check_status=[])
     assert rep2["scan_health"] == {"degraded": False, "errors": [],
-                                   "partial": [], "skipped": [], "ran": 0}
+                                   "partial": [], "skipped": [],
+                                   "skipped_details": [], "ran": 0}
+
+
+def test_skipped_checks_never_print_clean(capsys):
+    from core.reporter import _exec_summary, build_report, print_findings
+    skipped = [{"check": "jwt-acceptance", "status": "skipped",
+                "reason": "deep-only (needs --deep)"}]
+    print_findings([], check_status=skipped)
+    out = capsys.readouterr().out
+    assert "SCAN PARTIAL" in out and "Clean" not in out
+    rep = build_report("http://h.test", "full", "0.0",
+                       check_status=skipped)
+    assert rep["scan_health"]["skipped_details"][0]["reason"].startswith(
+        "deep-only")
+    assert "not a clean bill" in _exec_summary(rep, "LOW")
 
 
 def test_run_scan_exposes_check_health(monkeypatch):
@@ -2057,6 +2327,124 @@ def test_coverage_truncated_banner_and_txt(tmp_path, capsys):
     assert "TRUNCATED" in open(txt, encoding="utf-8").read()
     rep2 = build_report("http://h.test", "full", "0.0")
     assert rep2["coverage"] == {}
+
+
+def test_login_wall_detection():
+    from core.authz import is_login_wall
+    assert is_login_wall("http://h.test/login", "<html>x</html>") is True
+    assert is_login_wall("http://h.test/users/sign_in", "<html>x</html>") is True
+    assert is_login_wall("http://h.test/app",
+                         "<form><input type='password' name='p'></form>") is True
+    assert is_login_wall("http://h.test/app", "<html>dashboard</html>") is False
+    assert is_login_wall("", "") is False
+
+
+def test_session_validity_probe():
+    from core.authz import session_looks_valid
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class S:
+        cookies = {"session": "abc"}
+
+        def __init__(self, body, code=200):
+            self._body = body
+            self._code = code
+
+        def get(self, url, timeout=None, allow_redirects=True):
+            return Resp(self._body, self._code, url)
+
+    assert session_looks_valid(S("<html>hi</html>"), "http://h.test", 3) is True
+    assert session_looks_valid(
+        S("<form><input type='password'></form>"), "http://h.test",
+        3) is False
+    assert session_looks_valid(S("denied", 403), "http://h.test",
+                               3) is False
+
+    class Anon:
+        cookies = {}
+
+        def get(self, url, timeout=None, allow_redirects=True):
+            raise AssertionError("must not request without a session")
+
+    assert session_looks_valid(Anon(), "http://h.test", 3) is None
+
+    class Dead:
+        cookies = {"s": "1"}
+
+        def get(self, url, timeout=None, allow_redirects=True):
+            raise OSError("down")
+
+    assert session_looks_valid(Dead(), "http://h.test", 3) is None
+
+
+def test_crawl_records_login_walls():
+    from core.crawler import crawl
+    from core.net import configure_net
+    configure_net()
+
+    class Resp:
+        def __init__(self, text="", url=""):
+            self.text = text
+            self.status_code = 200
+            self.url = url
+            self.headers = {}
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if url.rstrip("/").endswith("/app"):
+                return Resp("<html><form><input type='password'></form></html>",
+                            url)
+            return Resp("<html><a href='/app'>a</a></html>", url)
+
+    auth: dict = {}
+    pages = crawl(S(), "http://h.test", "<html><a href='/app'>a</a></html>",
+                  3, max_pages=4, depth=2, auth=auth)
+    assert auth["login_pages"] == 1
+    assert any(u.endswith("/app") for u in auth["walls"])
+    assert "http://h.test/app" in pages  # wall pages still feed the pool
+
+
+def test_run_scan_coverage_has_auth_keys(monkeypatch, capsys):
+    import core.scanner as S
+    import core.advanced  # noqa: F401
+    import core.domxss  # noqa: F401
+    import core.webchecks  # noqa: F401
+    from core.registry import REGISTRY
+    monkeypatch.setattr(S, "_fetch_base",
+                        lambda *a, **k: ("", "http://h.test", {}))
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class FakeSession:
+        cookies = []
+        headers = {}
+
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("<html>ok</html>", 200, url)
+
+    monkeypatch.setattr(S, "_session",
+                        lambda timeout, auth=None: FakeSession())
+    from core.net import configure_net
+    configure_net()
+    health: dict = {}
+    S.run_scan("http://h.test", threads=1, timeout=3, verbose=False,
+               deep=False, no_crawl=True,
+               skip_checks=set(REGISTRY) - {"waf-detect"}, health=health)
+    cov = health["coverage"]
+    assert cov["login_walls"] == 0
+    assert cov["session_valid"] is None  # no session configured: unknown
+    assert "login wall" not in capsys.readouterr().out
 
 
 def test_canonicalize_url():
@@ -2280,7 +2668,8 @@ def test_api_body_xss_breakout_and_filtered():
 def test_diff_signals():
     from core.diff import (ResponseSnap, compare, snap_response,
                            canonical_json, title_of, visible_text,
-                           dom_structure, scrub_tokens)
+                           dom_structure, scrub_tokens, looks_authenticated,
+                           response_fingerprint, same_protected_response)
     a = ResponseSnap(status=200, url="http://h.test/a", requested="http://h.test/a",
                      body="<html><title>T</title><p>hello</p></html>")
     b = ResponseSnap(status=200, url="http://h.test/a", requested="http://h.test/a",
@@ -2311,6 +2700,15 @@ def test_diff_signals():
     assert dom_structure("<div><p></p></div>") == ("div", "p", "p", "div")
     assert scrub_tokens("tok=abcdefgh", ["abcdefgh"]) == "tok="
     assert scrub_tokens("tok=abc", ["abc"]) == "tok=abc"  # short kept
+    class Resp:
+        status_code = 200
+        text = "<html>dashboard private</html>"
+    assert looks_authenticated(Resp(), positive="dashboard",
+                               negative="login") is True
+    assert response_fingerprint(Resp())
+    same, fp = same_protected_response(
+        Resp(), Resp(), positive="dashboard", negative="login")
+    assert same is True and fp
     # snap_response never raises, even on junk
     s = snap_response(None)
     assert s.status == 0 and s.body == ""
@@ -2380,15 +2778,18 @@ def test_tls_helpers():
 
 
 def test_tls_audit_findings(monkeypatch):
-    import core.webchecks as W
+    import core.checks.apps as _apps
+    import core.webchecks as W  # noqa: F401 (shim still exposes the check)
     import time
     fmt = "%b %d %H:%M:%S %Y GMT"
     past = time.strftime(fmt, time.gmtime(time.time() - 86400))
     bad = {"version": "TLSv1", "cipher": "RC4-SHA", "alpn": "",
            "cert": _tls_cert(cn="other.test", sans=["other.test"],
                              notAfter=past)}
-    monkeypatch.setattr(W, "_tls_handshake",
+    monkeypatch.setattr(_apps, "_tls_handshake",
                         lambda *a, **k: dict(bad))
+    monkeypatch.setattr(_apps, "_tls_chain_handshake",
+                        lambda *a, **k: {"verified": True})
     out = W.test_tls_audit(object(), "https://h.test", 3)
     titles = [f.title for f in out]
     assert "TLS certificate expired" in titles
@@ -2403,14 +2804,86 @@ def test_tls_audit_findings(monkeypatch):
             "cipher": "ECDHE-RSA-AES128-GCM-SHA256", "alpn": "h2",
             "cert": _tls_cert(cn="h.test", sans=["h.test"],
                               self_signed=False)}
-    monkeypatch.setattr(W, "_tls_handshake", lambda *a, **k: None
+    monkeypatch.setattr(_apps, "_tls_handshake", lambda *a, **k: None
                         if len(a) > 3 or k.get("tls_version") is not None
                         else dict(good))
     assert W.test_tls_audit(object(), "https://h.test", 3) == []
     # plain http skips quietly; dead TLS skips quietly
     assert W.test_tls_audit(object(), "http://h.test", 3) == []
-    monkeypatch.setattr(W, "_tls_handshake", lambda *a, **k: None)
+    monkeypatch.setattr(_apps, "_tls_handshake", lambda *a, **k: None)
     assert W.test_tls_audit(object(), "https://h.test", 3) == []
+
+
+def test_http3_alt_svc_is_passive_info():
+    import core.webchecks as W
+    out = W.test_tls_audit(object(), "http://h.test", 3,
+                           headers={"Alt-Svc": 'h3=":443"; ma=3600'})
+    assert len(out) == 1
+    assert out[0].title == "HTTP/3 advertised (passive)"
+    assert out[0].severity == "INFO"
+    assert W.test_tls_audit(object(), "http://h.test", 3,
+                            headers={"Alt-Svc": 'h2=":443"'}) == []
+
+
+def test_http3_active_probe_requires_explicit_opt_in(monkeypatch):
+    import core.checks.apps as _apps
+    import core.webchecks as W
+    from types import SimpleNamespace
+
+    good = {"version": "TLSv1.3",
+            "cipher": "ECDHE-RSA-AES128-GCM-SHA256", "alpn": "h2",
+            "cert": _tls_cert(cn="h.test", sans=["h.test"],
+                              self_signed=False)}
+    monkeypatch.setattr(_apps, "_tls_handshake", lambda *a, **k: None
+                        if len(a) > 3 or k.get("tls_version") is not None
+                        else dict(good))
+    monkeypatch.setattr(_apps, "_tls_chain_handshake",
+                        lambda *a, **k: {"verified": True})
+    monkeypatch.setattr(_apps, "_http3_probe",
+                        lambda *a, **k: SimpleNamespace(status=204, error=""))
+    out = W.test_tls_audit(object(), "https://h.test", 3, http3=True)
+    assert [f.title for f in out] == ["HTTP/3 active (QUIC confirmed)"]
+    assert out[0].severity == "INFO"
+
+
+def test_tls_chain_failure_is_medium_and_insecure_skips(monkeypatch):
+    import core.checks.apps as _apps
+    import core.webchecks as W
+    from core.net import configure_net
+
+    good = {"version": "TLSv1.3",
+            "cipher": "ECDHE-RSA-AES128-GCM-SHA256", "alpn": "h2",
+            "cert": _tls_cert(cn="h.test", sans=["h.test"],
+                              self_signed=False)}
+    monkeypatch.setattr(_apps, "_tls_handshake", lambda *a, **k: None
+                        if len(a) > 3 or k.get("tls_version") is not None
+                        else dict(good))
+    monkeypatch.setattr(_apps, "_tls_chain_handshake", lambda *a, **k: {
+        "verified": False,
+        "verify_message": "unable to get local issuer certificate",
+    })
+    try:
+        out = W.test_tls_audit(object(), "https://h.test", 3)
+        chain = next(f for f in out
+                     if f.title == "TLS certificate chain-of-trust failed")
+        assert chain.severity == "MEDIUM"
+        monkeypatch.setattr(_apps, "_tls_chain_handshake", lambda *a, **k: {
+            "verified": None, "verify_message": "connection reset"
+        })
+        assert not any(f.title == "TLS certificate chain-of-trust failed"
+                       for f in W.test_tls_audit(object(), "https://h.test", 3))
+        configure_net(insecure=True)
+        assert not any(f.title == "TLS certificate chain-of-trust failed"
+                       for f in W.test_tls_audit(object(), "https://h.test", 3))
+    finally:
+        configure_net()
+
+
+def test_http3_without_optional_backend_is_offline(monkeypatch):
+    import core.http3 as h3
+    monkeypatch.setattr(h3, "available", lambda: False)
+    result = h3.get("https://h.test", timeout=1)
+    assert result.status == 0 and "aioquic" in result.error
 
 
 def _gql_schema():
@@ -2813,6 +3286,8 @@ def test_run_local_audit_orchestration(monkeypatch):
         {"path": "/home/u/.env", "kind": "environment file", "broad": True}])
     monkeypatch.setattr(L, "firewall_status", lambda: "off")
     monkeypatch.setattr(L, "container_interfaces", lambda: ["docker0"])
+    monkeypatch.setattr(L, "docker_containers", lambda **k: [])
+    monkeypatch.setattr(L, "wsl_forwardings", lambda **k: [])
     out = L.run_local_audit()
     by_title = {f.title: f for f in out}
     assert by_title["Exposed development server"].severity == "MEDIUM"
@@ -2891,6 +3366,8 @@ def test_run_local_audit_lan_visible(monkeypatch):
                             "<script src='/@vite/client'></script>", {}))
     monkeypatch.setattr(L, "secret_file_status", lambda **k: [])
     monkeypatch.setattr(L, "container_interfaces", lambda: [])
+    monkeypatch.setattr(L, "docker_containers", lambda **k: [])
+    monkeypatch.setattr(L, "wsl_forwardings", lambda **k: [])
     out = L.run_local_audit()
     hit = next(f for f in out
                if f.title == "Exposed development server")
@@ -3029,6 +3506,8 @@ def test_run_local_audit_udp_findings(monkeypatch):
     monkeypatch.setattr(L, "secret_file_status", lambda **k: [])
     monkeypatch.setattr(L, "firewall_status", lambda: "unknown")
     monkeypatch.setattr(L, "container_interfaces", lambda: [])
+    monkeypatch.setattr(L, "docker_containers", lambda **k: [])
+    monkeypatch.setattr(L, "wsl_forwardings", lambda **k: [])
     out = L.run_local_audit()
     by_title = {f.title: f for f in out}
     assert by_title["Local UDP service (DNS)"].severity == "INFO"
@@ -3445,11 +3924,20 @@ def test_cve_version_compare_and_ranges():
     assert match_component("wordpress", "4.7.1")[0]["cve"] == \
         "CVE-2017-1001000"
     assert match_component("nope", "1.0") == []
+    # Research 2024–2026 curated entries
+    assert match_component("ghost", "5.75.0")[0]["cve"] == "CVE-2024-23724"
+    assert match_component("ghost", "5.76.0") == []
+    assert match_component("hunk-companion", "1.8.5")[0]["severity"] == \
+        "CRITICAL"
+    assert match_component("hunk-companion", "1.9.0") == []
+    assert match_component("denodo-scheduler",
+                           "8.0.202309140")[0]["cve"] == "CVE-2025-26147"
+    assert match_component("denodo-scheduler", "8.0.202403070") == []
 
 
 def test_cve_extraction_sources():
     from core.cve import (extract_versions, extract_js_versions,
-                          components_with_findings)
+                          extract_wp_plugin_version, components_with_findings)
     html = ('<meta name="generator" content="WordPress 4.7.1" />'
             '<script src="/wp-includes/js/jquery/jquery.js?ver=1.12.4">'
             '</script>'
@@ -3468,6 +3956,22 @@ def test_cve_extraction_sources():
     assert any("CVE-2017-1001000" in t for t in titles)
     assert any("CVE-2020-11022" in t for t in titles)
     assert components_with_findings([("jquery", "3.6.0", "js-banner")]) == []
+    ghost_html = '<meta name="generator" content="Ghost 5.70.1" />'
+    ghost_found = extract_versions(ghost_html, None)
+    assert ("ghost", "5.70.1", "meta-generator") in ghost_found
+    assert any(p["cve"] == "CVE-2024-23724"
+               for p in components_with_findings(ghost_found))
+    readme = "=== Hunk Companion ===\nStable tag: 1.8.4\n"
+    plug = extract_wp_plugin_version(readme, "hunk-companion")
+    assert plug == ("hunk-companion", "1.8.4", "readme.txt")
+    assert extract_wp_plugin_version("no tag here", "hunk-companion") is None
+    from core.cve import extract_denodo_version
+    assert extract_denodo_version(
+        "Welcome to Denodo Scheduler 8.0.202309140") == (
+        "denodo-scheduler", "8.0.202309140", "banner")
+    assert extract_denodo_version(
+        "Denodo Platform 8.0 build 20230914")[1].startswith("8.0.")
+    assert extract_denodo_version("plain wordpress site") is None
 
 
 def test_vuln_components_check():
@@ -3488,6 +3992,9 @@ def test_vuln_components_check():
                 return Resp("Drupal 7.57, 2018-02-21\nblah", 200, url)
             if url.endswith(".js"):
                 return Resp("/*! jQuery v3.6.0 */", 200, url)
+            if "hunk-companion/readme.txt" in url:
+                return Resp("=== Hunk Companion ===\nStable tag: 1.8.5\n",
+                            200, url)
             return Resp("nope", 404, url)
 
     pages = {"http://h.test/":
@@ -3499,7 +4006,32 @@ def test_vuln_components_check():
     titles = [f.title for f in out]
     assert any("CVE-2017-1001000" in t for t in titles)
     assert any("CVE-2018-7600" in t for t in titles)  # CHANGELOG Drupal
+    assert any("CVE-2024-11972" in t for t in titles)  # Hunk Companion
     assert next(f for f in out if "Drupalgeddon" in f.detail
                 or "2018-7600" in f.title).severity == "CRITICAL"
     assert not any("jQuery" in (f.detail + f.title) and "3.6.0" in
                    (f.detail + f.evidence) for f in out)
+
+
+def test_vuln_components_ghost():
+    """Ghost meta-generator maps to SVG stored-XSS CVE (research)."""
+    import core.webchecks as W
+    from core.net import configure_net
+    configure_net()
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("nope", 404, url)
+
+    html = '<meta name="generator" content="Ghost 5.74.0" />'
+    out = W.test_vuln_components(S(), "http://h.test", {"http://h.test/": html},
+                                 html, {}, 3)
+    assert any("CVE-2024-23724" in f.title for f in out)
+    assert out[0].severity == "CRITICAL"

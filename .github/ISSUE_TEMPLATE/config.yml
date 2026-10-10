@@ -1,0 +1,6 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security policy
+    url: https://github.com/Xmar1881/Gash/blob/main/SECURITY.md
+    about: Report security issues in GASH privately according to the policy.
+

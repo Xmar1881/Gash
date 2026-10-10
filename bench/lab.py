@@ -21,6 +21,13 @@ from urllib.parse import urlparse, parse_qs
 
 STATE: dict = {"stored": [], "stored_fixed": [], "uploads": {}}
 LAB_UUID = "123e4567-e89b-12d3-a456-426614174000"
+LAB_JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature"
+LAB_JWT_NONE = "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+
+
+def _bearer(handler) -> str:
+    value = handler.headers.get("Authorization", "") or ""
+    return value[7:].strip() if value.lower().startswith("bearer ") else ""
 
 
 def _read_body(handler) -> tuple[str, bytes]:
@@ -233,6 +240,19 @@ class Lab(BaseHTTPRequestHandler):
         if path == "/jwt_fixed":
             self._send("<html><script>var t='none';</script></html>")
             return
+        if path == "/jwt_accept":
+            token = _bearer(self)
+            if token in (LAB_JWT, LAB_JWT_NONE):
+                self._send("<html>dashboard for user</html>")
+            else:
+                self._send("<html>login</html>", code=401)
+            return
+        if path == "/jwt_accept_fixed":
+            if _bearer(self) == LAB_JWT:
+                self._send("<html>dashboard for user</html>")
+            else:
+                self._send("<html>login</html>", code=401)
+            return
         if path == "/graphql_fixed":
             self._send("nope", code=400)
             return
@@ -274,6 +294,28 @@ class Lab(BaseHTTPRequestHandler):
             return
         if path == "/cache_fixed":
             self._send("<html>welcome</html>")
+            return
+        if path == "/cache_auth":
+            if self.headers.get("Cookie", "") != "session=lab-auth":
+                self._send("<html>login</html>", code=401)
+            else:
+                self._send("<html>dashboard private</html>")
+            return
+        if path.startswith("/cache_auth/"):
+            if self.headers.get("Cookie", "") == "session=lab-auth":
+                self._send("<html>dashboard private</html>",
+                           headers={"Cache-Control": "public, max-age=60"})
+            else:
+                self._send("<html>login</html>", code=401)
+            return
+        if path == "/cache_auth_fixed":
+            if self.headers.get("Cookie", "") == "session=lab-auth":
+                self._send("<html>dashboard private</html>")
+            else:
+                self._send("<html>login</html>", code=401)
+            return
+        if path.startswith("/cache_auth_fixed/"):
+            self._send("nope", code=404)
             return
         if path == "/login":
             self._send("<html><form method='post' action='/login'>"

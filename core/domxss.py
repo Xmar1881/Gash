@@ -1,15 +1,15 @@
 """DOM XSS verification with a headless browser (opt-in --dom).
 
 Sources are probed in stages: page load (query/fragment), postMessage,
-storage (plant + reload) and referrer navigation. Each stage attributes
-newly-reached sinks to its source, so findings read as source -> sink
-chains with a raw/filtered-or-text transform note.
+storage (plant + reload), history state, window.name and referrer navigation.
+Each stage attributes newly-reached sinks to its source, so findings read as
+source -> sink chains with a raw/filtered-or-text transform note.
 
 Sinks hooked: innerHTML/outerHTML, insertAdjacentHTML,
 createContextualFragment, document.write/writeln, eval/Function/
 setTimeout-string, setAttribute event/URL attrs, jQuery html/append,
 location.assign/replace, window.open, iframe src/srcdoc, script src,
-document.domain. A marker in a sink is NOT auto-confirmed: the sample
+  document.domain, DOMParser and modern setHTMLUnsafe/Trusted Types paths. A marker in a sink is NOT auto-confirmed: the sample
 must carry executable markup/code (else: suspected, LOW).
 alert/confirm/prompt are wrapped into __gash_fired plus dialog/console
 listeners, so execution counts even under a CSP that blocks inline
@@ -45,10 +45,12 @@ SRC_LOAD = "location.search/fragment"
 SRC_POSTMESSAGE = "postMessage"
 SRC_STORAGE = "localStorage/sessionStorage"
 SRC_REFERRER = "document.referrer"
+SRC_HISTORY = "history.state"
+SRC_WINDOW_NAME = "window.name"
 
 
 def _snapshot(page):
-    """(sinks, samples, fired) — each read degrades to empty, never raises."""
+    """(sinks, samples, fired, sources) — reads never raise."""
     try:
         sinks = page.evaluate("() => (window.__gash_sinks || []).slice(0, 8)")
     except Exception:
@@ -61,7 +63,11 @@ def _snapshot(page):
         fired = page.evaluate("() => (window.__gash_fired || []).slice(0, 3)")
     except Exception:
         fired = []
-    return (sinks or [], samples or {}, fired or [])
+    try:
+        sources = page.evaluate("() => (window.__gash_sink_sources || {})")
+    except Exception:
+        sources = {}
+    return (sinks or [], samples or {}, fired or [], sources or {})
 
 
 def _transform_note(sample: str) -> str:
@@ -78,7 +84,10 @@ CODE_SINKS = {"eval", "Function", "setTimeout", "setInterval"}
 HTML_SINKS = {"innerHTML", "outerHTML", "insertAdjacentHTML",
               "createContextualFragment", "document.write",
               "document.writeln", "jQuery.html", "jQuery.append",
-              "srcdoc"}
+              "srcdoc", "setHTMLUnsafe"}
+PARSER_SINKS = {"DOMParser.parseFromString", "Document.parseHTMLUnsafe"}
+TRUSTED_TYPE_SINKS = {"TrustedTypes.createHTML", "TrustedTypes.createScript",
+                      "TrustedTypes.createScriptURL"}
 NAV_SINKS = {"location", "location.href", "location.assign",
              "location.replace", "window.open"}
 SRC_SINKS = {"src", "iframe.src", "script.src", "script.text"}
@@ -112,6 +121,14 @@ def classify_sink(sink: str, sample: str,
                     "reason": f"executable markup in {name}"}
         return {"verdict": "suspected",
                 "reason": f"marker in {name} as text (no executable markup)"}
+    if name in PARSER_SINKS:
+        return {"verdict": "suspected",
+                "reason": f"marker parsed by {name}; insertion/execution "
+                          "is not proven"}
+    if name in TRUSTED_TYPE_SINKS:
+        return {"verdict": "suspected",
+                "reason": f"marker reaches {name}; policy output "
+                          "does not prove a dangerous DOM sink"}
     if name.startswith("setAttribute:"):
         attr = name.split(":", 1)[1].lower()
         if attr.startswith("on"):
@@ -153,8 +170,24 @@ SINK_HOOK_JS = """
 (() => {
   window.__gash_sinks = [];
   window.__gash_sink_samples = {};
+  window.__gash_sink_sources = {};
+  window.__gash_taint = [];
   window.__gash_fired = [];
   const MARK = 'gxdom';
+  let activeSource = 'location.search/fragment';
+  try {
+    if (document.referrer && document.referrer.indexOf('gash.test') !== -1)
+      activeSource = 'document.referrer';
+    const ls = window.localStorage && localStorage.getItem('gashdom');
+    const ss = window.sessionStorage && sessionStorage.getItem('gashdom');
+    if (String(ls || ss).indexOf(MARK) !== -1)
+      activeSource = 'localStorage/sessionStorage';
+    if (history.state && String(history.state.gash || '').indexOf(MARK) !== -1)
+      activeSource = 'history.state';
+    if (String(window.name || '').indexOf(MARK) !== -1)
+      activeSource = 'window.name';
+  } catch (e) {}
+  window.__gash_set_source = function(s) { activeSource = String(s || 'unknown'); };
   const note = (sink, v) => {
     try {
       const s = String(v == null ? '' : v).slice(0, 300);
@@ -165,6 +198,8 @@ SINK_HOOK_JS = """
       if (s.indexOf('__gash_') !== -1) return;
         window.__gash_sinks.push(sink);
         if (!window.__gash_sink_samples[sink]) window.__gash_sink_samples[sink] = s;
+        window.__gash_sink_sources[sink] = activeSource;
+        window.__gash_taint.push({source: activeSource, sink: sink, sample: s});
     } catch (e) {}
   };
   const hookProp = (proto, prop) => {
@@ -205,6 +240,13 @@ SINK_HOOK_JS = """
     if (typeof ShadowRoot !== 'undefined') hookProp(ShadowRoot.prototype, 'innerHTML');
     hookMethod(Element.prototype, 'insertAdjacentHTML', 1);
     if (typeof Range !== 'undefined') hookMethod(Range.prototype, 'createContextualFragment', 0);
+    if (typeof DOMParser !== 'undefined') {
+      const _dpf = DOMParser.prototype.parseFromString;
+      if (typeof _dpf === 'function') DOMParser.prototype.parseFromString = function(v) {
+        note('DOMParser.parseFromString', v);
+        return _dpf.apply(this, arguments);
+      };
+    }
     const _w = Document.prototype.write;
     Document.prototype.write = function() {
       for (const a of arguments) note('document.write', a);
@@ -288,6 +330,39 @@ SINK_HOOK_JS = """
         hookProp(HTMLScriptElement.prototype, 'src');
       }
       hookProp(Document.prototype, 'domain');
+      if (typeof Element !== 'undefined' &&
+          typeof Element.prototype.setHTMLUnsafe === 'function') {
+        hookMethod(Element.prototype, 'setHTMLUnsafe', 0);
+      }
+      if (typeof ShadowRoot !== 'undefined' &&
+          typeof ShadowRoot.prototype.setHTMLUnsafe === 'function') {
+        hookMethod(ShadowRoot.prototype, 'setHTMLUnsafe', 0);
+      }
+      if (typeof Document !== 'undefined' &&
+          typeof Document.parseHTMLUnsafe === 'function') {
+        const _dpu = Document.parseHTMLUnsafe;
+        Document.parseHTMLUnsafe = function(v) {
+          note('Document.parseHTMLUnsafe', v);
+          return _dpu.apply(this, arguments);
+        };
+      }
+    } catch (e) {}
+    try {
+      if (window.trustedTypes && typeof window.trustedTypes.createPolicy === 'function') {
+        const _ctp = window.trustedTypes.createPolicy.bind(window.trustedTypes);
+        window.trustedTypes.createPolicy = function(name, rules) {
+          const policy = _ctp(name, rules);
+          for (const method of ['createHTML', 'createScript', 'createScriptURL']) {
+            try {
+              if (policy && typeof policy[method] === 'function') {
+                const original = policy[method].bind(policy);
+                policy[method] = function(v) { note('TrustedTypes.' + method, v); return original(v); };
+              }
+            } catch (e) {}
+          }
+          return policy;
+        };
+      }
     } catch (e) {}
   } catch (e) {}
 })();
@@ -307,7 +382,7 @@ def _targets(urls: list[str], limit: int = 6) -> list[str]:
 @register_check("dom-xss", "DOM XSS headless sinks+sources+oracle (--dom)", order=12)
 def test_dom_xss(urls: list[str], base: str, timeout: int,
                   verbose: bool = False, pages: dict | None = None,
-                  dom: bool = False) -> list:
+                  dom: bool = False, insecure: bool = False) -> list:
     if not dom:
         return []
     try:
@@ -319,7 +394,7 @@ def test_dom_xss(urls: list[str], base: str, timeout: int,
                    "py -m playwright install chromium"))
         return []
     try:
-        return _run(urls, base, timeout, verbose, pages or {})
+        return _run(urls, base, timeout, verbose, pages or {}, insecure)
     except Exception as e:
         msg = str(e)[:150]
         if "Executable doesn't exist" in msg or "browser" in msg.lower():
@@ -329,7 +404,7 @@ def test_dom_xss(urls: list[str], base: str, timeout: int,
         return []
 
 
-def _run(urls, base, timeout, verbose, pages) -> list:
+def _run(urls, base, timeout, verbose, pages, insecure: bool = False) -> list:
     from playwright.sync_api import sync_playwright
     out = []
     targets = _targets(urls)
@@ -339,7 +414,8 @@ def _run(urls, base, timeout, verbose, pages) -> list:
         browser = pw.chromium.launch(headless=True)
         try:
             for t in targets:
-                hit = _probe_page(browser, t, base, timeout, pages, verbose)
+                hit = _probe_page(browser, t, base, timeout, pages, verbose,
+                                  insecure)
                 if hit:
                     out.append(hit)
         finally:
@@ -348,14 +424,15 @@ def _run(urls, base, timeout, verbose, pages) -> list:
 
 
 def _probe_page(browser, url: str, base: str, timeout: int,
-                pages: dict, verbose: bool = False):
+                pages: dict, verbose: bool = False,
+                insecure: bool = False):
     from core.scanner import Finding
     fired: list[str] = []
     console: list[str] = []
     errors: list[str] = []
     seen: set[str] = set()
     suspected: list[str] = []
-    page = browser.new_page(ignore_https_errors=True)
+    page = browser.new_page(ignore_https_errors=bool(insecure))
     try:
         page.on("dialog", lambda d: (fired.append(d.message), d.dismiss()))
 
@@ -390,7 +467,7 @@ def _probe_page(browser, url: str, base: str, timeout: int,
 
         def _check_stage(source: str):
             """Alert or sink verdict for one source stage. Returns Finding/None."""
-            sinks, samples, alerted = _snapshot(page)
+            sinks, samples, alerted, sources = _snapshot(page)
             if any(DOM_MARKER in m for m in fired) or \
                     any(DOM_MARKER in m for m in (alerted or [])):
                 if verbose:
@@ -404,7 +481,11 @@ def _probe_page(browser, url: str, base: str, timeout: int,
                            f"{source} (alert/confirm/prompt with our marker)",
                     evidence=DOM_MARKER,
                     confidence="High",
-                    method="GET", location="fragment", confirm="browser",)
+                    method="GET", location="fragment", confirm="browser",
+                    evidence_meta={"source_used": source,
+                                   "sink_triggered": "execution-oracle",
+                                   "ast_node_type": "CallExpression",
+                                   "raw_payload": DOM_MARKER})
             fresh = [s for s in dict.fromkeys(sinks) if s not in seen]
             for s in fresh:
                 seen.add(s)
@@ -413,7 +494,8 @@ def _probe_page(browser, url: str, base: str, timeout: int,
                 except Exception:
                     sample = ""
                 verdict = classify_sink(s, sample)
-                chain = (f"{source} -> {s} "
+                chain_source = str((sources or {}).get(s) or source)
+                chain = (f"{chain_source} -> {s} "
                          f"({_transform_note(sample)}; {verdict['reason']}; "
                          f"sample: {sample[:100]})")
                 if verdict["verdict"] == "confirmed":
@@ -432,7 +514,13 @@ def _probe_page(browser, url: str, base: str, timeout: int,
                         evidence=DOM_MARKER,
                         confidence="High",
                         method="GET", location="fragment",
-                        confirm="browser",)
+                        confirm="browser",
+                        evidence_meta={"source_used": chain_source,
+                                       "sink_triggered": s,
+                                       "ast_node_type": (
+                                           "CallExpression" if s in CODE_SINKS
+                                           else "HTMLFragment"),
+                                       "raw_payload": sample[:300]})
                 if verdict["verdict"] == "suspected":
                     suspected.append(chain)
             return None
@@ -469,6 +557,24 @@ def _probe_page(browser, url: str, base: str, timeout: int,
             page.reload(wait_until="domcontentloaded")
             page.wait_for_timeout(2500)
             hit = _check_stage(SRC_STORAGE)
+            if hit:
+                return hit
+        except Exception:
+            pass
+        # history.state and window.name are common SPA boot sources.  Both
+        # stay inside this isolated browser context and never read cookies.
+        try:
+            page.evaluate(
+                DISPATCH_TAG + "() => { try { "
+                "history.replaceState({gash:'" + PM_PAYLOAD + "'}, '', "
+                "location.href); window.name='" + STORAGE_PAYLOAD + "'; } "
+                "catch(e) {} }")
+            page.reload(wait_until="domcontentloaded")
+            page.wait_for_timeout(1800)
+            hit = _check_stage(SRC_HISTORY)
+            if hit:
+                return hit
+            hit = _check_stage(SRC_WINDOW_NAME)
             if hit:
                 return hit
         except Exception:

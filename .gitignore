@@ -33,6 +33,7 @@ reports/
 report.html
 report.json
 report.txt
+gash-report.html
 .html
 *.gash.json
 
@@ -50,3 +51,7 @@ Thumbs.db
 .env.*
 *.pem
 *.key
+
+# Go worker yapıları (yerelde derlenir, repoya girmez)
+go/bin/
+go/pkg/

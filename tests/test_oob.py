@@ -133,6 +133,8 @@ def test_drain_confirms_and_stays_quiet():
     assert len(out) == 1
     assert out[0].title == "Blind XSS (confirmed via OOB)"
     assert out[0].severity == "MEDIUM" and out[0].confidence == "High"
+    assert out[0].triage["is_vulnerable"] is True
+    assert out[0].triage["vulnerability_type"] == "Stored_XSS"
     assert fake.poll_calls == 1  # one shared cycle, not per-token waits
     assert fake.deregistered is True
 

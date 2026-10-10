@@ -1,0 +1,56 @@
+name: Bug report
+description: Report a reproducible problem in GASH itself
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include real credentials, cookies, tokens, private target URLs,
+        OOB domains, or sensitive response bodies. Redact logs before posting.
+  - type: checkboxes
+    id: authorization
+    attributes:
+      label: Safe disclosure
+      options:
+        - label: I reproduced this against a local lab or an authorized target.
+          required: true
+        - label: I removed credentials, secrets, and sensitive target data.
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: GASH version
+      placeholder: "0.6.0 (git revision optional)"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: "Windows 11, Python 3.13, optional Go 1.22"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Give a minimal lab-safe command and steps; redact target data.
+      placeholder: |
+        1. Run ...
+        2. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs or traceback
+      render: text
+

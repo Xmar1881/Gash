@@ -41,8 +41,11 @@ def print_findings(findings, verbose: bool = False,
     errors = _check_errors(check_status)
     degraded = bool(errors)
     truncated = bool((coverage or {}).get("truncated"))
+    skipped = [c for c in (check_status or [])
+               if c.get("status") == "skipped"]
     print(info("\n[+] SCAN Results"))
-    if not findings and not incomplete and not degraded and not truncated:
+    if not findings and not incomplete and not degraded and not truncated \
+            and not skipped:
         print(success("[+] Clean: no findings."))
         return
     if incomplete:
@@ -62,6 +65,12 @@ def print_findings(findings, verbose: bool = False,
             what = e.get("error_type", "") + " " + e.get(
                 "error", e.get("reason", ""))
             print(warn(f"      x {e.get('check')}: {what.strip()}"[:160]))
+    if skipped:
+        print(warn(f"  [!] SCAN PARTIAL — {len(skipped)} check(s) skipped; "
+                   "no findings means only executed checks were clean."))
+        for item in skipped[:5]:
+            print(warn(f"      - {item.get('check')}: "
+                       f"{item.get('reason', 'not run')}"))
     if not findings and degraded:
         print(warn("  [!] No findings, but failing checks mean this is "
                    "NOT a clean bill."))
@@ -134,8 +143,9 @@ def build_report(target: str, mode: str, version: str,
     findings = findings or []
     errors = _check_errors(check_status)
     degraded = bool(errors)
-    skipped = [c.get("check") for c in (check_status or [])
-               if c.get("status") == "skipped"]
+    skipped_rows = [c for c in (check_status or [])
+                    if c.get("status") == "skipped"]
+    skipped = [c.get("check") for c in skipped_rows]
     vulns = [f for f in findings if is_finding(f)]
     obs = [f for f in findings if not is_finding(f)]
     srt = sorted(vulns, key=lambda f: SEVERITY_ORDER.get(f.severity, 9))
@@ -169,6 +179,9 @@ def build_report(target: str, mode: str, version: str,
             "partial": sorted({c.get("check", "?") for c in (check_status or [])
                                if c.get("partial_sections")}),
             "skipped": skipped,
+            "skipped_details": [
+                {"check": c.get("check"), "reason": c.get("reason", "")}
+                for c in skipped_rows],
             "ran": sum(1 for c in (check_status or [])
                        if c.get("status") in ("passed", "findings")),
         },
@@ -279,6 +292,10 @@ def _render_txt(report: dict) -> str:
         names = ", ".join(e.get("check", "?") for e in health.get("errors", [])[:5])
         L.append(f"WARNING: SCAN DEGRADED ({len(health.get('errors', []))} "
                  f"failed checks: {names}) — partial results, NOT a clean bill.")
+    if health.get("skipped"):
+        names = ", ".join(health.get("skipped", [])[:6])
+        L.append(f"WARNING: SCAN PARTIAL ({len(health.get('skipped', []))} "
+                 f"checks skipped: {names}) — only executed checks were clean.")
     cov = report.get("coverage") or {}
     if cov:
         L.append(
@@ -317,7 +334,12 @@ def _render_txt(report: dict) -> str:
     for f in report.get("observations", []):
         L.append(f"[INFO] {f['title']}\n  {f.get('url')}\n  {f.get('detail')}")
     if not report["findings"] and not report.get("observations"):
-        L.append("Clean: no findings.")
+        if ((report.get("scan_health") or {}).get("skipped")
+                or (report.get("scan_health") or {}).get("degraded")
+                or report.get("incomplete")):
+            L.append("No findings in executed checks; scan was partial, not clean.")
+        else:
+            L.append("Clean: no findings.")
     return "\n".join(L) + "\n"
 
 
@@ -443,6 +465,10 @@ def _exec_summary(report: dict, risk: str) -> str:
     if s["TOTAL"]:
         return (f"Scan of {tgt} found only <b>{s['LOW']} low</b> findings. "
                 f"No urgent risk; apply the hygiene recommendations.")
+    health = report.get("scan_health") or {}
+    if report.get("incomplete") or health.get("degraded") or health.get("skipped"):
+        return (f"Scan of {tgt} produced no findings in the executed checks, "
+                "but coverage was partial. This is not a clean bill.")
     return (f"Scan of {tgt} found <b>no issues</b>. This means the automated scan "
             f"saw no known vulnerability patterns on the visible surface; "
             f"it is not a replacement for manual pentesting.")
@@ -533,7 +559,11 @@ def _render_html(report: dict) -> str:
             f"<h2>{sev} <span class='cnt'>({len(items)})</span></h2>"
             f"{cards}</section>")
     findings_html = "\n".join(sections) if sections else \
-        "<p class='empty'>Clean: no findings.</p>"
+        ("<p class='empty'>No findings in executed checks; scan was partial, "
+         "not clean.</p>" if (report.get("scan_health") or {}).get("skipped")
+         or report.get("incomplete")
+         or (report.get("scan_health") or {}).get("degraded")
+         else "<p class='empty'>Clean: no findings.</p>")
     obs_items = report.get("observations", [])
     if obs_items:
         obs_cards = "\n".join(_card({**f, "severity": "INFO"})
@@ -556,6 +586,10 @@ def _render_html(report: dict) -> str:
     warn_degraded = ("<div class='warn'>SCAN DEGRADED — failed checks mean "
                      "partial results, NOT a clean bill.</div>"
                      if (report.get("scan_health") or {}).get("degraded") else "")
+    skipped_names = (report.get("scan_health") or {}).get("skipped", [])
+    warn_skipped = ("<div class='warn'>SCAN PARTIAL — "
+                    f"{len(skipped_names)} check(s) were skipped; only executed "
+                    "checks were clean.</div>" if skipped_names else "")
     cov = report.get("coverage") or {}
     cov_line = ""
     if cov:
@@ -622,7 +656,7 @@ code{{display:block;background:#0f172a;color:#a5f3fc;border-radius:10px;padding:
 <div class="hero"><h1>GASH Report</h1>
 <div class="sub">Vulnerability &amp; Penetration Engine v{esc(report['version'])} · {esc(report['target'])}</div></div>
 <div class="card exec"><b>Executive summary:</b> {_exec_summary(report, risk)}</div>
-{warn_incomplete}{warn_degraded}{cov_line}
+{warn_incomplete}{warn_degraded}{warn_skipped}{cov_line}
 <h2 class="sec">Scan info</h2>
 <table class="meta-table">
 <tr><td>Target</td><td>{esc(report['target'])}</td></tr>

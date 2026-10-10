@@ -149,6 +149,11 @@ def test_unknown_environment_degrades_gracefully(monkeypatch):
 
     monkeypatch.setattr(L, "collect_listening", _boom)
     monkeypatch.setattr(L, "secret_file_status", _boom)
+    monkeypatch.setattr(L, "firewall_status", _boom)
+    monkeypatch.setattr(L, "local_interface_map", _boom)
+    monkeypatch.setattr(L, "container_interfaces", _boom)
+    monkeypatch.setattr(L, "docker_containers", _boom)
+    monkeypatch.setattr(L, "wsl_forwardings", _boom)
     health: dict = {}
     out = L.run_local_audit(health=health)
     assert out == []  # nothing mappable, but no crash either

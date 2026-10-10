@@ -83,6 +83,45 @@ def test_path_traversal_windows():
     assert len(out) == 1 and "[fonts]" in (out[0].evidence or "")
 
 
+def test_path_traversal_app_config():
+    """Atlassian/Java-class .properties LFI — content markers + 2nd file."""
+    _args_net()
+    import core.webchecks as W
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if "crowd.properties" in url:
+                return Resp("crowd.server.url=http://crowd.local\n"
+                            "application.password=s3cret\n", 200, url, {})
+            if "application.properties" in url:
+                return Resp("spring.datasource.url=jdbc:h2:mem:x\n",
+                            200, url, {})
+            return Resp("<html>doc home</html>", 200, url, {})
+
+    out = W.test_path_traversal(S(), ["http://h.test/?file=doc"], 3)
+    assert len(out) == 1 and out[0].severity == "MEDIUM"
+    assert "spring.datasource" in (out[0].evidence or "") \
+        or "crowd.server.url" in (out[0].evidence or "") \
+        or "application.password=" in (out[0].evidence or "")
+    # no /etc needed — app-config confirm pair is enough
+    assert "properties" in (out[0].detail or "")
+
+
+def test_path_traversal_app_config_no_single_marker_fp():
+    """One properties marker without a second file is not enough."""
+    _args_net()
+    import core.webchecks as W
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if "application.properties" in url:
+                return Resp("spring.datasource.url=jdbc:h2:mem:x\n",
+                            200, url, {})
+            return Resp("<html>doc home</html>", 200, url, {})
+
+    assert W.test_path_traversal(S(), ["http://h.test/?file=doc"], 3) == []
+
+
 def test_cors():
     _args_net()
     import core.webchecks as W
@@ -139,6 +178,27 @@ def test_js_secrets():
     pages = {"http://h.test/":
              "<script>const k='sk-live-testkey-xxx';</script>"}
     assert W.test_js_secrets(S(), "http://h.test", pages, 3) == []  # placeholder
+
+
+def test_js_secrets_cicd_tokens():
+    """CI/CD supply-chain tokens (Actions / npm) are caught + masked."""
+    _args_net()
+    import core.webchecks as W
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("", 404, url, {})
+
+    ghs = "ghs_" + ("A" * 36)
+    pages = {"http://h.test/": f"<script>const t='{ghs}';</script>"}
+    out = W.test_js_secrets(S(), "http://h.test", pages, 3)
+    assert len(out) == 1 and "Actions" in out[0].title
+    assert ghs not in out[0].evidence and "ghs_" in out[0].evidence
+    npm = "npm_" + ("B" * 36)
+    pages = {"http://h.test/": f"<script>const t='{npm}';</script>"}
+    out = W.test_js_secrets(S(), "http://h.test", pages, 3)
+    assert len(out) == 1 and "npm" in out[0].title.lower()
+    assert npm not in out[0].evidence
 
 
 def test_js_secrets_late_page():
@@ -402,6 +462,8 @@ def test_mass_assignment():
 
 def test_jwt_none():
     _args_net()
+    import base64
+    import json as _json
     import core.webchecks as W
     none_tok = "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxMjM0NTY3ODkwIn0."
     pages = {"http://h.test/": f"<script>var t='{none_tok}';</script>"}
@@ -412,6 +474,52 @@ def test_jwt_none():
     pages = {"http://h.test/": f"<script>var t='{hs_tok}';</script>"}
     assert W.test_jwt_none(pages) == []
     assert W.test_jwt_none({}) == []
+    # kid path confusion surface (passive)
+    hdr = base64.urlsafe_b64encode(_json.dumps(
+        {"alg": "HS256", "kid": "../../keys/prod.pem"}).encode()).rstrip(b"=").decode()
+    kid_tok = f"{hdr}.eyJzdWIiOiIxIn0.sig"
+    kid_out = W.test_jwt_none(
+        {"http://h.test/": f"<script>t='{kid_tok}'</script>"})
+    assert any("JWT kid" in f.title and f.severity == "MEDIUM"
+               for f in kid_out)
+
+
+def test_jwt_acceptance_replay_requires_protected_differential():
+    _args_net()
+    import core.webchecks as W
+
+    good = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature"
+
+    class S:
+        headers = {"Authorization": f"Bearer {good}"}
+
+        def get(self, url, timeout=None, allow_redirects=False, headers=None):
+            if (headers or {}).get("Authorization", "").endswith(good):
+                return Resp("<html>dashboard for user</html>", 200, url, {})
+            if (headers or {}).get("Authorization", "").startswith("Bearer eyJ"):
+                return Resp("<html>dashboard for user</html>", 200, url, {})
+            return Resp("<html>login</html>", 401, url, {})
+
+    out = W.test_jwt_acceptance(S(), "http://h.test", {}, 3)
+    assert len(out) == 1 and out[0].severity == "CRITICAL"
+    assert out[0].confirm == "jwt-replay"
+    rendered = str(out[0].to_dict())
+    assert good not in rendered
+    assert "dashboard" not in rendered or "fingerprint" in rendered
+
+
+def test_jwt_acceptance_does_not_treat_login_as_proof():
+    _args_net()
+    import core.webchecks as W
+    good = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature"
+
+    class S:
+        headers = {"Authorization": f"Bearer {good}"}
+
+        def get(self, url, timeout=None, allow_redirects=False, headers=None):
+            return Resp("<html>login</html>", 200, url, {})
+
+    assert W.test_jwt_acceptance(S(), "http://h.test", {}, 3) == []
 
 
 def test_graphql_introspection():
@@ -927,3 +1035,353 @@ def test_cache_poisoning():
     out = W.test_cache_poisoning(Cached(), "http://h.test", 3)
     assert len(out) == 1 and out[0].severity == "LOW"
     assert W.test_cache_poisoning(Fresh(), "http://h.test", 3) == []
+
+
+def test_cache_deception_requires_auth_content_and_cache_header():
+    _args_net()
+    import core.webchecks as W
+
+    class Authenticated:
+        headers = {"Authorization": "Bearer test"}
+
+        def __init__(self, cached=True):
+            self.cached = cached
+
+        def get(self, url, timeout=None, allow_redirects=False, headers=None):
+            if url.endswith("/account/gash-cache.css") and self.cached:
+                return Resp("<html>dashboard private</html>", 200, url,
+                            {"Cache-Control": "public, max-age=60"})
+            if url.endswith("/account"):
+                return Resp("<html>dashboard private</html>", 200, url, {})
+            return Resp("not found", 404, url, {})
+
+    pages = {"http://h.test/account": "<html>dashboard private</html>"}
+    out = W.test_cache_deception(Authenticated(), "http://h.test", pages, 3)
+    assert len(out) == 1 and out[0].severity == "MEDIUM"
+    assert out[0].confirm == "auth-content+cache-header"
+    assert W.test_cache_deception(Authenticated(False), "http://h.test",
+                                  pages, 3) == []
+
+
+def test_nosqli_boolean_and_error():
+    """NoSQLi: TRUE≈baseline / FALSE≠baseline → CRITICAL; error → MEDIUM."""
+    _args_net()
+    import core.advanced as A
+
+    class Resp:
+        def __init__(self, text="", status_code=200, url=""):
+            self.text = text
+            self.status_code = status_code
+            self.url = url
+            self.headers = {}
+
+    BASE = "x" * 200
+
+    class BoolHit:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if "[$ne]" in url or "%5B%24ne%5D" in url:
+                return (200, BASE, url)  # TRUE tracks baseline
+            if "[$eq]" in url or "%5B%24eq%5D" in url:
+                return (200, "y" * 80, url)  # FALSE short
+            # _get returns tuple via scanner path — mimic session.get shape
+            return Resp(BASE, 200, url)
+
+    # Prefer tuple-returning fake via wrapping _get: use advanced morph +
+    # session that returns Resp; test through public API with monkeypatched _get.
+    from core.deep import server as Srv
+
+    calls = {"n": 0}
+
+    def fake_get(session, url, timeout, **kw):
+        calls["n"] += 1
+        if "[$ne]" in url or "%5B%24ne%5D" in url:
+            return (200, BASE, url)
+        if "[$eq]" in url or "%5B%24eq%5D" in url:
+            return (200, "z" * 40, url)
+        return (200, BASE, url)
+
+    orig = Srv._get
+    Srv._get = fake_get
+    try:
+        out = A.test_nosqli(object(), ["http://h.test/api?id=1"], 3,
+                            deep=False)
+    finally:
+        Srv._get = orig
+    assert any(f.title.startswith("Possible NoSQL Injection")
+               and f.severity == "CRITICAL" for f in out)
+
+    def err_get(session, url, timeout, **kw):
+        if "[$" in url or "%5B%24" in url:
+            return (200, "MongoError: unknown operator $ne", url)
+        return (200, BASE, url)
+
+    Srv._get = err_get
+    try:
+        out2 = A.test_nosqli(object(), ["http://h.test/api?user=a"], 3,
+                             deep=False)
+    finally:
+        Srv._get = orig
+    assert any("error signature" in f.title for f in out2)
+    assert all(f.severity != "CRITICAL" or "boolean" in f.title.lower()
+               for f in out2)
+
+    # Stable baseline (no operator effect) → empty
+    def flat_get(session, url, timeout, **kw):
+        return (200, BASE, url)
+
+    Srv._get = flat_get
+    try:
+        assert A.test_nosqli(object(), ["http://h.test/api?id=1"], 3,
+                             deep=False) == []
+    finally:
+        Srv._get = orig
+
+
+def test_nosqli_morph_helper():
+    from core.advanced import _nosqli_morph
+    u = _nosqli_morph("http://h.test/x?id=1&q=a", "[$ne]", "")
+    assert "id%5B%24ne%5D=" in u or "id[$ne]=" in u
+    assert "q%5B%24ne%5D=" in u or "q[$ne]=" in u
+    assert "id=1" not in u  # value morph, not append
+
+
+def test_cloud_storage_listing():
+    _args_net()
+    import core.webchecks as W
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if "leaky-bucket" in url and "amazonaws" in url:
+                return Resp(
+                    '<?xml version="1.0"?><ListBucketResult>'
+                    "<Name>leaky-bucket</Name><Contents><Key>a.txt</Key>"
+                    "</Contents></ListBucketResult>",
+                    200, url)
+            if "denied-bucket" in url:
+                return Resp(
+                    '<?xml version="1.0"?><Error><Code>AccessDenied</Code>'
+                    "</Error>",
+                    200, url)
+            return Resp("ok", 200, url)
+
+    pages = {
+        "http://h.test/":
+        'cdn: https://leaky-bucket.s3.amazonaws.com/assets/app.js '
+        'also https://denied-bucket.s3.amazonaws.com/x',
+    }
+    out = W.test_cloud_storage(S(), "http://h.test", pages, 3)
+    assert len(out) == 1 and out[0].severity == "CRITICAL"
+    assert "ListBucketResult" in out[0].evidence
+    # No listing marker / inventing buckets → empty
+    assert W.test_cloud_storage(S(), "http://h.test",
+                                {"http://h.test/": "<html>no buckets</html>"},
+                                3) == []
+
+
+def test_denodo_keytab_surface_info():
+    _args_net()
+    import core.webchecks as W
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("nope", 404, url)
+
+    html = ('<html>Denodo Scheduler</html>'
+            '<form><input type="file" name="keyTabFile"></form>')
+    out = W.test_vuln_components(S(), "http://h.test",
+                                 {"http://h.test/": html}, html, {}, 3)
+    assert any(f.title.startswith("Denodo Kerberos")
+               and f.severity == "INFO" for f in out)
+    # No denodo / no keytab → no INFO surface
+    out2 = W.test_vuln_components(S(), "http://h.test",
+                                  {"http://h.test/": "<html>ok</html>"},
+                                  "<html>ok</html>", {}, 3)
+    assert not any("Kerberos keytab" in f.title for f in out2)
+
+
+# ---------- Dilim 2 proof (was missing) + dilim 4 ----------
+
+def test_atlassian_fileread_content_proof():
+    _args_net()
+    import core.webchecks as W
+
+    class Hit:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if "%3a%3a" in url.lower() or "..%3a" in url.lower():
+                return Resp("<web-app><servlet></servlet></web-app>", 200, url)
+            return Resp("ok", 200, url)
+
+    class Miss:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if "%3a%3a" in url.lower():
+                return Resp("not found", 200, url)  # 200 without markers
+            return Resp("ok", 200, url)
+
+    html = "<html>Atlassian Jira</html>"
+    pages = {"http://jira.test/": html}
+    out = W.test_atlassian_fileread(
+        Hit(), "http://jira.test", pages, html, {}, 3, techs=["jira"])
+    assert any(f.severity == "CRITICAL" and "Atlassian" in f.title
+               for f in out)
+    # Status 200 alone never CRITICAL
+    assert W.test_atlassian_fileread(
+        Miss(), "http://jira.test", pages, html, {}, 3, techs=["jira"]) == []
+
+
+def test_plugin_install_authz_no_install():
+    _args_net()
+    import core.webchecks as W
+
+    class Open:
+        def post(self, url, timeout=None, json=None, headers=None, **kw):
+            assert json is not None and "plugin" not in str(json).lower()
+            return Resp('{"code":"rest_missing_callback_param","message":'
+                        '"Missing parameter(s): allPlugins"}', 400, url,
+                        {"Content-Type": "application/json"})
+
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("ok", 200, url)
+
+    class Gated:
+        def post(self, url, timeout=None, json=None, headers=None, **kw):
+            return Resp('{"code":"rest_forbidden"}', 401, url,
+                        {"Content-Type": "application/json"})
+
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            return Resp("ok", 200, url)
+
+    html = '<html><meta name="generator" content="WordPress 6.4"></html>'
+    pages = {"http://wp.test/": html}
+    out = W.test_plugin_install_authz(
+        Open(), "http://wp.test", pages, html, {}, 3)
+    assert any(f.severity == "CRITICAL" and "plugin-install" in f.title.lower()
+               for f in out)
+    assert W.test_plugin_install_authz(
+        Gated(), "http://wp.test", pages, html, {}, 3) == []
+
+
+def test_websocket_collect_and_reflection():
+    _args_net()
+    import core.webchecks as W
+    import core.checks.apps as Apps
+
+    pages = {"http://h.test/": '<script>const s="ws://h.test/live";</script>'}
+    urls = W.collect_ws_urls("http://h.test", pages, pages["http://h.test/"])
+    assert urls and urls[0].startswith("ws://h.test")
+
+    orig = Apps._ws_upgrade_probe
+    Apps._ws_upgrade_probe = lambda url, timeout, origin="": (
+        101, "gash-ws-abcdef1234", True)
+    try:
+        out = W.test_websocket_fuzz(
+            object(), "http://h.test", pages, pages["http://h.test/"], 3)
+    finally:
+        Apps._ws_upgrade_probe = orig
+    assert any(f.title == "WebSocket message reflection"
+               and f.severity == "MEDIUM" for f in out)
+    assert any(f.severity == "INFO" for f in out)
+
+
+def test_xxe_content_marker_deep_only():
+    _args_net()
+    import core.advanced as A
+    from core.deep import server as Srv
+
+    class PostHit:
+        pass
+
+    def fake_post(session, url, timeout, data=None, headers=None, **kw):
+        class R:
+            status_code = 200
+            text = "root:x:0:0:root:/root:/bin/bash\n"
+            headers = {}
+        return R()
+
+    orig = Srv._post
+    Srv._post = fake_post
+    try:
+        pages = {"http://h.test/api/xml":
+                 '<form enctype="text/xml"><input name="q"></form>'}
+        # deep_only registry gate is outside; function itself runs when called
+        out = A.test_xxe(PostHit(), "http://h.test", pages, 3,
+                         api_targets=["http://h.test/api/xml"])
+    finally:
+        Srv._post = orig
+    assert any(f.title.startswith("Possible XXE") and f.severity == "CRITICAL"
+               for f in out)
+
+
+def test_oauth_redirect_critical():
+    _args_net()
+    import core.webchecks as W
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if "evil-gash" in url and "redirect_uri" in url:
+                return Resp("", 302, url,
+                            {"Location": "https://evil-gash.test/cb"})
+            return Resp("ok", 200, url, {})
+
+    urls = [
+        "http://h.test/oauth/authorize?client_id=app&response_type=code"
+        "&redirect_uri=https://app.test/cb&state=1"
+    ]
+    out = W.test_oauth_redirect(S(), urls, 3)
+    assert any(f.severity == "CRITICAL" and "OAuth" in f.title for f in out)
+    # Non-OAuth open-redirect surface → empty for this check
+    assert W.test_oauth_redirect(
+        S(), ["http://h.test/?next=https://x.test"], 3) == []
+
+
+def test_deserialize_surface_passive():
+    _args_net()
+    import core.webchecks as W
+    pages = {
+        "http://h.test/":
+        '<input name="data" value="rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcA">'
+    }
+    out = W.test_deserialize_surface(pages, base="http://h.test")
+    assert any(f.severity == "MEDIUM" and "Java" in f.title for f in out)
+    assert W.test_deserialize_surface(
+        {"http://h.test/": "<html>plain</html>"}) == []
+
+
+def test_ci_workflow_secret_and_action():
+    _args_net()
+    import core.webchecks as W
+
+    class S:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if url.endswith("ci.yml"):
+                return Resp(
+                    "on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n"
+                    "    steps:\n      - run: echo ghp_" + ("A" * 36) + "\n",
+                    200, url)
+            if url.endswith("main.yml"):
+                return Resp(
+                    "on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n"
+                    "    steps:\n"
+                    "      - uses: tj-actions/changed-files@v44\n",
+                    200, url)
+            return Resp("nope", 404, url)
+
+    out = W.test_ci_workflow(S(), "http://h.test", 3)
+    crit = [f for f in out if f.severity == "CRITICAL"]
+    assert crit and "credential" in crit[0].title.lower()
+    # Masked evidence (never full token)
+    assert "..." in (crit[0].evidence or "")
+    assert "A" * 20 not in (crit[0].evidence or "")
+    # Risky action (no live token in this body)
+    class Act:
+        def get(self, url, timeout=None, allow_redirects=True, headers=None):
+            if "main.yml" in url or "ci.yml" in url:
+                return Resp(
+                    "on: push\njobs:\n  b:\n    runs-on: ubuntu-latest\n"
+                    "    steps:\n"
+                    "      - uses: tj-actions/changed-files@v44\n",
+                    200, url)
+            return Resp("nope", 404, url)
+
+    out2 = W.test_ci_workflow(Act(), "http://h.test", 3)
+    assert any("high-risk" in f.title.lower() or "unpinned" in f.title.lower()
+               for f in out2)

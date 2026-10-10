@@ -2,7 +2,11 @@ colorama>=0.4.6
 requests>=2.31
 dnspython>=2.4
 pytest>=8.0  # testler için (CI + lokal)
-# playwright  # opsiyonel: sadece --dom (headless DOM XSS) için:
+# playwright  # opsiyonel: --dom/--spa/--browser-discovery için:
 #   py -m pip install playwright && py -m playwright install chromium
-# cryptography  # opsiyonel: sadece --oob (interactsh OOB doğrulama) için:
-#   py -m pip install "gash[oob]"  (veya: py -m pip install cryptography)
+# tree-sitter + tree-sitter-javascript  # opsiyonel: JS AST context için
+#   py -m pip install -e ".[jsast]"
+# cryptography  # opsiyonel: --oob (interactsh OOB doğrulama) için:
+#   py -m pip install -e ".[oob]"  (veya: py -m pip install cryptography)
+# aioquic  # opsiyonel: aktif --http3/QUIC kanıtı için:
+#   py -m pip install -e ".[http3]"

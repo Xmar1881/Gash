@@ -4,7 +4,7 @@ Blind findings are worthless until something calls back. This client gives
 every probe a unique subdomain; if the target (or some admin's browser)
 fetches it, the callback upgrades the guess into proof.
 
-Needs the `cryptography` package (pip install gash[oob]). Without it the
+Needs the `cryptography` package (install the local `.[oob]` extra). Without it the
 client refuses to start and scans continue without OOB — never a crash.
 
 Protocol notes (projectdiscovery/interactsh, best-effort implementation):
@@ -45,7 +45,9 @@ def _crypto():
         from cryptography.hazmat.primitives.asymmetric import padding, rsa
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     except ImportError:
-        raise OobError("cryptography package missing: pip install gash[oob]")
+        raise OobError(
+            'cryptography package missing: use py -m pip install -e ".[oob]"'
+        )
     return hashes, serialization, padding, rsa, Cipher, algorithms, modes
 
 
@@ -284,15 +286,37 @@ def drain(client: "OobClient", verbose: bool = False) -> list:
                     ))
                     if verbose:
                         print(_warn(f"    [!] Reset poisoning confirmed: {token}"))
-                else:
+                elif kind == "xxe":
                     out.append(Finding(
+                        title="XXE (confirmed via OOB)",
+                        severity="CRITICAL",
+                        url=p.get("target", ""),
+                        detail=f"XML parser fetched our entity URL ({proto} "
+                               f"from {remote}); token '{token}' called back",
+                        evidence=token,
+                        confidence="High",
+                    ))
+                    if verbose:
+                        print(_warn(f"    [!] XXE confirmed via OOB: {token}"))
+                else:
+                    blind = Finding(
                         title="Blind XSS (confirmed via OOB)", severity="MEDIUM",
                         url=p.get("target", ""),
                         detail=f"Callback fired for token '{token}' "
                                f"({proto} from {remote})",
                         evidence=token,
                         confidence="High",
-                    ))
+                        confirm="oob", check="stored-xss",
+                    )
+                    try:
+                        from core.xss_triage import (triage_finding,
+                                                     vulnerability_finding)
+                        blind.triage = triage_finding(blind)
+                        blind.vulnerability_finding = vulnerability_finding(
+                            blind, blind.triage)
+                    except Exception:
+                        pass
+                    out.append(blind)
                     if verbose:
                         print(_warn(f"    [!] Blind XSS confirmed via OOB: {token}"))
             if not remaining:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gash"
-version = "0.5.0"
+version = "0.6.0"
 description = "Fast, modular automated web vulnerability scanner"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,8 +19,23 @@ dependencies = [
 
 [project.optional-dependencies]
 dom = ["playwright"]
+jsast = ["tree-sitter>=0.22", "tree-sitter-javascript>=0.23"]
 oob = ["cryptography"]
+http3 = ["aioquic>=1.2"]
 test = ["pytest>=8.0"]
+full = [
+  "playwright",
+  "tree-sitter>=0.22",
+  "tree-sitter-javascript>=0.23",
+  "cryptography",
+  "aioquic>=1.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/Xmar1881/Gash"
+Repository = "https://github.com/Xmar1881/Gash"
+Issues = "https://github.com/Xmar1881/Gash/issues"
+Changelog = "https://github.com/Xmar1881/Gash/blob/main/CHANGELOG.md"
 
 [project.scripts]
 gash = "gash:cli"

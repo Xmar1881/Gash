@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest a safe, evidence-driven improvement
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Prefer bounded, testable detection over exploit automation. New active
+        behavior must be opt-in and preserve safe defaults.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Include evidence requirements, safety gates, and expected output.
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope checks
+      options:
+        - label: I considered false positives and a negative-control test.
+        - label: Any active, state-changing, time-based, upload, or login behavior is explicitly opt-in.
+        - label: I will avoid sharing credentials or private target information.
+

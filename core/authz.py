@@ -386,3 +386,66 @@ def matrix_rows(endpoint: str, cells: dict) -> list[dict]:
                      "detail": "anonymous and authenticated sessions see "
                                "the same protected surface"})
     return rows
+
+
+LOGIN_PATH_HINT = re.compile(r"login|signin|sign-in|auth/login|users/sign_in",
+                             re.I)
+PASSWORD_FORM_RE = re.compile(
+    r'<input[^>]*type=["\']?password["\']?', re.I)
+
+
+def is_login_wall(final_url: str, body: str | None) -> bool:
+    """Did this fetch land on a login gate? Pure (no requests).
+
+    Redirect-to-login (path says so) or a password form in the body.
+    Used by the crawler so login pages don't pollute the authed pool
+    disguised as application content.
+    """
+    try:
+        if LOGIN_PATH_HINT.search(urlparse(final_url or "").path or ""):
+            return True
+    except Exception:
+        pass
+    try:
+        return bool(PASSWORD_FORM_RE.search(body or ""))
+    except Exception:
+        return False
+
+
+def session_looks_valid(session, base: str, timeout: int) -> bool | None:
+    """One GET with the scan session: logged in, logged out, or unknown?
+
+    True = base answers 200 without a login wall (session works, or the
+    site is public). False = we land on a login gate despite sending
+    session cookies (stale/expired session). None = inconclusive
+    (unreachable, or no session was configured at all).
+    """
+    try:
+        jar = getattr(session, "cookies", None)
+        has_session = bool(list(jar)) if jar is not None else False
+    except Exception:
+        has_session = False
+    if not has_session:
+        try:
+            headers = getattr(session, "headers", {}) or {}
+            blob = " ".join(str(v) for v in headers.values()).lower()
+            has_session = "bearer " in blob or "token" in blob
+        except Exception:
+            pass
+    if not has_session:
+        return None
+    try:
+        r = session.get(base.rstrip("/") + "/", timeout=timeout,
+                        allow_redirects=True)
+        body = getattr(r, "text", "") or ""
+        final = getattr(r, "url", "") or base
+        code = int(getattr(r, "status_code", 0) or 0)
+    except Exception:
+        return None
+    if code in (401, 403):
+        return False
+    if code == 200 and not is_login_wall(final, body):
+        return True
+    if is_login_wall(final, body):
+        return False
+    return None

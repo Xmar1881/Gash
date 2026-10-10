@@ -2,6 +2,168 @@
 
 ## Unreleased
 
+- Follow-up maintenance and release candidates for the 0.6.x line.
+
+## v0.6.0 — 2026-10-10 (hybrid worker + modern evidence pipeline)
+
+- Release consolidation: 56 stable checks, Python/Go hybrid execution,
+  deterministic XSS/DOM evidence triage, TLS chain-of-trust validation, and
+  opt-in active HTTP/3/QUIC proof are now documented and packaged together.
+
+- XSS coverage update: DOM verification now traces safe source labels through
+  `postMessage`, Web Storage, `history.state`, `window.name`, URL/referrer,
+  modern `setHTMLUnsafe`/DOMParser paths, and Trusted Types policy methods.
+  Parser/policy observations stay suspected without insertion or execution
+  proof, and Playwright now follows the global `--insecure` TLS setting.
+  CSP analysis recognizes `script-src-attr`, `strict-dynamic` trust anchors,
+  and Trusted Types allowlists without attempting a bypass.
+- Context analysis now recognizes JSON/import-map hydration scripts and CSS
+  style attributes, and exposes bounded URL+HTML decoding layers for review
+  without promoting decoded text to execution proof.
+- Optional local `.[jsast]` adds non-executing tree-sitter JavaScript AST context
+  resolution; the dependency remains optional and the conservative fallback
+  is explicit when it is unavailable.
+- Findings now carry a validated `vulnerability_finding` object matching the
+  requested target/parameter/source/sink/AST evidence contract; the previous
+  `triage` object remains for compatibility.
+
+- XSS evidence update: `core/xss_triage.py` enriches reflected, stored, DOM,
+  and confirmed Blind-XSS findings with a deterministic two-pass result
+  validated against the requested `XSSVulnerabilityTriageResult` contract.
+  Contexts map to the six public enum values; reflection or a sink alone
+  remains `False_Positive` until breakout, browser, or OOB execution evidence
+  exists. `xss_context.double_parse_mutation()` adds a bounded,
+  non-executing parser-differential signal for offline mXSS review.
+
+- SSRF cloud-metadata kanıtı sıkılaştırıldı: URL'den yansıyabilen çıplak
+  `ami-`/`meta-data` marker'ları artık CRITICAL üretmiyor; somut AMI ID veya
+  daha güçlü metadata kanıtı gerekiyor. Reflection regresyon testi eklendi.
+
+- Research slice 5 (check count **54 -> 56**): `jwt-acceptance` runs only
+  with `--deep`, uses GET-only original JWT vs claim-preserving `alg:none`
+  differential replay, and raises CRITICAL only when identical protected
+  response fingerprints prove acceptance; a dangerous `kid` is a confirmed
+  MEDIUM acceptance surface. `cache-deception` tests authenticated content on
+  path suffix/normalization variants and requires cache-header/age/CDN evidence;
+  status alone is not a finding. Menu, EN/TR README and offline tests updated.
+  `tls-audit` now performs platform trust-store chain-of-trust validation by
+  default (skipped with `--insecure`) and supports an explicit `--http3` one-
+  GET QUIC proof when the optional local `.[http3]`/aioquic backend is installed;
+  it never falls back to HTTP/2 and unavailable probes are not findings.
+- Güvenilirlik katmanı: `core/diff.py` auth-content proof ve response fingerprint
+  helper'ları JWT/cache kontrollerinde ortaklaştırıldı; registry check sözleşmesi
+  `active`/`requires_auth`/`max_requests` metadata taşıyor. `tls-audit`, mevcut
+  yanıt başlıklarından pasif `Alt-Svc: h3` INFO sinyali üretiyor; açık `--http3`
+  ile tek salt-okunur QUIC GET ve trust-store chain kanıtı eklenmiştir. Lab
+  vulnerable/fixed fixture'ları, EN/TR sayaç drift testi,
+  token redaction regresyonu ve atlanan check'leri Clean göstermeyen terminal/
+  TXT/HTML rapor uyarıları eklendi.
+
+- Araştırma dilimi 4 (check sayısı **51 → 54**): `oauth-redirect`
+  (OAuth/OIDC authorize `redirect_uri` → evil host = CRITICAL; kod/token
+  hırsızlığı sınıfı); `deserialize-surface` (Java `rO0AB`/`aced0005`,
+  PHP `O:n:`, .NET ViewState — pasif işaret, gadget yok); `ci-workflow`
+  (herkese açık workflow YAML + canlı token / unpinned `tj-actions`
+  tedarik zinciri işaretleri); `jwt-none` genişlemesi (path/URL `kid`
+  karışıklık yüzeyi); dilim 2 için ağsız test borcu kapatıldı
+  (atlassian-fileread / plugin-install-authz / websocket / xxe)
+- Araştırma dilimi 3 (check sayısı **49 → 51**): `nosqli` (Mongo-tarzı
+  `$ne`/`$eq` boolean fark + hata imzası; JSON gövde morph yalnızca
+  `--deep`); `cloud-storage` (sayfada görünen S3/GCS/Azure Blob köklerini
+  listeleme XML/JSON kanıtıyla — 403/AccessDenied bulgu değil); Denodo
+  Scheduler `CVE-2025-26147` kürate DB + banner sürüm çıkarma +
+  `keyTabFile` yüzey INFO (multipart traversal upload **asla** yok);
+  smart-tech `denodo` yolları; sayı 51
+- Araştırma dilimi 2 (check sayısı **45 → 49**): Atlassian ürün
+  parmak izi (`smart-tech` + status/serverInfo sürüm) +
+  `atlassian-fileread` (`::` / `%3a%3a` web-resource LFI,
+  `CVE-2026-21589`, yalnızca içerik kanıtı); `plugin-install-authz`
+  (Hunk Companion `themehunk-import` anonim handler — **eksik POST,
+  plugin slug yok, kurulum yok**); `xxe` (`[deep]` XML entity + OOB
+  drain); `websocket-fuzz` (keşif + Upgrade + canary echo)
+- Araştırma entegrasyonu (2024–2026 smoke dilimi):
+  Ghost SVG XSS (`CVE-2024-23724`) + Hunk Companion RCE zinciri
+  (`CVE-2024-11972`) `vuln-components` kürate DB + WP plugin
+  `readme.txt` Stable-tag probu (salt okuma; install API yok);
+  path-traversal uygulama config LFI (`.properties` /
+  `crowd.properties` içerik işaretleri + ikinci dosya onayı,
+  `/etc` erişilemezse de); `js-secrets` CI/CD tokenleri
+  (`ghs_` / `github_pat_` / `npm_`, maskeli) + wordlist'e
+  `.github/workflows` / `crowd.properties` / Hunk Companion yolu
+- Hibrit hız kaydı düzeltmesi: 0.55s→0.05s sayısı, GIL'i paylaşan
+  proses-içi lab sunucusunun Python thread'lerini cezalandırmasından
+  geliyordu (Go ayrı process'te etkilenmiyordu). İzole sunucuda iki motor
+  başabaş; `bench/latency_curve.py` artık ayrı process'te ölçüyor
+  (parite her hücrede `same`). Kalıcı değer: parite + offload mimari,
+  çarpan değil; kanıtlanmamış Nagle denemesi geri alındı
+- Hibrit RTT eğrisi: `bench/latency_curve.py` (gecikmeli lab; 40 prob,
+  threads=workers=10, her hücrede parite `same`); sonuç: kazanç
+  istek-başı overhead'den (session klon/lock), paralellikten değil —
+  eşit işçide yüksek RTT'de başabaş; tablo `bench/hybrid_board.md` ekinde;
+  sayı 45 sabit
+- Hibrit motor (crawler): tohum (sitemap/JS/config) + BFS turları tek turda,
+  scope/duvar/cap hükmü Python'da birebir (swagger early-exit bilerek
+  sıralı); lab paritesi + 429 fallback testli; sayı 45 sabit
+- Hibrit motor (kalıcı worker): `gash-worker --stream` (NDJSON döngü,
+  satır çerçeveli — bozuk satır akışı kilitleyemez) + Python
+  `WorkerSession` havuzu (tarama başına tek spawn; ölü proc düşer,
+  `GASH_GO_STREAM=0` kapatır); 5 ping ölçüsü 53ms→~0ms; sayı 45 sabit
+- Hibrit skor tablosu: `bench/hybrid_board.md` + `tests/test_hybrid_board.py`
+  (9 satır lab ground truth: recall 9/9, FP 0, parite 9/9); burst-flake
+  kapatıldı (düşen proba Python tekrarı + Go'da tek transport retry,
+  yalnızca güvenli metotlar; 8/8 tam-tarama paritesi); sayı 45 sabit
+- Hibrit motor (Go faz 6, hepsi): kalan tüm bağımsız halkalar tek turda
+  (blind/SSRF/IDOR+param/proto/login/enum/LDAP/upload/errpage/API-gövde);
+  time-based/OOB/stored/upload-RCE/matrix bilinçli canlı (sıra+zaman
+  kanıtın parçası); bütçe dürüstlüğü (`pace_many`: batch öncesi fail-closed
+  + sayaç; `--delay` kibarlığı Python yolunu zorlar); mock tuzağı kapatıldı
+  (tüm parite testleri sayaçla batch'i kanıtlar); sayı 45 sabit
+- Hibrit motor (Go faz 5): POST-SQLi + SSTI (GET+POST) fan-out; stability
+  re-check ve SSTI confirm POST'u bilerek canlı kalır (art arda aynı cevap
+  gerekir); Go↔Python parite + fallback testli; sayı 45 sabit
+- Hibrit motor (Go faz 4, lab kanıtlı): gerçek binary + gerçek HTTP ile
+  stdlib lab'e karşı parite testleri (XSS + dir-brute + POST-XSS, go on/off
+  birebir aynı bulgu); tam `run_scan` paritesi
+  (sabit wordlist ile 16/16 aynı bulgu); not: sıralı havuz cap-80 altında
+  daha iyi aday seçebilir (ölçüldü: `/upload` kuyruk dışı kaldı), verdict
+  başına hüküm asla değişmez; sayı 45 sabit
+- Hibrit motor (Go faz 3): XSS stage-1 (url×prob) + filter-map (16 prob)
+  tek turda Go'dan; kesik gövdeler `_get` ile tamamlanır (sıfır ıraksama),
+  429/toplu ölümde Python yoluna düşer (Go↔Python birebir parite testli);
+  `go/` da modüler (`protocol/tech/rank/fetch/main` + aile testleri);
+  sayı 45 sabit
+- Hibrit motor (Go faz 2): `fetch-batch` işi (tek turda N paralel GET,
+  sıra korunur, `httptest` ile durum/redirect/kesit/limit kanıtlı) + hüküm
+  ayrıştırması (`_probe_dir` getirir, `_verdict_dir` yargılar; FP kuralları
+  tek sahip, iki motorda birebir) + dir-brute Go yolu (dürüstlük kapıları:
+  429/toplu ölüm/proxy/`--insecure` Python yoluna düşer); sayı 45 sabit
+- Hibrit motor (Go faz 1, doğrulanmış): `go/` worker v2 (ping,
+  tech-fingerprint, rank-wordlist, prioritize-urls; `go vet`+`go test`
+  yeşil, canlı binary protokole karşı testli) + `core/goworker.py` bridge
+  (Go→Python fallback birebir, `go/testdata/*.json` iki tarafı kilitler)
+  + `--go-worker` bayrağı (CLI→run_scan→ctx; dir-brute/XSS/POST-XSS
+  Go'ya verir; verdict başına hüküm asla değişmez, binary yoksa aynalı
+  fallback birebir aynı); CI'ye setup-go + vet/test/build;
+  yeni check yok, sayı 45 sabit
+- Hibrit iskelet (Go v1, opt-in): `go/` worker (stdin Job JSON →
+  stdout Result JSON; `ping`, `tech-fingerprint`, ağsız) + `core/goworker.py`
+  bridge (binary yoksa degrade, `Finding` kwargs-only); yeni check yok,
+  sayı 45 sabit (faz 1'de v2'ye yükseldi, CI eklendi)
+- Modüler yapı (faz 2): `core/scanner.py` -> `core/scan/` paketi
+  (_shared/http/discovery/injection/enumeration/engine), `core/advanced.py`
+  -> `core/deep/` paketi (_shared/sqli/server/stored/surface); her iki
+  `.py` import hub (re-export, sıfır kırılma); `_forms`/`UNFUZZABLE_TYPES`
+  tek sahip `scan/discovery` (cycle kırıldı); sayı 45 sabit
+- Modüler yapı: wordlist'ler `core/wordlists.py`'da, 21 webchecks
+  `core/checks/` paketinde (headers/movement/secrets/apps);
+  `core/webchecks.py` import hub (re-export, sıfır kırılma)
+- WAF-bypass motoru: per-char filter-map (16 prob, byte-raw canlılık),
+  efficiency skoru, confirm/prompt alternates, keyword-split
+  (`prompt%0a(1)`, `/**/`), object-base64 + mXSS aileleri, filterfit
+  seçici, JSON CT-confusion retry; hepsi bütçe-cap'li; sayı 45 sabit
+- Oturumlu crawl dürüstlüğü: login-wall tespiti (crawl + coverage),
+  bozuk session'da yüksek sesli uyarı (gated alanlar anonim taranır);
+  check sayısı değişmedi (45)
 - CVE eşleme (zone-h sınıfı): `core/cve.py` kürate DB + versiyon
   çıkarımı (meta/?ver=/header/CHANGELOG/JS banner), yeni
   `vuln-components` check'i (jQuery/Drupalgeddon/WP-EOL/PHP-EOL…);

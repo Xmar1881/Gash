@@ -54,7 +54,7 @@ def _colorize_logo(logo: list[str] | None = None) -> list[str]:
     return out
 
 
-def show_banner(version: str = "0.1.0") -> None:
+def show_banner(version: str = "0.6.0") -> None:
     """Print only the banner, nothing else. Skipped with --no-banner."""
     # Force UTF-8 — avoids cp1254 breakage on Windows
     try:

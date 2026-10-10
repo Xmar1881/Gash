@@ -162,6 +162,28 @@ def pace() -> None:
         time.sleep(ctx.delay)
 
 
+def pace_many(n: int) -> None:
+    """Account one worker batch before it fires (fail closed on budget).
+
+    The Go worker fans N requests out in a single round-trip, so per-request
+    pace() never runs there. This pre-checks cancellation + max_requests
+    against the whole batch and counts it up front (overcounting a failed
+    batch is the safe direction). Politeness delays cannot space concurrent
+    requests, so callers with a configured delay must stay on the Python
+    path (see _go_fetchable) instead of calling this.
+    """
+    want = max(0, int(n or 0))
+    ctx = _current.get()
+    with ctx._lock:
+        if ctx.cancelled:
+            raise ScanBudgetExceeded("scan cancelled")
+        if ctx.max_requests and ctx.count + want > ctx.max_requests:
+            raise ScanBudgetExceeded(
+                f"request budget spent ({ctx.max_requests}) — stopping with "
+                "partial results")
+        ctx.count += want
+
+
 def parse_auth(cookie_str: str | None,
                header_list: list[str] | None) -> AuthState:
     """--cookie 'a=b; c=d' + --header 'K: V' (repeatable) -> AuthState."""

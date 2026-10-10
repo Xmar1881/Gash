@@ -8,6 +8,76 @@ from __future__ import annotations
 
 # title (prefix match) -> info. Order does not matter, startswith is used.
 KB: list[tuple[str, dict]] = [
+    ("OAuth/OIDC open redirect_uri", dict(
+        cwe="CWE-601", owasp="A01:2021 – Broken Access Control",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:L/A:N (8.2)",
+        remediation="Allowlist redirect_uri per OAuth client; reject any "
+                    "unregistered absolute URL; prefer exact-match, never "
+                    "substring or wildcard suffixes.")),
+    ("Serialized payload in client content", dict(
+        cwe="CWE-502", owasp="A08:2021 – Software and Data Integrity Failures",
+        cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H (8.1)",
+        remediation="Never deserialize untrusted Java/PHP/.NET blobs; use "
+                    "JSON + schema validation; enable look-ahead "
+                    "deserialization / allowlists if legacy formats remain.")),
+    ("CI/CD workflow embeds live credential", dict(
+        cwe="CWE-798", owasp="A07:2021 – Identification and Authentication Failures",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H (9.8)",
+        remediation="Rotate the leaked token; store secrets in the CI vault "
+                    "(${{ secrets.* }}); scrub git history; audit recent "
+                    "workflow runs for abuse.")),
+    ("CI workflow uses high-risk unpinned action", dict(
+        cwe="CWE-829", owasp="A08:2021 – Software and Data Integrity Failures",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N (9.1)",
+        remediation="Pin GitHub Actions to full commit SHAs; avoid mutable "
+                    "tags on third-party actions; review tj-actions-class "
+                    "incidents and re-issue tokens.")),
+    ("Public CI/CD workflow file exposed", dict(
+        cwe="CWE-200", owasp="A01:2021 – Broken Access Control",
+        cvss="no estimate",
+        remediation="Informational: do not deploy .github/ onto production "
+                    "web roots; keep workflows in the VCS host only.")),
+    ("JWT kid path/URL confusion surface", dict(
+        cwe="CWE-73", owasp="A01:2021 – Broken Access Control",
+        cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:N (7.4)",
+        remediation="Never fetch signing keys from a client-supplied kid "
+                    "path/URL; pin JWKS locally; reject ../ and remote kids.")),
+    ("JWT alg:none accepted", dict(
+        cwe="CWE-347", owasp="A07:2021 – Identification and Authentication Failures",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N (9.1)",
+        remediation="Allowlist the expected signing algorithm server-side; reject "
+                    "alg:none and verify the signature before accepting claims. "
+                    "Rotate tokens issued under the unsafe policy.")),
+    ("JWT dangerous kid accepted", dict(
+        cwe="CWE-347", owasp="A07:2021 – Identification and Authentication Failures",
+        cvss="CVSS:3.1/AV:N/AC:H/PR:L/UI:N/S:U/C:H/I:L/A:N (6.5)",
+        remediation="Treat kid as an identifier into a server-side allowlist; never "
+                    "resolve client-supplied paths or URLs and keep JWKS local.")),
+    ("Possible NoSQL Injection", dict(
+        cwe="CWE-943", owasp="A03:2021 – Injection",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H (9.8)",
+        remediation="Never pass user input as Mongo/NoSQL operators; use "
+                    "allowlisted field names, typed drivers, and reject keys "
+                    "starting with '$' / containing '.'; enable schema "
+                    "validation.")),
+    ("Possible NoSQL injection (error signature)", dict(
+        cwe="CWE-943", owasp="A03:2021 – Injection",
+        cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N (3.7)",
+        remediation="Driver/parser errors after $ne/$eq morph mean operators "
+                    "reached the query layer — confirm with a boolean "
+                    "differential, then strip operator keys server-side.")),
+    ("Public cloud storage listing", dict(
+        cwe="CWE-552", owasp="A01:2021 – Broken Access Control",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N (7.5)",
+        remediation="Block public ListBucket/list; use private ACL + signed "
+                    "URLs; audit IAM; rotate any secrets that lived in the "
+                    "bucket.")),
+    ("Denodo Kerberos keytab upload surface", dict(
+        cwe="CWE-22", owasp="A01:2021 – Broken Access Control",
+        cvss="no estimate",
+        remediation="Informational: patch Denodo Scheduler to "
+                    "denodo-v80-update-20240307+ (CVE-2025-26147); restrict "
+                    "admin Kerberos config to trusted operators.")),
     ("Possible SQL Injection", dict(
         cwe="CWE-89", owasp="A03:2021 – Injection",
         cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H (9.8)",
@@ -103,6 +173,13 @@ KB: list[tuple[str, dict]] = [
         remediation="Informational: confirm with two fetches (poison, then "
                     "victim request); key caches on Host, fix origin "
                     "validation.")),
+    ("Authenticated cache deception", dict(
+        cwe="CWE-525", owasp="A05:2021 – Security Misconfiguration",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:N/A:N (6.5)",
+        remediation="Do not let protected routes ignore path suffixes; normalize "
+                    "paths consistently and mark authenticated responses private/no-"
+                    "store. Key caches on the complete normalized path and session "
+                    "varying inputs.")),
     ("SSRF (confirmed via OOB)", dict(
         cwe="CWE-918", owasp="A10:2021 – SSRF",
         cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H (9.8)",
@@ -289,6 +366,50 @@ KB: list[tuple[str, dict]] = [
         cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N (7.5)",
         remediation="Map user input to an allowlist (no raw paths); canonicalize "
                     "and jail reads inside one directory.")),
+    ("Atlassian arbitrary file read", dict(
+        cwe="CWE-22", owasp="A01:2021 – Broken Access Control",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N (7.5)",
+        remediation="Patch to Atlassian fixed versions for CVE-2026-21589; "
+                    "apply vendor WAF/RewriteValve mitigations; rotate any "
+                    "credentials that may have lived under WEB-INF.")),
+    ("Unauthenticated plugin-install API", dict(
+        cwe="CWE-862", owasp="A01:2021 – Broken Access Control",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H (9.8)",
+        remediation="Update Hunk Companion to 1.9.0+; ensure REST "
+                    "permission_callback returns false/WP_Error for "
+                    "anonymous; restrict /wp-json/hc/v1/*.")),
+    ("Possible XXE", dict(
+        cwe="CWE-611", owasp="A05:2021 – Security Misconfiguration",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N (7.5)",
+        remediation="Disable external entity / DTD resolution in the XML "
+                    "parser; prefer allowlisted schemas; never expand "
+                    "SYSTEM entities from user input.")),
+    ("XXE (confirmed via OOB)", dict(
+        cwe="CWE-611", owasp="A05:2021 – Security Misconfiguration",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:N/A:N (8.6)",
+        remediation="Proven outbound entity fetch: disable external entities "
+                    "immediately; block egress from the parser host.")),
+    ("XXE parser accepted external DTD", dict(
+        cwe="CWE-611", owasp="A05:2021 – Security Misconfiguration",
+        cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N (3.7)",
+        remediation="Error signatures show DTD/entity handling is enabled; "
+                    "confirm with a file or OOB probe, then disable external "
+                    "entity resolution.")),
+    ("WebSocket message reflection", dict(
+        cwe="CWE-79", owasp="A03:2021 – Injection",
+        cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N (6.1)",
+        remediation="Validate and encode WebSocket message payloads; enforce "
+                    "Origin checks; treat reflected frames as XSS sinks.")),
+    ("WebSocket endpoints discovered", dict(
+        cwe="CWE-200", owasp="A01:2021 – Broken Access Control",
+        cvss="no estimate",
+        remediation="Informational: audit authn/authz and Origin validation "
+                    "on every WebSocket route.")),
+    ("WebSocket Upgrade accepted", dict(
+        cwe="CWE-200", owasp="A01:2021 – Broken Access Control",
+        cvss="no estimate",
+        remediation="Informational: Upgrade succeeded — review message "
+                    "schema validation and Origin allowlists.")),
     ("Permissive CORS", dict(
         cwe="CWE-942", owasp="A01:2021 – Broken Access Control",
         cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:L/A:N (5.4)",
@@ -429,6 +550,24 @@ KB: list[tuple[str, dict]] = [
         cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N (3.7)",
         remediation="Check the server clock (NTP) and the deployment window; "
                     "the certificate is from the future.")),
+    ("HTTP/3 advertised (passive)", dict(
+        cwe="CWE-16", owasp="A05:2021 – Security Misconfiguration",
+        cvss="no estimate",
+        remediation="Informational: confirm HTTP/3 is intentional, keep the "
+                    "same authorization, logging and rate-limit policy on the "
+                    "QUIC endpoint, and monitor Alt-Svc changes.")),
+    ("HTTP/3 active (QUIC confirmed)", dict(
+        cwe="CWE-16", owasp="A05:2021 – Security Misconfiguration",
+        cvss="no estimate",
+        remediation="Informational transport proof: keep authorization, "
+                    "logging, rate limits and TLS policy consistent on the "
+                    "QUIC endpoint.")),
+    ("TLS certificate chain-of-trust failed", dict(
+        cwe="CWE-295", owasp="A02:2021 – Cryptographic Failures",
+        cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:N (7.4)",
+        remediation="Serve a complete chain to a trusted CA, including any "
+                    "required intermediate certificates; do not disable TLS "
+                    "verification in production.")),
     ("Weak TLS protocol enabled", dict(
         cwe="CWE-326", owasp="A02:2021 – Cryptographic Failures",
         cvss="CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N (5.9)",

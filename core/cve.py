@@ -65,6 +65,67 @@ DB: list[dict] = [
              "every later CVE stays open on this host",
      "fixed": "supported PHP (8.x)",
      "ref": "https://www.php.net/supported-versions.php"},
+    # Research 2024–2026: Ghost SVG profile upload → stored XSS → admin
+    # takeover (contributor prerequisite). Fixed in 5.76.0 (DOMPurify).
+    {"component": "ghost",
+     "ranges": [(("0",), ("5", "75", "99"))],
+     "cve": "CVE-2024-23724",
+     "severity": "CRITICAL",
+     "note": "SVG profile upload stored XSS → admin takeover "
+             "(contributor+; script-in-SVG served unmodified)",
+     "fixed": "5.76.0",
+     "ref": "https://nvd.nist.gov/vuln/detail/CVE-2024-23724"},
+    # Research 2024–2026: unauthorized plugin install chain → RCE.
+    {"component": "hunk-companion",
+     "ranges": [(("0",), ("1", "8", "5"))],
+     "cve": "CVE-2024-11972",
+     "severity": "CRITICAL",
+     "note": "Missing auth on plugin-install API → chain RCE via "
+             "malicious plugin (≤1.8.5)",
+     "fixed": "1.9.0",
+     "ref": "https://nvd.nist.gov/vuln/detail/CVE-2024-11972"},
+    # Atlassian Data Center pre-auth file read (advisory 2026-10-05).
+    # Narrow bands: LTS lines before published fixed versions only.
+    {"component": "confluence",
+     "ranges": [(("5", "10"), ("9", "2", "25")),
+                (("10",), ("10", "2", "18"))],
+     "cve": "CVE-2026-21589",
+     "severity": "CRITICAL",
+     "note": "Unauthenticated web-resource :: path traversal → web-root "
+             "file read (crowd.properties / WEB-INF)",
+     "fixed": "9.2.26 / 10.2.19",
+     "ref": "https://jira.atlassian.com/browse/CONFSERVER-104488"},
+    {"component": "jira",
+     "ranges": [(("7", "1"), ("9", "12", "39")),
+                (("10",), ("10", "3", "25")),
+                (("11",), ("11", "3", "11"))],
+     "cve": "CVE-2026-21589",
+     "severity": "CRITICAL",
+     "note": "Unauthenticated web-resource :: path traversal → web-root "
+             "file read",
+     "fixed": "9.12.40 / 10.3.26 / 11.3.12",
+     "ref": "https://nvd.nist.gov/vuln/detail/CVE-2026-21589"},
+    {"component": "bitbucket",
+     "ranges": [(("4", "6"), ("9", "4", "25")),
+                (("10",), ("10", "2", "7")),
+                (("10", "5"), ("10", "5", "0"))],
+     "cve": "CVE-2026-21589",
+     "severity": "CRITICAL",
+     "note": "Unauthenticated web-resource :: path traversal → web-root "
+             "file read",
+     "fixed": "9.4.26 / 10.2.8 / 10.5.1",
+     "ref": "https://nvd.nist.gov/vuln/detail/CVE-2026-21589"},
+    # Denodo Scheduler Kerberos keytab upload path traversal → RCE
+    # (admin prerequisite). Build id is YYYYMMDD-style third component;
+    # fixed by denodo-v80-update-20240307. No active upload probe.
+    {"component": "denodo-scheduler",
+     "ranges": [(("8", "0"), ("8", "0", "202403069"))],
+     "cve": "CVE-2025-26147",
+     "severity": "CRITICAL",
+     "note": "Authenticated keytab upload filename path traversal → "
+             "arbitrary write / RCE on Tomcat (admin Kerberos config)",
+     "fixed": "denodo-v80-update-20240307",
+     "ref": "https://nvd.nist.gov/vuln/detail/CVE-2025-26147"},
 ]
 
 
@@ -117,7 +178,83 @@ GENERATOR_RES = [
     (re.compile(r"joomla!?\s*([\d.]+)", re.I), "joomla"),
     (re.compile(r"drupal\s+([\d.]+)", re.I), "drupal"),
     (re.compile(r"ghost\s+([\d.]+)", re.I), "ghost"),
+    (re.compile(r"confluence\s+([\d.]+)", re.I), "confluence"),
+    (re.compile(r"jira(?:\s+software)?\s+([\d.]+)", re.I), "jira"),
+    (re.compile(r"bitbucket\s+([\d.]+)", re.I), "bitbucket"),
+    (re.compile(r"denodo(?:\s+scheduler)?\s+([\d.]+)", re.I),
+     "denodo-scheduler"),
 ]
+
+# Denodo banners: "Denodo Scheduler 8.0.202309140" or "8.0" + build date
+DENODO_FULL_RE = re.compile(
+    r"denodo(?:[\s\-_]*(?:platform|scheduler))?[\s\-_]*"
+    r"(8\.0\.\d{8,9})",
+    re.I)
+DENODO_BASE_RE = re.compile(
+    r"denodo(?:[\s\-_]*(?:platform|scheduler))?[\s\-_]*"
+    r"(8\.0)\b",
+    re.I)
+DENODO_BUILD_RE = re.compile(
+    r"(?:update|build|version|v80)[^\d]{0,16}(202[0-9]{5,6})",
+    re.I)
+
+
+def extract_denodo_version(blob: str) -> tuple[str, str, str] | None:
+    """Parse denodo-scheduler version from HTML/headers. None when unsure."""
+    text = blob or ""
+    m = DENODO_FULL_RE.search(text)
+    if m and parse_version(m.group(1)):
+        return ("denodo-scheduler", m.group(1), "banner")
+    base = DENODO_BASE_RE.search(text)
+    build = DENODO_BUILD_RE.search(text)
+    if base and build:
+        ver = f"{base.group(1)}.{build.group(1)}"
+        if parse_version(ver):
+            return ("denodo-scheduler", ver, "banner")
+    return None
+
+# Atlassian status / serverInfo JSON version keys
+ATLASSIAN_VER_KEYS = ("version", "versionNumber", "versionNumbers")
+ATLASSIAN_PRODUCT_HINT = re.compile(
+    r"(confluence|jira|bitbucket|crowd|bamboo)", re.I)
+
+
+def extract_atlassian_version(blob: str,
+                              hint: str = "") -> tuple[str, str, str] | None:
+    """Parse product+version from Atlassian status/serverInfo JSON/text."""
+    text = blob or ""
+    prod = ""
+    if hint:
+        prod = hint.lower()
+    else:
+        m = ATLASSIAN_PRODUCT_HINT.search(text)
+        if m:
+            prod = m.group(1).lower()
+    if prod == "crowd" or prod == "bamboo":
+        # No curated CVE range yet — fingerprint only via content probes.
+        return None
+    ver = ""
+    m = re.search(r'"version"\s*:\s*"([\d.]+)"', text)
+    if m:
+        ver = m.group(1)
+    if not ver:
+        m = re.search(r'"versionNumber"\s*:\s*"([\d.]+)"', text)
+        if m:
+            ver = m.group(1)
+    if not ver:
+        m = re.search(
+            r"(?:confluence|jira|bitbucket)[^\d]{0,20}([\d]+(?:\.[\d]+){1,3})",
+            text, re.I)
+        if m:
+            ver = m.group(1)
+            if not prod:
+                pm = ATLASSIAN_PRODUCT_HINT.search(text)
+                prod = pm.group(1).lower() if pm else ""
+    if not prod or not ver or not parse_version(ver):
+        return None
+    if prod not in ("confluence", "jira", "bitbucket"):
+        return None
+    return (prod, ver, "serverInfo")
 
 VER_PARAM_RES = [
     (re.compile(r"jquery[.-](\d[\d.]*)\.min\.js", re.I), "jquery"),
@@ -202,6 +339,23 @@ def extract_js_versions(js_text: str) -> list[tuple[str, str, str]]:
         if len(out) >= 4:
             break
     return out
+
+
+# Curated WP plugins with high-impact install/RCE CVEs. Paths are
+# readme.txt only (read-only Stable tag); never probe install APIs.
+WP_PLUGIN_READMES: list[tuple[str, str]] = [
+    ("hunk-companion", "/wp-content/plugins/hunk-companion/readme.txt"),
+]
+STABLE_TAG_RE = re.compile(r"^\s*Stable tag:\s*v?([\d.]+)\s*$", re.I | re.M)
+
+
+def extract_wp_plugin_version(readme_text: str,
+                              plugin: str) -> tuple[str, str, str] | None:
+    """Parse Stable tag from a WP plugin readme.txt. None when unsure."""
+    m = STABLE_TAG_RE.search(readme_text or "")
+    if not m or not parse_version(m.group(1)):
+        return None
+    return (plugin, m.group(1), "readme.txt")
 
 
 def components_with_findings(found: list[tuple[str, str, str]]) -> list[dict]:

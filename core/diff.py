@@ -23,6 +23,7 @@ it per check.
 from __future__ import annotations
 
 import difflib
+import hashlib
 import html as _html
 import json as _json
 import re
@@ -83,6 +84,48 @@ def snap_response(resp, requested: str = "",
         headers = {}
     return ResponseSnap(status=status, url=url, requested=requested,
                         body=body, headers=headers, elapsed=elapsed)
+
+
+def response_body(response) -> tuple[int, str]:
+    """Extract status/body from a requests-like response without I/O."""
+    try:
+        status = int(getattr(response, "status_code", 0) or 0)
+    except Exception:
+        status = 0
+    try:
+        body = str(getattr(response, "text", "") or "")
+    except Exception:
+        body = ""
+    return status, body
+
+
+def looks_authenticated(response, *, positive: str, negative: str) -> bool:
+    """Conservative protected-content proof shared by auth-related checks.
+
+    A 2xx status is deliberately insufficient: callers provide positive
+    authenticated-page markers and login/error markers that must be absent.
+    """
+    status, body = response_body(response)
+    return 200 <= status < 300 and bool(re.search(positive, body, re.I)) \
+        and not re.search(negative, body, re.I)
+
+
+def response_fingerprint(response, max_bytes: int = 8000) -> str:
+    """Stable short fingerprint for safe differential evidence."""
+    _status, body = response_body(response)
+    normalized = WS_RE.sub(" ", body).strip()[:max_bytes]
+    return hashlib.sha256(normalized.encode("utf-8", "ignore")).hexdigest()[:12]
+
+
+def same_protected_response(first, second, *, positive: str,
+                            negative: str) -> tuple[bool, str]:
+    """Require protected content on both sides and identical body proof."""
+    if not (looks_authenticated(first, positive=positive, negative=negative)
+            and looks_authenticated(second, positive=positive, negative=negative)):
+        return False, ""
+    left = response_fingerprint(first)
+    right = response_fingerprint(second)
+    return left == right, right
 
 
 def scrub_tokens(body: str, tokens) -> str:

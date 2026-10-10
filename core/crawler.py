@@ -78,13 +78,14 @@ def _enqueue_links(body: str, base: str, seen: set, queue, depth: int,
             queue.append((u, depth))
 
 
-def _sitemap_urls(session, base: str, timeout: int) -> list[str]:
+def _sitemap_urls(session, base: str, timeout: int, fetch=None) -> list[str]:
     """sitemap.xml (+ one index level) -> same-host URLs. Max ~20."""
+    fg = fetch or (lambda u: _get(session, u, timeout))
     locs: list[str] = []
     smaps = [base + "/sitemap.xml"]
     try:
         for sm in smaps[:3]:
-            got = _get(session, sm, timeout)
+            got = fg(sm)
             if not got or not got[0] == 200:
                 continue
             import re
@@ -103,26 +104,32 @@ def _sitemap_urls(session, base: str, timeout: int) -> list[str]:
     return locs
 
 
+def _js_src_list(body: str, base: str, budget: int) -> list[str]:
+    """Same-host <script src> URLs, pure (no fetch). Shared by fetch paths."""
+    import re
+    from urllib.parse import urljoin as _uj
+    return [m for m in re.findall(r'<script[^>]*src=["\']([^"\']+)["\']', body or "", re.I)
+            if _same_host(_uj(base + "/", m), base)][:max(0, budget)]
+
+
 def _js_endpoints(session, body: str, base: str, timeout: int,
-                  budget: list) -> list[str]:
+                  budget: list, fetch=None) -> list[str]:
     """Same-host <script src=.js> files (budgeted, max 200KB each).
 
     Endpoint shapes come from the unified pipeline (fetch/axios/XHR,
     WebSocket/EventSource, API clients — not just /api/). budget[0] is
     the remaining file count, decremented per fetch.
     """
-    import re
+    fg = fetch or (lambda u: _get(session, u, timeout))
     out = []
     if not budget or budget[0] <= 0:
         return out
-    srcs = [m for m in re.findall(r'<script[^>]*src=["\']([^"\']+)["\']', body or "", re.I)
-            if _same_host(urljoin(base + "/", m), base)][:budget[0]]
     from urllib.parse import urljoin as _uj
-    for src in srcs:
+    for src in _js_src_list(body, base, budget[0]):
         if budget[0] <= 0:
             break
         budget[0] -= 1
-        got = _get(session, _uj(base + "/", src), timeout)
+        got = fg(_uj(base + "/", src))
         if not got or len(got[1] or "") > 200_000:
             continue
         for u, _kind in extract_js_endpoints(got[1] or "", base):
@@ -135,16 +142,17 @@ def _js_endpoints(session, body: str, base: str, timeout: int,
 
 
 def _json_config_routes(session, body: str, base: str, timeout: int,
-                        max_files: int = 2) -> list[str]:
+                        max_files: int = 2, fetch=None) -> list[str]:
     """Same-host *.json refs (config/manifest/asset lists) -> routes inside.
 
     Bounded: max_files fetches, 100KB each. Malformed JSON is fine —
     endpoint shapes are regex-mined from the raw text.
     """
+    fg = fetch or (lambda u: _get(session, u, timeout))
     refs = extract_html_refs(body, base).get("configs", [])[:max_files]
     out: list[str] = []
     for ref in refs:
-        got = _get(session, ref, timeout)
+        got = fg(ref)
         if not got or len(got[1] or "") > 100_000:
             continue
         for u, _kind in extract_js_endpoints(got[1] or "", base):
@@ -197,17 +205,43 @@ def crawl(session, base: str, html: str, timeout: int,
           max_pages: int = 8, depth: int = 2,
           scope_hosts: set[str] | None = None,
           js_files: int = 5, swagger_paths: int = 20,
-          stats: dict | None = None) -> dict[str, str]:
+          stats: dict | None = None,
+          auth: dict | None = None,
+          go_worker: bool = False) -> dict[str, str]:
     """{url: html}. Base always included. BFS + sitemap + JS, capped.
 
     When scope_hosts is set, the final URL's host must be listed or the
     page stays out of the pool (blocks redirecting out of scope).
-    js_files/swagger_paths scale with the coverage profile. stats (when
-    given) receives discovered/scanned/js/swagger counters.
+    js_files/swagger_paths scale with the coverage profile. stats and
+    auth (when given) receive counters and login-wall sightings.
+
+    go_worker fans seed + level fetches out in worker round-trips;
+    parsing, scope, walls and caps stay in Python (byte-identical).
+    Swagger candidates keep sequential first-valid-wins (fewer requests
+    than a full batch); 429 anywhere falls back to plain _get.
     """
     pages: dict[str, str] = {base + "/": html or ""}
     if max_pages <= 1 or not html:
         return pages
+    from core.authz import is_login_wall
+    walls: list[str] = []
+    creds = None
+    if go_worker:
+        try:
+            from core.scan.enumeration import _go_fetchable
+            creds = _go_fetchable(session)
+        except Exception:
+            creds = None
+
+    def _note_wall(url: str, final: str, body: str) -> None:
+        try:
+            if is_login_wall(final or url, body):
+                if url not in walls:
+                    walls.append(url)
+        except Exception:
+            pass
+
+    _note_wall(base + "/", base + "/", html or "")
     seen = {canonicalize_url(base + "/")}
     queue: deque[tuple[str, int]] = deque()
 
@@ -216,8 +250,62 @@ def crawl(session, base: str, html: str, timeout: int,
                 and _mark_seen(seen, u):
             queue.append((u, d))
 
+    def _batch_fetch(urls: list[str], snippet: int) -> dict | None:
+        """One worker round-trip -> {url: (status, body, final)} or None.
+
+        Truncated heads are completed via _get (link mining needs full
+        bodies); 429/error poisons the batch back to sequential _get.
+        """
+        if not urls or creds is None:
+            return None
+        try:
+            from core.goworker import fetch_batch as _go_fetch
+            headers, cookies = creds
+            fetched = _go_fetch(urls, headers=headers, cookies=cookies,
+                                timeout=timeout, workers=20,
+                                snippet_bytes=snippet)
+        except Exception:
+            return None
+        if any(fr.get("status") == 429 for fr in fetched):
+            return None
+        out: dict = {}
+        for fr in fetched:
+            if fr.get("error") or not fr.get("status"):
+                continue
+            if fr.get("truncated"):
+                got = _get(session, fr["url"], timeout)
+                if not got:
+                    continue
+                out[fr["url"]] = (got[0], got[1], got[2])
+            else:
+                out[fr["url"]] = (fr["status"], fr["snippet"],
+                                  fr.get("final_url", "") or fr["url"])
+        return out or None
+
+    batch: dict = {}
+
+    def _fetch(u: str):
+        if u in batch:
+            return batch[u]
+        return _get(session, u, timeout)
+
     _enqueue_links(html, base, seen, queue, 1, max_pages, pages)
-    for u in _sitemap_urls(session, base, timeout):
+    if creds is not None:
+        # Seed round: sitemap + JS/config files in one trip (swagger keeps
+        # its sequential first-valid-wins below: fewer requests that way).
+        try:
+            from urllib.parse import urljoin as _uj
+            seed_urls = [base + "/sitemap.xml"]
+            seed_urls += [_uj(base + "/", s)
+                          for s in _js_src_list(html, base, max(0, js_files))]
+            seed_urls += extract_html_refs(html, base).get("configs", [])[:2]
+            seed_urls = list(dict.fromkeys(seed_urls))
+            got = _batch_fetch(seed_urls, 200_000)
+            if got:
+                batch.update(got)
+        except Exception:
+            pass
+    for u in _sitemap_urls(session, base, timeout, fetch=_fetch):
         _offer(u, 1)
     sw_specs = _swagger_paths(session, base, timeout, limit=swagger_paths)
     for u in sw_specs:
@@ -225,44 +313,80 @@ def crawl(session, base: str, html: str, timeout: int,
     for u, _kind in extract_js_endpoints(html, base):  # inline, no fetch
         _offer(_clean(u, base), 1)
     js_budget = [max(0, js_files)]
-    for u in _js_endpoints(session, html, base, timeout, js_budget):
+    for u in _js_endpoints(session, html, base, timeout, js_budget, fetch=_fetch):
         _offer(u, 1)
-    for u in _json_config_routes(session, html, base, timeout):
+    for u in _json_config_routes(session, html, base, timeout, fetch=_fetch):
         _offer(u, 1)
+
+    def _ingest(url: str, d: int, got) -> None:
+        """Judge one fetched page: scope, walls, HTML sniff, fan out links.
+
+        Shared by the sequential and batched loops, so coverage can never
+        depend on who fetched.
+        """
+        if not got or not got[0]:
+            return
+        if scope_hosts:
+            try:
+                final_host = (urlparse(got[2] or url).hostname or "").lower()
+            except Exception:
+                final_host = ""
+            if final_host not in scope_hosts:
+                return  # redirect escaped scope, keep it out of the pool
+        body = got[1] or ""
+        try:
+            _note_wall(url, got[2] or url, body)
+        except Exception:
+            pass
+        head = body[:2000].lower()
+        if "<html" not in head and "<a " not in head and "<form" not in head:
+            pages[url] = ""  # not HTML: counts as visited, skips the probe pool
+            return
+        pages[url] = body
+        if d >= depth or len(pages) >= max_pages:
+            return
+        _enqueue_links(body, base, seen, queue, d + 1, max_pages, pages)
+        for u, _kind in extract_js_endpoints(body, base):  # inline
+            uu = _clean(u, base)
+            if uu and len(pages) + len(queue) < max_pages + 4 \
+                    and _mark_seen(seen, uu):
+                queue.append((uu, d + 1))
+        for u in _js_endpoints(session, body, base, timeout, js_budget, fetch=_fetch):
+            if u and len(pages) + len(queue) < max_pages + 4 \
+                    and _mark_seen(seen, u):
+                queue.append((u, d + 1))
+
     from core.spinner import Spinner
     sp = Spinner(f"  [*] Crawling {base}...").start()
     try:
-        while queue and len(pages) < max_pages:
-            url, d = queue.popleft()
-            sp.update(f"  [*] Crawling {base} ({len(pages)}/{max_pages} pages)")
-            got = _get(session, url, timeout)
-            if not got or not got[0]:
-                continue
-            if scope_hosts:
+        if creds is not None:
+            # Level-at-a-time fan-out: drain the current frontier, fetch it
+            # in one round-trip, ingest in drained order (same inclusion as
+            # strict FIFO under the page cap). Any batch failure degrades
+            # that round to plain _get; judging below is shared.
+            while queue and len(pages) < max_pages:
+                frontier: list = []
+                while queue and len(frontier) < 32 \
+                        and len(pages) + len(frontier) < max_pages + 4:
+                    frontier.append(queue.popleft())
+                if not frontier:
+                    break
                 try:
-                    final_host = (urlparse(got[2] or url).hostname or "").lower()
+                    got = _batch_fetch([u for u, _d in frontier], 65_536)
+                    if got:
+                        batch.update(got)
                 except Exception:
-                    final_host = ""
-                if final_host not in scope_hosts:
-                    continue  # redirect escaped scope, keep it out of the pool
-            body = got[1] or ""
-            head = body[:2000].lower()
-            if "<html" not in head and "<a " not in head and "<form" not in head:
-                pages[url] = ""  # not HTML: counts as visited, skips the probe pool
-                continue
-            pages[url] = body
-            if d >= depth or len(pages) >= max_pages:
-                continue
-            _enqueue_links(body, base, seen, queue, d + 1, max_pages, pages)
-            for u, _kind in extract_js_endpoints(body, base):  # inline
-                uu = _clean(u, base)
-                if uu and len(pages) + len(queue) < max_pages + 4 \
-                        and _mark_seen(seen, uu):
-                    queue.append((uu, d + 1))
-            for u in _js_endpoints(session, body, base, timeout, js_budget):
-                if u and len(pages) + len(queue) < max_pages + 4 \
-                        and _mark_seen(seen, u):
-                    queue.append((u, d + 1))
+                    pass
+                for url, d in frontier:
+                    if len(pages) >= max_pages:
+                        break
+                    sp.update(f"  [*] Crawling {base} ({len(pages)}/{max_pages} pages)")
+                    _ingest(url, d, _fetch(url))
+        else:
+            while queue and len(pages) < max_pages:
+                url, d = queue.popleft()
+                sp.update(f"  [*] Crawling {base} ({len(pages)}/{max_pages} pages)")
+                _ingest(url, d, _get(session, url, timeout))
     finally:
         sp.stop()
     if stats is not None:
@@ -272,6 +396,12 @@ def crawl(session, base: str, html: str, timeout: int,
             stats["js_files"] = max(0, js_files - js_budget[0])
             stats["swagger_paths"] = len(sw_specs)
             stats["truncated"] = bool(len(pages) >= max_pages)
+        except Exception:
+            pass
+    if auth is not None:
+        try:
+            auth["walls"] = list(walls)
+            auth["login_pages"] = len(walls)
         except Exception:
             pass
     return pages
