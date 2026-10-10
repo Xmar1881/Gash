@@ -1,6 +1,6 @@
 colorama>=0.4.6
 requests>=2.31
-dnspython>=2.4
+dnspython>=2.8.0
 pytest>=8.0  # testler için (CI + lokal)
 # playwright  # opsiyonel: --dom/--spa/--browser-discovery için:
 #   py -m pip install playwright && py -m playwright install chromium

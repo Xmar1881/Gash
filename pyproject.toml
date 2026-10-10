@@ -14,7 +14,7 @@ keywords = ["security", "pentest", "scanner", "sqli", "xss", "recon"]
 dependencies = [
   "colorama>=0.4.6",
   "requests>=2.31",
-  "dnspython>=2.4",
+  "dnspython>=2.8.0",
 ]
 
 [project.optional-dependencies]
