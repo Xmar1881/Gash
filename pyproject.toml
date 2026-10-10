@@ -19,14 +19,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dom = ["playwright"]
-jsast = ["tree-sitter>=0.22", "tree-sitter-javascript>=0.23"]
+jsast = ["tree-sitter>=0.22", "tree-sitter-javascript>=0.25.0"]
 oob = ["cryptography"]
 http3 = ["aioquic>=1.2"]
 test = ["pytest>=8.0"]
 full = [
   "playwright",
   "tree-sitter>=0.22",
-  "tree-sitter-javascript>=0.23",
+  "tree-sitter-javascript>=0.25.0",
   "cryptography",
   "aioquic>=1.2",
 ]
