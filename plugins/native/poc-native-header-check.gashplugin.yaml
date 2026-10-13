@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/native/poc-native-header-check.gashplugin.yaml
+# What: Tier 3 manifest pinning the minimal native reference binary.
+# Why: Proves explicit trust plus sha256 pinning; the binary never runs
+# without `gash plugins trust` and a matching digest.
+
+id: poc-native-header-check
+name: POC Native Header Check
+description: Minimal Tier 3 reference plugin that asks the engine to verify security headers.
+author: GASH contributors
+severity: low
+tags: [native, poc, headers]
+safe: false
+deep: true
+active: true
+requires_auth: false
+phase: deep
+order: 70
+api_version: "1.0"
+tests: tests/fixtures/poc-native-header-check/
+binary: ./poc-check/poc-check
+protocol: grpc
+oracle: header
+sha256: "3d0bdedb93fc44d9485df5f8100c619f2ccacbe17ec0298285ec3a5975cbd5cf"

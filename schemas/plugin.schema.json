@@ -1,0 +1,209 @@
+{
+  "$id": "https://gash.dev/schemas/plugin-1.0.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "safe": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "active": {
+            "const": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "oob": {
+            "const": "required"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "active": {
+            "const": true
+          }
+        }
+      }
+    }
+  ],
+  "not": {
+    "anyOf": [
+      {
+        "required": [
+          "script"
+        ]
+      },
+      {
+        "required": [
+          "code"
+        ]
+      },
+      {
+        "required": [
+          "eval"
+        ]
+      }
+    ]
+  },
+  "properties": {
+    "active": {
+      "type": "boolean"
+    },
+    "api_version": {
+      "const": "1.0",
+      "type": "string"
+    },
+    "author": {
+      "type": "string"
+    },
+    "deep": {
+      "type": "boolean"
+    },
+    "description": {
+      "maxLength": 2000,
+      "minLength": 10,
+      "type": "string"
+    },
+    "id": {
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "type": "string"
+    },
+    "max_requests": {
+      "maximum": 10000,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "name": {
+      "maxLength": 120,
+      "minLength": 3,
+      "type": "string"
+    },
+    "oob": {
+      "enum": [
+        "",
+        "optional",
+        "required"
+      ],
+      "type": "string"
+    },
+    "oracle": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "order": {
+      "maximum": 1000,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "overrides": {
+      "type": "string"
+    },
+    "phase": {
+      "enum": [
+        "recon",
+        "discovery",
+        "probe",
+        "deep"
+      ],
+      "type": "string"
+    },
+    "provides": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "request": {
+      "properties": {
+        "method": {
+          "type": "string"
+        },
+        "param_names": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "payload": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "requires": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "requires_auth": {
+      "type": "boolean"
+    },
+    "requires_tech": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "safe": {
+      "type": "boolean"
+    },
+    "severity": {
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "type": "string"
+    },
+    "tags": {
+      "items": {
+        "pattern": "^[a-z0-9-]+$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "tests": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "description",
+    "severity",
+    "tags",
+    "safe",
+    "deep",
+    "active",
+    "requires_auth",
+    "phase",
+    "order",
+    "api_version"
+  ],
+  "title": "GASH PluginSpec v1.0",
+  "type": "object"
+}

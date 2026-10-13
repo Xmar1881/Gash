@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# GASH golangci-lint configuration (Phase 2: vet + clean target).
+run:
+  timeout: 5m
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - unconvert
+    - nakedret
+    - wrapcheck
+    - contextcheck
+linters-settings:
+  wrapcheck:
+    ignoreSigs:
+      - .Errorf
+      - errors.New
+      - errors.Unwrap
+  contextcheck:
+    allowed-receiver-names:
+      - Client
+      - Engine
+      - Registry
+issues:
+  max-same-issues: 0

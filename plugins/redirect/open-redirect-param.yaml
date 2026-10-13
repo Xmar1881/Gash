@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/redirect/open-redirect-param.yaml
+# What: Tier 1 open-redirect plugin following the spec section 4.6 example.
+# Why: Reference for RedirectOracle with external-host plus control comparison;
+#   it locks the documented query-param payload contract in executable form.
+
+id: open-redirect-param
+name: Open Redirect via Query Parameter
+description: Detects unvalidated redirect targets in common redirect parameters.
+author: GASH contributors
+severity: medium
+tags: [redirect, client]
+safe: true
+deep: false
+active: false
+requires_auth: false
+phase: probe
+order: 30
+api_version: "1.0"
+tests: tests/fixtures/open-redirect-param/
+request:
+  method: GET
+  param_names: [redirect, url, next, return_to]
+  payload: "https://gash-canary.example/"
+oracle:
+  name: redirect
+  params:
+    expect_external_host: true

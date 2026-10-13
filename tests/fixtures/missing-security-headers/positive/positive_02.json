@@ -1,0 +1,1 @@
+{"body": "<html><body><h1>Hello</h1></body></html>", "control_body": "", "control_status": 0, "expected_confidence": "firm", "expected_verdict": "accept", "headers": {"Content-Security-Policy": "default-src 'self' 'unsafe-inline'", "Content-Type": "text/html"}, "name": "weak CSP with unsafe-inline", "status": 200, "target": "http://example.com/"}

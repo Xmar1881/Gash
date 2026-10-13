@@ -1,0 +1,1 @@
+{"body": "<html><body><p>neutral page</p></body></html>", "canary": "gash_a1b2c3d4", "control_body": "<html><body><p>zzz</p></body></html>", "headers": {"Content-Type": "text/html"}, "name": "absent reflection rejects", "status": 200, "target": "http://example.com/search?q=nope"}

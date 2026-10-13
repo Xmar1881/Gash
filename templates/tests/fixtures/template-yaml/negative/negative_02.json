@@ -1,0 +1,1 @@
+{"body": "<html><body>cf-chl challenge please verify</body></html>", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "WAF block page is untrusted", "status": 403, "target": "http://example.com/"}

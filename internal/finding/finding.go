@@ -1,0 +1,192 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Xmar1881 / GASH contributors
+// Modül: github.com/Xmar1881/Gash
+
+// Package finding motor-içi Finding inşası + fingerprint + dedup'tur (A-15/A-16).
+// Plugin Finding üretemez (B3); kurucu yalnızca buradadır.
+package finding
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"net/url"
+	"sort"
+	"strings"
+
+	"github.com/Xmar1881/Gash/internal/oracle"
+	"github.com/Xmar1881/Gash/internal/plugin"
+)
+
+// Finding SARIF-uyumlu, GASH-ID birincil bulgudur.
+type Finding struct {
+	ID              string                `json:"id"`
+	RuleID          string                `json:"rule_id"`
+	CWE             string                `json:"cwe,omitempty"`
+	Title           string                `json:"title"`
+	Description     string                `json:"description"`
+	Severity        plugin.Severity       `json:"severity"`
+	Confidence      plugin.Confidence     `json:"confidence"`
+	Target          string                `json:"target"`
+	InjectionPoint  plugin.InjectionPoint `json:"injection_point"`
+	Evidence        map[string]string     `json:"evidence,omitempty"`
+	Reproducibility map[string]string     `json:"reproducibility,omitempty"`
+	PluginID        string                `json:"plugin_id"`
+	OracleName      string                `json:"oracle_name"`
+	Tags            []string              `json:"tags,omitempty"`
+	Fingerprint     string                `json:"fingerprint"`
+	DuplicateOf     string                `json:"duplicate_of,omitempty"`
+}
+
+// Build Candidate + Evidence'tan Finding üretir (motor-içi).
+// Kurallar:
+//   - verdict != accept → nil (bulgu yok), kanıtsız aday en fazla tentative (B3).
+//   - R-SEV-01: tentative final severity tavanı medium.
+//   - R-06: Tests == "" ise tavan tentative.
+//   - Başlık/açıklama kural şablonundan (yazar abartısı engeli).
+func Build(spec plugin.PluginSpec, cand plugin.Candidate, ev *oracle.Evidence, ruleID, cwe, title, desc string) (*Finding, error) {
+	if ev == nil {
+		return nil, fmt.Errorf("nil evidence: %w", plugin.ErrValidation)
+	}
+	if ev.Verdict == oracle.VerdictSkipped {
+		return nil, nil
+	}
+	if ev.Verdict != oracle.VerdictAccept {
+		return nil, nil
+	}
+	conf := ev.ConfidenceContribution
+	if conf == "" {
+		conf = plugin.ConfidenceTentative // kanıtsız ≤ tentative (B3)
+	}
+	// Fixture'sız tavan (P6/R-06).
+	if spec.Tests == "" && (conf == plugin.ConfidenceFirm || conf == plugin.ConfidenceConfirmed) {
+		conf = plugin.ConfidenceTentative
+	}
+	sev := spec.Severity
+	if conf == plugin.ConfidenceTentative && severityRank(sev) > severityRank(plugin.SeverityMedium) {
+		sev = plugin.SeverityMedium // R-SEV-01
+	}
+	id, err := newFindingID()
+	if err != nil {
+		return nil, fmt.Errorf("finding id: %w", err)
+	}
+	if ruleID == "" {
+		ruleID = "GASH-000"
+	}
+	if title == "" {
+		title = spec.Name
+	}
+	if desc == "" {
+		desc = spec.Description
+	}
+	f := &Finding{
+		ID:             id,
+		RuleID:         ruleID,
+		CWE:            cwe,
+		Title:          title,
+		Description:    desc,
+		Severity:       sev,
+		Confidence:     conf,
+		Target:         cand.Target,
+		InjectionPoint: cand.InjectionPoint,
+		Evidence:       ev.Artifacts,
+		Reproducibility: map[string]string{
+			"repeats": itoa(ev.Repeats),
+			"control": ev.ControlResult,
+			"note":    ev.Note,
+		},
+		PluginID:   spec.ID,
+		OracleName: cand.OracleName,
+		Tags:       append([]string{}, spec.Tags...),
+	}
+	f.Fingerprint = Fingerprint(f)
+	return f, nil
+}
+
+func newFindingID() (string, error) {
+	var b [6]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return "finding_" + hex.EncodeToString(b[:]), nil
+}
+
+func severityRank(s plugin.Severity) int {
+	switch s {
+	case plugin.SeverityInfo:
+		return 0
+	case plugin.SeverityLow:
+		return 1
+	case plugin.SeverityMedium:
+		return 2
+	case plugin.SeverityHigh:
+		return 3
+	case plugin.SeverityCritical:
+		return 4
+	default:
+		return 2
+	}
+}
+
+func itoa(i int) string { return fmt.Sprintf("%d", i) }
+
+// Fingerprint sha256(rule + normalized_target + point + evidence_hash) (A-16).
+func Fingerprint(f *Finding) string {
+	nt := normalizeURL(f.Target)
+	pt := f.InjectionPoint.ParamName + "|" + f.InjectionPoint.Method + "|" + f.InjectionPoint.ParamLocation
+	ev := ""
+	if len(f.Evidence) > 0 {
+		keys := make([]string, 0, len(f.Evidence))
+		for k := range f.Evidence {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var sb strings.Builder
+		for _, k := range keys {
+			sb.WriteString(k + "=" + f.Evidence[k] + ";")
+		}
+		sum := sha256.Sum256([]byte(sb.String()))
+		ev = hex.EncodeToString(sum[:])[:16]
+	}
+	sum := sha256.Sum256([]byte(f.RuleID + "|" + nt + "|" + pt + "|" + ev))
+	return hex.EncodeToString(sum[:])[:32]
+}
+
+func normalizeURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	u.Fragment = ""
+	if (u.Scheme == "http" && u.Port() == "80") || (u.Scheme == "https" && u.Port() == "443") {
+		u.Host = u.Hostname()
+	}
+	u.Host = strings.ToLower(u.Host)
+	q := u.Query()
+	u.RawQuery = q.Encode() // query sırası normalize
+	s := u.String()
+	s = strings.TrimSuffix(s, "/")
+	return s
+}
+
+// Dedup aynı fingerprint'i tekler (çoklu plugin şişirmez).
+func Dedup(in []*Finding) []*Finding {
+	seen := make(map[string]*Finding)
+	var out []*Finding
+	for _, f := range in {
+		if prev, ok := seen[f.Fingerprint]; ok {
+			f.DuplicateOf = prev.ID
+			continue // bastırılan listeye girmez (correlate'te ayrı sayılır)
+		}
+		seen[f.Fingerprint] = f
+		out = append(out, f)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].RuleID != out[j].RuleID {
+			return out[i].RuleID < out[j].RuleID
+		}
+		return out[i].Fingerprint < out[j].Fingerprint
+	})
+	return out
+}

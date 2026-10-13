@@ -1,0 +1,179 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Xmar1881 / GASH contributors
+// Modul: github.com/Xmar1881/Gash
+// Bu dosya Tier 3 native plugin gRPC sozlesmesidir (tasarim). Generated kod YOK.
+// Faz 1 ciktisi; onay beklenir. Faz 2'ye gecilmez, kod yazilmaz.
+
+syntax = "proto3";
+
+package gash.v1;
+
+option go_package = "github.com/Xmar1881/Gash/proto/gash/v1;gashv1";
+
+// Tier 3 tasarim notu (architecture.md bolum 8'in ozeti):
+// - Tek protokol gRPC (hashicorp/go-plugin v1.8.0 uzerinden, net/rpc yasak).
+// - Iki servis: PluginRunner (host -> plugin) + HostCapabilities (plugin -> host, brokered).
+// - Plugin yalnizca Candidate doner; Finding mesaji YOKTUR (B3 proto seviyesinde).
+// - Tum ag/oracle erisimi HostCapabilities uzerinden; plugin'in ham soket hakki yoktur (B6).
+// - Handshake: api_version ("1.0") + plugin id + sha256 pin; uyumsuzluk fail-closed.
+// - Lifecycle: lazy spawn, long-lived multiplex, per-call timeout, scan sonu Kill.
+
+// Host -> Plugin: plugin process'inin sundugu servis.
+service PluginRunner {
+  // Metadata dogrulama (loader + handshake). ID/api_version uyusmazsa hata doner.
+  rpc GetMetadata(GetMetadataRequest) returns (GetMetadataResponse);
+  // Calistirma: plugin Candidate listesi doner. Context deadline host tarafindan
+  // gRPC deadline'a cevrilir; asimda host SIGTERM -> SIGKILL uygular.
+  rpc Run(RunRequest) returns (RunResponse);
+  // Saglik kontrolu (spawn sonrasi + periyodik).
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// Plugin -> Host: host'un brokered olarak sundugu yetenekler (go-plugin broker pattern).
+// Plugin dogrudan HTTP acamaz; SendProbe zorunludur (PolicySession enforce).
+service HostCapabilities {
+  // Politika-filtreli HTTP gonderimi (butce/scope/rate-limit/safe burada enforce edilir).
+  rpc SendProbe(SendProbeRequest) returns (SendProbeResponse);
+  // Oracle dogrulama (engine-owned oracle'a basvuru; kanit motor tarafinda uretilir).
+  rpc VerifyOracle(VerifyOracleRequest) returns (VerifyOracleResponse);
+  // Baseline ozeti (tech, soft404, untrusted isaretleri; salt-okunur).
+  rpc GetBaseline(GetBaselineRequest) returns (GetBaselineResponse);
+  // Yapisal log (stdout yasak; log buradan akar).
+  rpc Log(LogRequest) returns (LogResponse);
+}
+
+// ---- Ortak tipler ----
+
+enum Confidence {
+  CONFIDENCE_UNSPECIFIED = 0;
+  CONFIDENCE_TENTATIVE = 1;
+  CONFIDENCE_FIRM = 2;
+  CONFIDENCE_CONFIRMED = 3;
+}
+
+message InjectionPoint {
+  string url = 1;
+  string method = 2;         // GET/POST/... (safe plugin'de GET/HEAD/OPTIONS disi reddedilir)
+  string param_name = 3;
+  string param_location = 4; // query/body/header/path/cookie
+}
+
+message Candidate {
+  string plugin_id = 1;
+  InjectionPoint injection_point = 2;
+  string oracle_name = 3;    // reflection/differential/timing/error/oob/header/redirect/version/execution
+  bytes oracle_params = 4;   // JSON-encoded tipli params (elle degil SDK ile uretilir)
+  string raw_evidence_ref = 5; // response store id veya OOB correlation id (ham body tasinmaz)
+  map<string, string> taint_labels = 6;
+}
+
+// ---- PluginRunner mesajlari ----
+
+message GetMetadataRequest {
+  string host_api_version = 1; // "1.0" beklenir
+}
+
+message GetMetadataResponse {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string severity = 4;       // info/low/medium/high/critical (beyan; final motor turetilmis)
+  repeated string tags = 5;
+  bool safe = 6;
+  bool deep = 7;
+  bool active = 8;
+  bool requires_auth = 9;
+  repeated string requires_tech = 10;
+  int32 max_requests = 11;   // 0 = yok
+  string phase = 12;         // recon/discovery/probe/deep
+  int32 order = 13;
+  repeated string requires = 14;
+  repeated string provides = 15;
+  string oob = 16;           // ""/optional/required
+  string api_version = 17;   // "1.0"
+  string sha256 = 18;        // manifest pin (host dogrular)
+}
+
+message RunRequest {
+  string scan_id = 1;
+  string target = 2;
+  map<string, string> policy = 3; // safe/deep/active/auth/scope ozeti (bilgi; enforce host'ta)
+  OobContext oob_context = 4;     // oob yoksa bos
+  bytes input = 5;                // JSON-encoded faz girdisi (requires/provides tasiyici)
+  int64 timeout_ms = 6;           // --plugin-timeout yansimasi
+}
+
+message OobContext {
+  bool enabled = 1;
+  string server_url = 2;     // deger tasinmazsa enabled=false
+  string namespace = 3;      // <scan-id>.<domain>
+  int64 wait_ms = 4;         // --oob-wait yansimasi (bilgi)
+}
+
+message RunResponse {
+  repeated Candidate candidates = 1;
+  string status = 2;         // ok/error/policy_error (ayrinti error_detail'de)
+  string error_detail = 3;
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string version = 2;        // plugin binary surumu (bilgi)
+}
+
+// ---- HostCapabilities mesajlari ----
+
+message SendProbeRequest {
+  string plugin_id = 1;
+  string method = 2;
+  string url = 3;
+  map<string, string> headers = 4;
+  bytes body = 5;
+  string canary = 6;         // motor uretir; plugin uydurmaz (taint disiplini)
+}
+
+message SendProbeResponse {
+  string response_ref = 1;   // store id (ham body degil)
+  int32 status = 2;
+  map<string, string> response_headers = 3;
+  int64 rtt_ms = 4;
+  bool untrusted = 5;        // baseline isareti (true ise kanit olamaz)
+  string classify_note = 6;  // soft404/waf/normal aciklamasi
+  string error = 7;          // policy/budget/scope hatasi burada (bos ise basarili)
+}
+
+message VerifyOracleRequest {
+  string plugin_id = 1;
+  string oracle_name = 2;
+  bytes params = 3;          // JSON-encoded tipli params
+  repeated string response_refs = 4;
+  string correlation_id = 5; // OOB icin
+}
+
+message VerifyOracleResponse {
+  string verdict = 1;        // accept/reject/inconclusive/skipped
+  Confidence confidence_contribution = 2;
+  bytes artifacts = 3;       // JSON-encoded maskelenmis ozet
+  string note = 4;
+}
+
+message GetBaselineRequest {
+  string target = 1;
+}
+
+message GetBaselineResponse {
+  bool soft404_detected = 1;
+  bool waf_detected = 2;
+  repeated string technologies = 3;
+  bytes jitter_summary = 4;  // JSON-encoded (medyan/p95/stddev)
+}
+
+message LogRequest {
+  string plugin_id = 1;
+  string level = 2;          // debug/info/warn/error
+  string message = 3;
+}
+
+message LogResponse {}

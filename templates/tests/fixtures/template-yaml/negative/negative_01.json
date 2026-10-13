@@ -1,0 +1,1 @@
+{"body": "<html><body><h1>Hello</h1></body></html>", "expected_verdict": "reject", "headers": {"Content-Security-Policy": "default-src 'self'", "Content-Type": "text/html", "Strict-Transport-Security": "max-age=31536000; includeSubDomains", "X-Frame-Options": "DENY"}, "name": "all headers present", "status": 200, "target": "http://example.com/"}

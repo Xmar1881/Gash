@@ -1,0 +1,19 @@
+# GASH line-ending and diff policy.
+# Keep cross-platform checkouts consistent (Windows + Linux + macOS).
+
+* text=auto
+
+*.go text eol=lf
+*.mod text eol=lf
+*.sum text eol=lf
+*.proto text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
+*.js text eol=lf
+
+*.exe binary
+*.db binary
+dist/** binary

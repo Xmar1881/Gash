@@ -1,0 +1,1 @@
+{"body": "<html><body>webhook registered</body></html>", "control_body": "", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "no callback means no finding", "oob_callback": false, "status": 200, "target": "http://example.com/webhook"}
