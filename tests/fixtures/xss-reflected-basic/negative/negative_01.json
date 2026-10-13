@@ -1,0 +1,1 @@
+{"body": "<html><body><p>gash_a1b2c3d4</p></body></html>", "canary": "gash_a1b2c3d4", "control_body": "<html><body><p>zzz</p></body></html>", "expected_confidence": "tentative", "expected_verdict": "accept", "headers": {"Content-Type": "text/html"}, "name": "text-only reflection stays tentative", "status": 200, "target": "http://example.com/search?q=gash_a1b2c3d4"}

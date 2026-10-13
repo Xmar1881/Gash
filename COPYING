@@ -1,0 +1,12 @@
+GASH v2 — GNU Affero General Public License v3.0 only (AGPL-3.0-only).
+
+Copyright (C) 2026 Xmar1881 / GASH contributors.
+Module: github.com/Xmar1881/Gash.
+
+This file is a placeholder (Phase 2 skeleton). For the full license text see
+LICENSE in this repository and:
+https://www.gnu.org/licenses/agpl-3.0.html
+
+At Phase 2 close, COPYING gains the full AGPL-3.0 text plus NOTICE (copyright
++ third-party attributions: cobra, goja, go-plugin, bbolt, validator, yaml.v3,
+x/time, x/net) plus REUSE.toml (architecture.md A-01).

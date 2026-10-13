@@ -1,0 +1,1 @@
+{"body": "<html><body>generic SQL error happened</body></html>", "control_body": "<html><body>normal item page</body></html>", "expected_verdict": "accept", "headers": {"Content-Type": "text/html"}, "name": "generic wording is at most tentative", "status": 500, "target": "http://example.com/item?id=1'"}

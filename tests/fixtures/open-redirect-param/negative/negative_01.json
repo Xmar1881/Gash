@@ -1,0 +1,1 @@
+{"body": "<html>redirecting</html>", "control_body": "<html>home</html>", "control_status": 200, "expected_verdict": "reject", "headers": {"Location": "/dashboard"}, "name": "relative redirect is not open redirect", "payload_host": "gash-canary.example", "status": 302, "target": "http://example.com/go?url=/dashboard"}

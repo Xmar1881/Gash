@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/headers/missing-security-headers.yaml
+# What: Tier 1 passive header plugin that reports absent security headers.
+# Why: Provides a zero-code reference for HeaderOracle with no active probing;
+#   it proves passive findings stay confirmed without control requests.
+
+id: missing-security-headers
+name: Missing Security Headers
+description: Detects absent security headers (HSTS, CSP, X-Frame-Options) via passive response analysis.
+author: GASH contributors
+severity: low
+tags: [headers, misconfig]
+safe: true
+deep: false
+active: false
+requires_auth: false
+phase: probe
+order: 10
+api_version: "1.0"
+tests: tests/fixtures/missing-security-headers/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: absent

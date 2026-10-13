@@ -1,0 +1,1 @@
+{"body": "<html><body>response time slightly higher</body></html>", "control_body": "", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "timing hint alone is not OOB evidence", "oob_callback": false, "status": 200, "target": "http://example.com/webhook"}

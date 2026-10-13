@@ -1,0 +1,41 @@
+# GASH — public release exclusions + build artifacts.
+# AI prompts are never committed (local only).
+.ai-prompts/
+
+# Build output (never commit binaries).
+dist/
+
+# Local scanner state (suppress file, trust db copies, local runs).
+.gash/
+
+# Windows executables (built artifacts, covered by dist/ too).
+*.exe
+
+# Go test/build leftovers.
+*.test
+*.out
+coverage.out
+coverage.html
+*.prof
+*.trace
+
+# Go workspace / vendor (module build, no vendor dir committed).
+vendor/
+
+# Plugin cache / local trust copies if ever created inside repo.
+*.db
+trust.db
+
+# IDE and editor leftovers.
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.orig
+*.rej
+
+# OS leftovers.
+.DS_Store
+Thumbs.db
+desktop.ini

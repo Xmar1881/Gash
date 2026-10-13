@@ -1,0 +1,1 @@
+{"body": "<html>redirecting</html>", "control_body": "<html>home</html>", "control_status": 200, "expected_verdict": "reject", "headers": {"Location": "https://other.example/x"}, "name": "redirect to non-payload host is not evidence", "payload_host": "gash-canary.example", "status": 302, "target": "http://example.com/go?url=https://other.example/x"}

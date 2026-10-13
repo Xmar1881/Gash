@@ -1,0 +1,1 @@
+{"body": "<html>home</html>", "control_body": "<html>home</html>", "control_status": 200, "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "no Location header means no redirect", "payload_host": "gash-canary.example", "status": 200, "target": "http://example.com/go?url=x"}

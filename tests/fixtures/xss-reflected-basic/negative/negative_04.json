@@ -1,0 +1,1 @@
+{"body": "<html><body><p>nothing here</p></body></html>", "canary": "gash_a1b2c3d4", "control_body": "<html><body><p>zzz</p></body></html>", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "no reflection at all", "status": 200, "target": "http://example.com/search?q=gash_a1b2c3d4"}

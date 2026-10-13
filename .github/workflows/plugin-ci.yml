@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: .github/workflows/plugin-ci.yml
+# What: Pull-request gate for community plugins.
+# Why: Schema sync plus fixtures plus corpus plus B11 plus vet plus bench
+#   keep accuracy independent of plugin authorship on every PR.
+
+name: plugin-ci
+
+on:
+  pull_request:
+    paths:
+      - "plugins/**"
+      - "tests/fixtures/**"
+      - "tests/corpus/**"
+      - "schemas/**"
+      - "internal/plugin/**"
+      - "docs/metrics/**"
+      - "templates/**"
+  push:
+    branches: [main]
+
+jobs:
+  plugin-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+          cache: true
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Schema sync check
+        # rules.go is the single source of truth; the committed schema must
+        # match GenerateJSONSchema byte for byte (see docs/architecture.md A-09).
+        run: go test ./internal/plugin/ -run TestSchemaSync -v
+
+      - name: Fixture tests (precision gate 0.99)
+        run: go test ./tests/plugins/ -run TestMetricGate -v
+
+      - name: Corpus gate (firm+ equals fail)
+        run: go test ./tests/corpus/ -run TestNoFalsePositives -v
+
+      - name: Contract gates (B3, B6, B7, B9, B10)
+        run: go test ./tests/contract/ -v
+
+      - name: B11 grep (no hardcoded check counts or names)
+        run: |
+          if grep -RIn --include='*.go' -E 'NumVulnChecks|HardcodedChecks|numChecks = 7|totalChecks =' internal cmd pkg 2>/dev/null; then
+            echo "B11: hardcoded check count or name found" >&2
+            exit 1
+          fi
+          echo "B11 grep clean"
+
+      - name: Bench budget (warm discovery under 150ms)
+        run: go test ./tests/bench/ -run TestWarmDiscoveryBudget -v
+
+      - name: CLI smoke (validate plus test plus list plus info)
+        run: |
+          go run ./cmd/gash plugins list
+          go run ./cmd/gash plugins validate plugins/headers/missing-security-headers.yaml
+          go run ./cmd/gash plugins test plugins/headers/missing-security-headers.yaml
+          go run ./cmd/gash plugins info missing-security-headers
+
+      - name: Metrics linkage
+        # Every discovered plugin needs docs/metrics/<id>.md with Precision,
+        # Recall, Corpus, Lab, and Gate Verdict sections (enforced again by
+        # TestMetricGate so the docs never drift from measured numbers).
+        run: |
+          echo "Metrics reports live under docs/metrics/ (see docs/metrics/README.md)."
+          echo "TestMetricGate fails the build when a report is missing or stale."
+          ls docs/metrics/
