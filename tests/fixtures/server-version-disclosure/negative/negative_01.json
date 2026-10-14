@@ -1,0 +1,1 @@
+{"body": "<html><body>Welcome</body></html>", "control_body": "", "control_status": 0, "expected_verdict": "reject", "headers": {"Server": "nginx", "Content-Type": "text/html"}, "name": "server header without version", "status": 200, "target": "http://example.com/"}

@@ -1,0 +1,1 @@
+{"body": "<html><body>Welcome user</body></html>", "delay_samples": [6100, 6050, 6150], "control_samples": [80, 90, 75], "baseline_stddev": 12, "expected_confidence": "firm", "expected_verdict": "accept", "headers": {"Content-Type": "text/html"}, "name": "stacked waitfor delay 6s with low jitter", "status": 200, "target": "http://example.com/?id=1"}

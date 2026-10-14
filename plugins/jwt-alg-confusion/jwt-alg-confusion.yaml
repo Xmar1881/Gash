@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/jwt-alg-confusion/jwt-alg-confusion.yaml
+# What: Tier 1 passive JWT algorithm confusion detector using header oracle.
+# Why: JWT alg confusion (none/HS256/RS256 switching) detectable via header analysis.
+
+id: jwt-alg-confusion
+name: JWT Algorithm Confusion
+description: Detects JWT algorithm confusion vulnerabilities via header inspection.
+author: GASH contributors
+severity: high
+tags: [jwt, algorithm-confusion, authentication, crypto, token-forgery]
+safe: true
+deep: false
+active: false
+requires_auth: false
+phase: probe
+order: 55
+api_version: "1.0"
+tests: tests/fixtures/jwt-alg-confusion/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: "jwt_alg"

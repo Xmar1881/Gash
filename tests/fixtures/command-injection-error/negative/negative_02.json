@@ -1,0 +1,1 @@
+{"body": "<html><body>sh: 1: cat: not found</body></html>", "control_body": "<html><body>sh: 1: cat: not found</body></html>", "control_status": 200, "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "same error in control - not discriminatory", "status": 200, "target": "http://example.com/?cmd=ls"}

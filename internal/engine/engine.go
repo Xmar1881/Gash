@@ -9,8 +9,11 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
+	"github.com/Xmar1881/Gash/internal/auth"
+	"github.com/Xmar1881/Gash/internal/config"
 	"github.com/Xmar1881/Gash/internal/finding"
 	"github.com/Xmar1881/Gash/internal/plugin"
 	"github.com/Xmar1881/Gash/internal/plugin/loader"
@@ -18,10 +21,20 @@ import (
 
 // Config tarama bayraklarının motor karşılığıdır (§14.1).
 type Config struct {
-	Safe                 bool
-	Deep                 bool
-	Active               bool
-	HasAuth              bool
+	Safe    bool
+	Deep    bool
+	Active  bool
+	HasAuth bool
+	// Auth kimlik doğrulama bağlamıdır (P2.5). Nil-güvenlidir; HasAuth buradan türetilir.
+	Auth *auth.Context
+	// AuthA/AuthB çift-kullanıcı BOLA matrisi bağlamlarıdır (--auth-user-a/b).
+	// Nil-güvenlidir; yalnızca ikisi de doluyken ve --active varken matris koşar.
+	AuthA *auth.Context
+	AuthB *auth.Context
+	// Technologies bilinen/tespit edilen teknolojiler (P2.3 chain kapısı, örn. "wordpress").
+	Technologies []string
+	// TCPBanners açık TCP banner probları "host:port" (P2.1, --active şart).
+	TCPBanners           []string
 	Scope                []string
 	MaxRequestsPerTarget int64
 	MaxRequestsTotal     int64
@@ -34,6 +47,13 @@ type Config struct {
 	ShowTentative        bool
 	IgnorePlugins        map[string]bool
 	Target               string
+
+	// P1.2: Scan profile (Safe/Standard/Deep)
+	Profile config.ProfileName
+	// P1.2: Custom profile override (from config file)
+	CustomProfile *config.Profile
+	// P1.2: Effective detectors enabled by profile (populated at runtime)
+	enabledDetectors map[string]bool
 }
 
 // DefaultConfig bayrak default'larıdır.
@@ -66,6 +86,12 @@ type Engine struct {
 	cfg           Config
 	trustDB       map[string]string
 	trustPlatform map[string]string
+	// detectedTech çalışma-anı pasif parmak izidir (header/favicon/cookie/known-path).
+	// Run öncesi tek GET ile dolar; knownTechSet ile birleşir.
+	detectedTech map[string]bool
+	// detectedCaps çalışma-anı yetenek kümesidir (login-form, graphql-endpoint, ...).
+	// ResolveChain Capabilities girdisini besler.
+	detectedCaps map[string]bool
 }
 
 // New motor kurar.
@@ -73,16 +99,94 @@ func New(reg *plugin.Registry, cfg Config) *Engine {
 	if cfg.IgnorePlugins == nil {
 		cfg.IgnorePlugins = make(map[string]bool)
 	}
-	return &Engine{
+	// P2.5: kimlik bağlamı requires_auth kapısını açar (açık bayrak da korunur).
+	if cfg.Auth != nil && cfg.Auth.HasAuth() {
+		cfg.HasAuth = true
+	}
+	// Initialize profile-based detector enablement
+	e := &Engine{
 		registry:      reg,
 		cfg:           cfg,
 		trustDB:       make(map[string]string),
 		trustPlatform: make(map[string]string),
 	}
+	e.cfg.enabledDetectors = e.resolveEnabledDetectors()
+	return e
 }
 
-// Schedule politika filtresi + toposort uygular (B9/B10 burada skip'e dönüşür).
+// detectorEnabled profil dedektör kapısıdır (proto recon + raporlama kullanır).
+func (e *Engine) detectorEnabled(name string) bool {
+	return e.cfg.enabledDetectors[strings.ToLower(name)]
+}
+
+// HasDualAuth iki farklı kullanıcı bağlamı tanımlı mı (BOLA matris kapısı).
+func (e *Engine) HasDualAuth() bool {
+	return e.cfg.AuthA != nil && e.cfg.AuthA.HasAuth() &&
+		e.cfg.AuthB != nil && e.cfg.AuthB.HasAuth()
+}
+
+// knownTechSet chain teknoloji kapısının kümesidir (P2.3).
+// What: Kullanıcı --tech bayrağı + çalışma-anı pasif parmak izi birleşimi.
+// Why: Bildirilmemiş teknoloji (örn. yanıtta wp-json) ilgili dedektörü
+// otomatik açar; yanlış teknoloji hiçbir şeyi sessizce kapatmaz (skip izi).
+func (e *Engine) knownTechSet() map[string]bool {
+	merged := plugin.NormalizeTech(e.cfg.Technologies)
+	for k := range e.detectedTech {
+		merged[strings.ToLower(strings.TrimSpace(k))] = true
+	}
+	return merged
+}
+
+// capabilitySet chain sağlayıcı kümesinin çalışma-anı girdisidir.
+// What: Pasif yetenekler (login-form, graphql-endpoint, ...) + boş-güvenli.
+// Why: requires/provides zinciri statik değil; sayfada form/graphQL
+// görülmesi ilgili tüketiciyi koşulabilir kılar.
+func (e *Engine) capabilitySet() map[string]bool {
+	out := make(map[string]bool, len(e.detectedCaps))
+	for k, v := range e.detectedCaps {
+		if v {
+			out[strings.ToLower(strings.TrimSpace(k))] = true
+		}
+	}
+	return out
+}
+
+// resolveEnabledDetectors computes the effective detector set from profile.
+func (e *Engine) resolveEnabledDetectors() map[string]bool {
+	detectors := make(map[string]bool)
+	var profile *config.Profile
+
+	if e.cfg.CustomProfile != nil {
+		profile = e.cfg.CustomProfile
+	} else if e.cfg.Profile != "" {
+		profile = config.GetProfile(e.cfg.Profile)
+	} else {
+		// Default to Standard profile
+		profile = config.GetProfile(config.ProfileStandard)
+	}
+
+	if profile != nil {
+		for _, d := range profile.ActiveDetectors {
+			detectors[d] = true
+		}
+	}
+	return detectors
+}
+
+// EffectiveProfile returns the resolved profile for reporting.
+func (e *Engine) EffectiveProfile() *config.Profile {
+	if e.cfg.CustomProfile != nil {
+		return e.cfg.CustomProfile
+	}
+	if e.cfg.Profile != "" {
+		return config.GetProfile(e.cfg.Profile)
+	}
+	return config.GetProfile(config.ProfileStandard)
+}
+
+// Schedule politika filtresi + zincir + toposort uygular (B9/B10 burada skip'e dönüşür).
 // Sessiz drop YOK — elenen her plugin skipped sebebiyle döner.
+// Sıra: ignore → politika → chain (teknoloji + sağlayıcı) → faz sıralaması.
 func (e *Engine) Schedule(_ context.Context) (ordered []plugin.PluginSpec, skipped []plugin.SkippedPlugin, err error) {
 	specs := e.registry.Specs()
 	// Ignore-listesi.
@@ -103,7 +207,17 @@ func (e *Engine) Schedule(_ context.Context) (ordered []plugin.PluginSpec, skipp
 		}
 		runnable = append(runnable, s)
 	}
-	ordered, err = plugin.SortByPhase(runnable)
+	// P2.3: koşullu zincir (teknoloji kapısı + sağlayıcısız requires → skip, fail-open).
+	chainRes, err := plugin.ResolveChain(plugin.ChainInput{
+		Specs:        runnable,
+		KnownTech:    e.knownTechSet(),
+		Capabilities: e.capabilitySet(),
+	})
+	if err != nil {
+		return nil, skipped, fmt.Errorf("engine schedule: %w", err)
+	}
+	skipped = append(skipped, chainRes.Skipped...)
+	ordered, err = plugin.SortByPhase(chainRes.Runnable)
 	if err != nil {
 		return nil, skipped, fmt.Errorf("engine schedule: %w", err)
 	}
@@ -111,7 +225,7 @@ func (e *Engine) Schedule(_ context.Context) (ordered []plugin.PluginSpec, skipp
 }
 
 // filterReason returns the scheduler skip reason for one plugin spec.
-// What: Single gate for active/deep/auth/OOB/trust requirements.
+// What: Single gate for active/deep/auth/OOB/trust/profile requirements.
 // Why: One consistent English "skipped (...)" format keeps reports auditable.
 func (e *Engine) filterReason(s plugin.PluginSpec) (string, bool) {
 	// Active plugins need explicit opt-in via --active.
@@ -141,7 +255,68 @@ func (e *Engine) filterReason(s plugin.PluginSpec) (string, bool) {
 			return "skipped (requires trust for --strict-plugins)", false
 		}
 	}
+	// P1.2: Profile-based detector enablement check (after explicit flags)
+	// Exception: if plugin explicitly requires OOB and OOB server is configured, allow it.
+	if oracle := e.oracleForPlugin(s); oracle != "" {
+		if oracle == "oob" && s.OOB == plugin.OOBRequired && e.cfg.OOBServer != "" {
+			// Explicit OOB configuration overrides profile
+		} else if !e.cfg.enabledDetectors[oracle] {
+			return fmt.Sprintf("skipped (detector %s disabled by profile %s)", oracle, e.EffectiveProfile().Name), false
+		}
+	}
 	return "", true
+}
+
+// oracleForPlugin returns the oracle name a plugin uses.
+// What: Maps plugin spec to oracle for profile-based filtering.
+// Why: Profile enables/disables detectors (oracles), not plugins directly.
+func (e *Engine) oracleForPlugin(s plugin.PluginSpec) string {
+	// For Tier1 YAML plugins, the oracle is defined in the plugin file.
+	// We can't easily read it here without loading the file.
+	// Instead, we infer from plugin ID patterns and tags.
+	// This is a heuristic; Tier2/3 plugins declare oracle in code.
+
+	// Check if plugin has explicit oracle tag
+	for _, tag := range s.Tags {
+		switch tag {
+		case "header", "redirect", "reflection", "error", "differential", "timing", "execution", "oob", "cookie", "cors", "version", "tls", "dns", "tcp":
+			return tag
+		}
+	}
+
+	// Fallback: infer from plugin ID
+	id := strings.ToLower(s.ID)
+	switch {
+	case strings.Contains(id, "tls") || strings.Contains(id, "cert"):
+		return "tls"
+	case strings.Contains(id, "dns") || strings.Contains(id, "spf") || strings.Contains(id, "dmarc"):
+		return "dns"
+	case strings.Contains(id, "banner") || strings.HasPrefix(id, "tcp"):
+		return "tcp"
+	case strings.Contains(id, "redirect"):
+		return "redirect"
+	case strings.Contains(id, "time"):
+		return "timing"
+	case strings.Contains(id, "oob"):
+		return "oob"
+	case strings.Contains(id, "differential") || strings.Contains(id, "bool"):
+		return "differential"
+	case strings.Contains(id, "xss") || strings.Contains(id, "reflection") || strings.Contains(id, "ssti") || strings.Contains(id, "template"):
+		return "reflection"
+	case strings.Contains(id, "sqli") || strings.Contains(id, "sql") || strings.Contains(id, "command"):
+		return "error"
+	case strings.Contains(id, "dom"):
+		return "execution"
+	case strings.Contains(id, "ssrf"):
+		return "oob"
+	case strings.Contains(id, "cookie"):
+		return "cookie"
+	case strings.Contains(id, "cors"):
+		return "cors"
+	case strings.Contains(id, "version"):
+		return "version"
+	}
+	return ""
 }
 
 // SetTrust digest-only trust kapısıdır (platform kısıtı yok).
@@ -176,6 +351,9 @@ func (e *Engine) Run(ctx context.Context, target string) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Çalışma-anı teknoloji tespiti: tek pasif GET ile zincir girdisi.
+	// Hata = boş küme (kullanıcı --tech tek başına yeterli); ek trafik yok.
+	e.detectRuntimeTech(ctx, normalized)
 	ordered, skipped, err := e.Schedule(ctx)
 	if err != nil {
 		return nil, err

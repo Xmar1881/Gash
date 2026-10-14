@@ -64,3 +64,10 @@ hashicorp broker plus generated `plugin.proto` stubs. Trust, digest,
 handshake, loopback-only binding, per-call timeout, and kill semantics are
 preserved; broker adoption stays future work. The manifest pin belongs to the
 reference build and must be re-pinned per platform via `gash plugins trust`.
+
+## Dataset
+
+- Dataset hash: `405ce940f34a9b605c7bcca333b8b2dc462f451fd58f08c44bf5ac426f0b14cd`
+  (sha256 over all 2 fixture files under `tests/fixtures/poc-native-header-check/`).
+- Samples: TP=1, FP=0, TN=1, FN=0. Fixture-only measurement; lab pending above.
+  `TestMetricGate` fails the build if this hash drifts from the fixtures.

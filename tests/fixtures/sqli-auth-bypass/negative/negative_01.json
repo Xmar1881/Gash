@@ -1,0 +1,1 @@
+{"body": "Invalid username or password, please try again.", "control_body": "Welcome, please log in with your credentials.", "control_status": 200, "expected_confidence": "tentative", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "hardened login without db signature", "status": 200, "target": "http://example.com/login?username=gash"}

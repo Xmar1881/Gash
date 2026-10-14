@@ -1,0 +1,1 @@
+{"body": "XML processed", "control_body": "", "control_status": 0, "expected_confidence": "tentative", "expected_verdict": "reject", "headers": {"Content-Type": "application/xml"}, "name": "no oob callback - xxe not blind exploitable", "status": 200, "target": "https://example.com/api/xml", "oob_callback": false}

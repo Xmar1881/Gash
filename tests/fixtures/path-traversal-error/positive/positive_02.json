@@ -1,0 +1,1 @@
+{"body": "Error: open /etc/passwd: permission denied", "control_body": "Normal page content", "control_status": 200, "expected_confidence": "confirmed", "expected_verdict": "accept", "headers": {"Content-Type": "text/html"}, "name": "Path traversal - permission denied error", "status": 200, "target": "http://example.com/?path=../../../etc/passwd"}

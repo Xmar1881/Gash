@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/ssrf/ssrf-cloud-metadata.yaml
+# What: Tier 1 cloud-metadata SSRF screen via link-local metadata URL.
+# Why: Fetching 169.254.169.254 inside a response (ami-id and sibling tokens)
+#   proves the target server performed the request; reflection absent in the
+#   neutral control keeps encoded/double-fetch noise out.
+
+id: ssrf-cloud-metadata
+name: SSRF Cloud Metadata (169.254.169.254)
+description: Detects server-side request forgery reaching the cloud instance metadata endpoint via metadata token reflection.
+author: GASH contributors
+severity: high
+tags: [ssrf, cloud, metadata, reflection]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 100
+phase: probe
+order: 62
+api_version: "1.0"
+tests: tests/fixtures/ssrf-cloud-metadata/
+request:
+  method: GET
+  param_names: [url, redirect, next, dest, target, image, file, path, callback]
+  payload: "http://169.254.169.254/latest/meta-data/"
+oracle:
+  name: reflection
+  params:
+    canary: "ami-id"

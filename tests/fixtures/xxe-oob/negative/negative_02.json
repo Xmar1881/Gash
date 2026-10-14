@@ -1,0 +1,1 @@
+{"body": "Invalid XML", "control_body": "", "control_status": 0, "expected_confidence": "tentative", "expected_verdict": "reject", "headers": {"Content-Type": "application/xml"}, "name": "xml parsing error - no oob", "status": 400, "target": "https://example.com/api/xml", "oob_callback": false}

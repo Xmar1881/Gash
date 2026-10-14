@@ -29,9 +29,90 @@ func TestReflectionConfirmed(t *testing.T) {
 
 func TestReflectionEncodedTentative(t *testing.T) {
 	var o ReflectionOracle
-	ev, _ := o.Verify(context.Background(), `<p>&lt;script&gt;gash_abc123</p>`, nil, cls(), false, ReflectionParams{Canary: "gash_abc123"})
-	_ = ev
-	// Encode heuristiği implementation'a bağlı; en azından reject olmamalı veya tentative olmalı.
+	body := `<p>&lt;script&gt;gash_abc123</p>`
+	if got := ContextOf(body, "gash_abc123"); got != "encoded" {
+		t.Fatalf("encoded bağlam bekleniyordu, got %q", got)
+	}
+	ev, err := o.Verify(context.Background(), body, nil, cls(), false, ReflectionParams{
+		Canary: "gash_abc123", RequireExecutableContext: true, ControlBody: `<p>zzz</p>`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Verdict != VerdictAccept || ev.ConfidenceContribution != "tentative" {
+		t.Fatalf("encoded en fazla tentative olmalı: %+v", ev)
+	}
+}
+
+func TestReflectionCommentReject(t *testing.T) {
+	var o ReflectionOracle
+	// Yorum içindeki `<script>` yazımı yürütülemez; eski pencere sezgisi
+	// bunu `script` sayardı (FP). Tokenizer-öncelikli sınıflandırma `comment`
+	// üretmeli ve Verify reddetmelidir.
+	for _, body := range []string{
+		`<!-- q=gash_abc123 -->`,
+		`<!-- <script>gash_abc123</script> -->`,
+	} {
+		if got := ContextOf(body, "gash_abc123"); got != "comment" {
+			t.Fatalf("comment bağlam bekleniyordu (%s), got %q", body, got)
+		}
+		ev, err := o.Verify(context.Background(), body, nil, cls(), false, ReflectionParams{
+			Canary: "gash_abc123", RequireExecutableContext: true, ControlBody: `<p>zzz</p>`,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ev.Verdict != VerdictReject {
+			t.Fatalf("yorum içi yansıma reject olmalı (%s): %+v", body, ev)
+		}
+	}
+}
+
+func TestReflectionStyleTentative(t *testing.T) {
+	var o ReflectionOracle
+	body := `<style>.a{width:gash_abc123}</style>`
+	if got := ContextOf(body, "gash_abc123"); got != "style" {
+		t.Fatalf("style bağlam bekleniyordu, got %q", got)
+	}
+	ev, err := o.Verify(context.Background(), body, nil, cls(), false, ReflectionParams{
+		Canary: "gash_abc123", RequireExecutableContext: true, ControlBody: `<p>zzz</p>`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Verdict != VerdictAccept || ev.ConfidenceContribution != "tentative" {
+		t.Fatalf("style en fazla tentative olmalı: %+v", ev)
+	}
+}
+
+func TestReflectionURLPrecision(t *testing.T) {
+	// Metin yansıması, 200 karakter yakınında ilgisiz bir `href=` var diye
+	// `url` sayılmamalı (eski pencere sezgisinin FP'si). Bağlam tokenizer
+	// ile çözülür; gerçek href-içi yansıma hâlâ `url` üretir.
+	textBody := `<a href="/home">home</a><div><p>gash_abc123</p></div>`
+	if got := ContextOf(textBody, "gash_abc123"); got != "html-text" {
+		t.Fatalf("html-text bekleniyordu, got %q", got)
+	}
+	urlBody := `<a href="http://example.com/?x=gash_abc123">tikla</a>`
+	if got := ContextOf(urlBody, "gash_abc123"); got != "url" {
+		t.Fatalf("url bekleniyordu, got %q", got)
+	}
+}
+
+func TestReflectionControlIndistinguishable(t *testing.T) {
+	var o ReflectionOracle
+	// Kontrol yanıtı da aynı executable bağlamda canary taşıyorsa aday ayırt
+	// edici değildir → reject (kontrolsüz confirmed YOK kuralı).
+	ev, err := o.Verify(context.Background(), `<script>gash_abc123</script>`, nil, cls(), false, ReflectionParams{
+		Canary: "gash_abc123", RequireExecutableContext: true,
+		ControlBody: `<script>gash_abc123</script>`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Verdict != VerdictReject {
+		t.Fatalf("ayırt edici olmayan kontrol reject olmalı: %+v", ev)
+	}
 }
 
 func TestReflectionUntrustedReject(t *testing.T) {

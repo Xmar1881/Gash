@@ -1,8 +1,8 @@
-# GASH v2 — Faz 0 Kapsam Kararları (`00-scope.md`)
+# Gash — Faz 0 Kapsam Kararları (`00-scope.md`)
 
 - **Durum:** Faz 0 çıktısı — kod YOK, motor kodu yazılmadı.
 - **Tarih:** 12 Ekim 2026 (UTC)
-- **Kaynak spec:** `benioku.txt` (GASH v2, sıfırdan bağımsız Go projesi; migrasyon yok, önceki kod yok, referans yok)
+- **Kaynak spec:** `benioku.txt` (Gash, sıfırdan bağımsız Go projesi; migrasyon yok, önceki kod yok, referans yok)
 - **Faz kapısı:** Bu dosya sunulur, **DURULUR, onay beklenir.** Faz 1'e geçilmez, kod yazılmaz.
 
 ---

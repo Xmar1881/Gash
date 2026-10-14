@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/xss/xss-attribute-injection.yaml
+# What: Tier 1 attribute-breakout XSS detector (event-handler context).
+# Why: A payload closing the value attribute and opening an executable event
+#   handler (onfocus/onmouseover) reflected in the same executable context,
+#   absent in the neutral control, is contextual XSS proof; encoded or
+#   text-only reflection never confirms.
+
+id: xss-attribute-injection
+name: XSS Attribute Injection (Event Handler Breakout)
+description: Detects reflected XSS via attribute breakout into executable event-handler context with control comparison.
+author: GASH contributors
+severity: high
+tags: [xss, injection, reflection]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 100
+phase: probe
+order: 42
+api_version: "1.0"
+tests: tests/fixtures/xss-attribute-injection/
+request:
+  method: GET
+  param_names: [q, query, search, name, input, value, title]
+  payload: '" onfocus="alert(1)'
+oracle:
+  name: reflection
+  params:
+    canary: "alert(1)"

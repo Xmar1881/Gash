@@ -15,6 +15,9 @@ import (
 )
 
 // Classification probe.Send dönüşüne otomatik işlenir; Untrusted hiçbir oracle'da kanıt olamaz.
+// WAFDetected taramayı DURDURMAZ: probe agresif modda sınırlı bypass varyantı
+// deneyebilir (internal/wafbypass), sonuç Report.Stats'a işlenir. Blok sayfanın
+// kendisi kanıt olamaz; yalnızca bypass sonrası temiz yanıt doğrulanır.
 type Classification struct {
 	Untrusted    bool
 	Soft404      bool

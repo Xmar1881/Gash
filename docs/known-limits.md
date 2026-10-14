@@ -1,0 +1,52 @@
+<!--
+SPDX-License-Identifier: AGPL-3.0-only
+Copyright (C) 2026 Xmar1881 / Gash contributors
+Module: github.com/Xmar1881/Gash
+
+File: docs/known-limits.md
+What: Honest BLOCKED and gap register (transport, DNS, browser, benchmark).
+Why: Unimplemented paths stay documented with reasons instead of silent gaps.
+-->
+
+# Known Limits (BLOCKED and Gaps)
+
+This file records what Gash deliberately does not do, with the technical
+reason for each. Nothing here is implied as covered elsewhere.
+
+## Chunked Transfer-Encoding bypass: BLOCKED (transport)
+
+WAF bypass mutations cover header bypass, HPP duplication, double URL
+encoding, SQL comment injection, and mixed-case (`internal/wafbypass`).
+Chunked Transfer-Encoding Kali-style body splitting is absent: Go `net/http`
+owns framing and exposes no manual chunk-size control, so a raw-TCP transport
+would be needed. WAF evasion therefore never relies on chunking, and no
+chunked claim appears in reports. See `internal/wafbypass/wafbypass.go`.
+
+## CAA DNS checks: absent (stdlib gap)
+
+Protocol checks cover TLS observation (GASH-024), SPF/DMARC reads (GASH-025),
+and explicit TCP banners (GASH-026). CAA is absent: the standard library
+offers no generic DNS query type, and no extra dependency is pulled in for
+v1. SPF/DMARC plus resolution is the honest scope. See
+`internal/proto/proto.go` and `docs/proto-checks.md`.
+
+## Headless DOM confirmation: BLOCKED (no browser dep)
+
+Static DOM sink/source analysis (`host.oracles.execution`, plugin
+`dom-sink-basic`, oracle `execution`) caps at `firm`. The `confirmed` path
+(`Triggered` plus `ControlClean` via a headless browser) needs a browser
+dependency that is not vendored and has no pin in this build. No
+browser-executed DOM claim is made. See `docs/metrics/dom-sink-basic.md`.
+
+## Compose-lab recall: BLOCKED where docker is absent
+
+DVWA/Juice Shop/WebGoat recall (`docker-compose.lab.yml`) runs only where a
+docker runtime exists. Without docker the status is BLOCKED with a filed
+procedure, never a number. See
+`docs/metrics/lab-compose-dvwa-juiceshop-2026-10-14.md`.
+
+## Nuclei benchmark: not compared (no harness)
+
+No same-target, same-budget, same-scope Gash-versus-Nuclei benchmark has run.
+The README compares capabilities honestly without parity claims. See
+`docs/metrics/nuclei-comparison-2026-10-14.md`.

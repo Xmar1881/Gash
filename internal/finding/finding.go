@@ -20,6 +20,18 @@ import (
 )
 
 // Finding SARIF-uyumlu, GASH-ID birincil bulgudur.
+//
+// Güven eşlemesi (düzenleme P0.2 — ayrı bir enum YOK, mevcut şema korunur):
+//
+//	düzenleme terimi              GASH karşılığı (tek doğruluk kaynağı)
+//	candidate                     tentative altı belirti / accept-tentative
+//	suspected                     firm (güçlü ama tek-kanallı kanıt)
+//	confirmed                     confirmed (yeniden üretilebilir + kontrollü)
+//	inconclusive                  oracle.VerdictInconclusive → bulgu üretilmez (nil)
+//	not_vulnerable_under_test     oracle.VerdictReject → bulgu üretilmez (nil);
+//	                              "test edildi, kanıt yok" bilgisi tarama
+//	                              istatistiklerinde (engine.Report.Stats) taşınır,
+//	                              bulgu listesinde değil.
 type Finding struct {
 	ID              string                `json:"id"`
 	RuleID          string                `json:"rule_id"`
@@ -37,15 +49,39 @@ type Finding struct {
 	Tags            []string              `json:"tags,omitempty"`
 	Fingerprint     string                `json:"fingerprint"`
 	DuplicateOf     string                `json:"duplicate_of,omitempty"`
+	// Method isteğin HTTP metodudur (kanıt: hangi fiille tekrar üretilir).
+	Method string `json:"method,omitempty"`
+	// VerificationMethod doğrulama yöntemi + tekrar/kontrol özetidir
+	// (kanıt: tespit gerekçesi ve doğrulama yöntemi).
+	VerificationMethod string `json:"verification_method,omitempty"`
+	// Note oracle gerekçesidir (kanıt: neden bu karar).
+	Note string `json:"note,omitempty"`
+	// DetectorVersion üreten dedektörün API sürümüdür (izlenebilirlik).
+	DetectorVersion string `json:"detector_version,omitempty"`
+	// References kural referanslarıdır (CWE URL vb.).
+	References []string `json:"references,omitempty"`
+	// Remediation düzeltme önerisidir (kural şablonundan, yazar beyanından değil).
+	Remediation string `json:"remediation,omitempty"`
+	// Masked kanıtın hangi bölümlerinin maskelendiğini listeler.
+	Masked []string `json:"masked,omitempty"`
+}
+
+// Meta kural şablonundan gelen isteğe bağlı bulgu üstverisidir.
+// Boş Meta ile Build çağrısı eski çıktıyla aynıdır (alanlar omitempty).
+type Meta struct {
+	References  []string
+	Remediation string
+	Masked      []string
 }
 
 // Build Candidate + Evidence'tan Finding üretir (motor-içi).
-// Kurallar:
-//   - verdict != accept → nil (bulgu yok), kanıtsız aday en fazla tentative (B3).
-//   - R-SEV-01: tentative final severity tavanı medium.
-//   - R-06: Tests == "" ise tavan tentative.
-//   - Başlık/açıklama kural şablonundan (yazar abartısı engeli).
 func Build(spec plugin.PluginSpec, cand plugin.Candidate, ev *oracle.Evidence, ruleID, cwe, title, desc string) (*Finding, error) {
+	return BuildWithMeta(spec, cand, ev, ruleID, cwe, title, desc, Meta{})
+}
+
+// BuildWithMeta Build ile aynıdır; ek olarak kural-şablon üstverisini işler
+// (references/remediation/masked). Boş Meta byte-uyumlu eski çıktıyı verir.
+func BuildWithMeta(spec plugin.PluginSpec, cand plugin.Candidate, ev *oracle.Evidence, ruleID, cwe, title, desc string, meta Meta) (*Finding, error) {
 	if ev == nil {
 		return nil, fmt.Errorf("nil evidence: %w", plugin.ErrValidation)
 	}
@@ -99,9 +135,25 @@ func Build(spec plugin.PluginSpec, cand plugin.Candidate, ev *oracle.Evidence, r
 		PluginID:   spec.ID,
 		OracleName: cand.OracleName,
 		Tags:       append([]string{}, spec.Tags...),
+		// Kanıt gerekçesi ve tekrar üretilebilirlik (P0.2, motor-türetilmiş).
+		Method:             cand.InjectionPoint.Method,
+		VerificationMethod: verificationSummary(cand.OracleName, ev),
+		Note:               ev.Note,
+		DetectorVersion:    spec.APIVersion,
+		References:         append([]string{}, meta.References...),
+		Remediation:        meta.Remediation,
+		Masked:             append([]string{}, meta.Masked...),
 	}
 	f.Fingerprint = Fingerprint(f)
 	return f, nil
+}
+
+// verificationSummary oracle adı + tekrar/kontrol özetidir.
+func verificationSummary(oracleName string, ev *oracle.Evidence) string {
+	if oracleName == "" {
+		oracleName = "unknown"
+	}
+	return fmt.Sprintf("oracle %s, repeats=%d, control=%s", oracleName, ev.Repeats, ev.ControlResult)
 }
 
 func newFindingID() (string, error) {
@@ -130,6 +182,18 @@ func severityRank(s plugin.Severity) int {
 }
 
 func itoa(i int) string { return fmt.Sprintf("%d", i) }
+
+// confidenceRank dedup çakışma çözümüdür: confirmed > firm > tentative.
+func confidenceRank(c plugin.Confidence) int {
+	switch c {
+	case plugin.ConfidenceConfirmed:
+		return 2
+	case plugin.ConfidenceFirm:
+		return 1
+	default:
+		return 0
+	}
+}
 
 // Fingerprint sha256(rule + normalized_target + point + evidence_hash) (A-16).
 func Fingerprint(f *Finding) string {
@@ -171,12 +235,21 @@ func normalizeURL(raw string) string {
 }
 
 // Dedup aynı fingerprint'i tekler (çoklu plugin şişirmez).
+// Çakışmada yüksek güvenli bulgu kazanır: tentative fuzz anomalisi,
+// confirmed oracle kanıtını gölgeleyemez (lab kanıtı: /sqli).
 func Dedup(in []*Finding) []*Finding {
 	seen := make(map[string]*Finding)
 	var out []*Finding
 	for _, f := range in {
 		if prev, ok := seen[f.Fingerprint]; ok {
-			f.DuplicateOf = prev.ID
+			if confidenceRank(f.Confidence) > confidenceRank(prev.Confidence) {
+				keepID := prev.ID
+				*prev = *f
+				prev.ID = keepID
+				f.DuplicateOf = keepID
+			} else {
+				f.DuplicateOf = prev.ID
+			}
 			continue // bastırılan listeye girmez (correlate'te ayrı sayılır)
 		}
 		seen[f.Fingerprint] = f

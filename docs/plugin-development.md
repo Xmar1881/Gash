@@ -53,8 +53,40 @@ Key policy fields:
 - `active`: `true` runs only with `--active` (state-changing or invasive).
 - `oob`: `""`, `optional`, or `required`. Required plus no `--oob-server`
   means the plugin never runs (honest skip, no fake tentative).
-- `requires_tech`: skips the plugin when baseline tech disagrees.
+- `requires_tech`: skips the plugin when the tech is not in the known set
+  (see "Conditional Chains" below).
 - `tests`: fixture directory; empty caps findings at `tentative`.
+
+## Conditional Chains (requires/provides/requires_tech)
+
+`requires`/`provides` order plugins within a phase (topological, deterministic
+by `order`+`id`); cross-phase edges are rejected and cycles fail the schedule.
+`internal/plugin.ResolveChain` additionally applies run conditions before
+ordering:
+
+- `requires_tech: [wordpress]` runs only when `wordpress` is a known tech —
+  pass `--tech wordpress,graphql` or let runtime fingerprinting provide it
+  (passive header, cookie-name, body-marker, and favicon signals from the
+  pre-schedule GET plus the live surface response; see `internal/discovery/tech.go`).
+  Otherwise the plugin is skipped with `skipped (chain: requires tech ... not detected)`.
+- `requires: [some-capability]` with no live provider (no runnable plugin
+  `provides` it and no discovery capability claims it) skips that consumer
+  with `skipped (chain: requires ... has no live provider)` instead of
+  failing the whole schedule. Consumers of a skipped provider cascade-skip.
+- A self-`provides` does not satisfy its own `requires`.
+
+Example (tech-gated detector):
+
+```yaml
+id: wp-json-user-enum
+requires_tech: [wordpress]
+phase: probe
+```
+
+```sh
+gash scan --target https://shop.example.com --scope shop.example.com \
+  --tech wordpress
+```
 
 ## Safe Active Deep OOB Rules
 
@@ -76,6 +108,10 @@ Key policy fields:
 | Redirect | `redirect` | `redirect(resp, host)` | `redirect` |
 | OOB | `oob` | `oob(correlationId, namespace)` | `oob` |
 | Version | `version` | n/a (Tier 1 only) | `version` |
+| Timing | `timing` | `timing(delayResps, controlResps[, opts])` (rttMs-based, ceiling `firm`) | n/a |
+| Cookie | `cookie` | `cookie(resp)` | n/a |
+| CORS | `cors` | `cors(resp)` | n/a |
+| Execution (DOM) | n/a (Tier 2 only) | `execution(resp[, opts])` (static sink/source, ceiling `firm`; headless `confirmed` needs the `deep` build) | n/a |
 
 Tier 1 declares the oracle by name; Tier 2 calls it and passes the returned
 evidence to `host.candidate(point, ref, ev)`; Tier 3 calls `VerifyOracle`

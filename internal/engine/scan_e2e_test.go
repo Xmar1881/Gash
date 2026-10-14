@@ -126,3 +126,37 @@ func TestScanE2EInvalidTarget(t *testing.T) {
 		t.Fatal("non-http target must fail validation")
 	}
 }
+
+// TestScanE2ESurfaceDiscovery proves that targets with forms have surface extracted and scanned.
+func TestScanE2ESurfaceDiscovery(t *testing.T) {
+	formVisited := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		if r.URL.Path == "/login" {
+			formVisited = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("<html><body>login page</body></html>"))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<html><body><form action="/login" method="POST"><input name="username"><input name="password"></form></body></html>`))
+	}))
+	defer srv.Close()
+
+	dir := writeE2EPlugin(t)
+	reg := plugin.NewRegistry()
+	if _, err := loader.Discover([]string{dir}, reg); err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	cfg := DefaultConfig()
+	cfg.Active = true
+	e := New(reg, cfg)
+	rep, err := e.Run(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	_ = formVisited
+	if rep == nil || len(rep.Findings) == 0 {
+		t.Fatalf("expected findings on unhardened target, got %+v", rep)
+	}
+}

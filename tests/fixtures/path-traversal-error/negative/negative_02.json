@@ -1,0 +1,1 @@
+{"body": "Access denied - invalid path", "control_body": "Access denied - invalid path", "control_status": 403, "expected_verdict": "reject", "headers": {"Content-Type": "text/plain"}, "name": "Access denied but same in control", "status": 403, "target": "http://example.com/?file=../../../etc/passwd"}

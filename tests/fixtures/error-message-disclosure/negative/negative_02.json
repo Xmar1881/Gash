@@ -1,0 +1,1 @@
+{"body": "Error: Something went wrong", "control_body": "Error: Something went wrong", "control_status": 500, "expected_verdict": "reject", "headers": {"Content-Type": "text/plain"}, "name": "Same error in control", "status": 500, "target": "http://example.com/?test=1"}

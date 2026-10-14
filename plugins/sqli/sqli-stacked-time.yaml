@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/sqli/sqli-stacked-time.yaml
+# What: Tier 1 stacked-query time-based SQLi (MSSQL WAITFOR DELAY).
+# Why: A second statement executing server-side (multi-statement / stacked
+#   queries) is proven by statistical delay against a neutral control.
+#   Tier 1 is used deliberately: the JS sandbox has no timing binding, so a
+#   YAML timing oracle is the audited path (no new sandbox surface).
+
+id: sqli-stacked-time
+name: SQL Injection Stacked Time-Based (MSSQL)
+description: Detects stacked SQL queries via statistical WAITFOR DELAY analysis with control baseline.
+author: GASH contributors
+severity: high
+tags: [sqli, injection, stacked, timing]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 200
+phase: probe
+order: 57
+api_version: "1.0"
+tests: tests/fixtures/sqli-stacked-time/
+request:
+  method: GET
+  param_names: [id, query, search, q, page, cat, item]
+  payload: "1; WAITFOR DELAY '0:0:6'--"
+oracle:
+  name: timing
+  params:
+    min_delay_ms: 5000
+    repeats: 3
+    strategy: "mann-whitney-u"

@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# GASH golangci-lint configuration (Phase 2: vet + clean target).
+# GASH golangci-lint configuration (v2 format; CI pins the binary version).
+# Phase 2: vet + clean target. P0.4: config migrated from v1 (which v2
+# binaries refuse to load) so the lint gate actually executes.
+version: "2"
 run:
   timeout: 5m
 linters:
@@ -7,23 +10,25 @@ linters:
     - govet
     - staticcheck
     - unused
-    - gofmt
-    - goimports
     - misspell
     - unconvert
     - nakedret
     - wrapcheck
     - contextcheck
-linters-settings:
-  wrapcheck:
-    ignoreSigs:
-      - .Errorf
-      - errors.New
-      - errors.Unwrap
-  contextcheck:
-    allowed-receiver-names:
-      - Client
-      - Engine
-      - Registry
+  settings:
+    wrapcheck:
+      ignoreSigs:
+        - .Errorf
+        - errors.New
+        - errors.Unwrap
+    contextcheck:
+      allowed-receiver-names:
+        - Client
+        - Engine
+        - Registry
+formatters:
+  enable:
+    - gofmt
+    - goimports
 issues:
   max-same-issues: 0

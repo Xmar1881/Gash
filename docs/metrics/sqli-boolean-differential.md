@@ -50,3 +50,20 @@ True positives 2, false negatives 0. Recall 1.00.
 ## Gate Verdict
 
 PASS. Precision 1.00 is above the 0.99 gate. Corpus holds 0 `firm` plus.
+
+## Known Limitation (lab 2026-10-14)
+
+Deterministic reflection defeats stability-only differentials: on an endpoint
+that echoes both payloads verbatim, true/false bodies are stably different
+without any injection. The plugin now skips payload-echoing responses
+(`plugins/sqli/sqli-boolean-differential.js`, `echoes` guard), verified by
+re-scan with zero differential findings on a pure-reflection endpoint. The
+oracle itself still accepts stable divergence — callers must exclude
+reflection-explained divergence.
+
+## Dataset
+
+- Dataset hash: `406a35b5df8119564bc0ffe40f4e26337c82347c94e8695c97b3bf1f702f10eb`
+  (sha256 over all 4 fixture files under `tests/fixtures/sqli-boolean-differential/`).
+- Samples: TP=2, FP=0, TN=2, FN=0. Fixture-only measurement; lab pending above.
+  `TestMetricGate` fails the build if this hash drifts from the fixtures.

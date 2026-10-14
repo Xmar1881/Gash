@@ -1,0 +1,1 @@
+{"body": "<html><body>GraphQL Playground</body></html>", "control_body": "", "control_status": 0, "expected_confidence": "confirmed", "expected_verdict": "accept", "headers": {"Content-Type": "text/html"}, "name": "GraphQL Playground page", "status": 200, "target": "http://example.com/graphql"}

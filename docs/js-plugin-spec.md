@@ -87,7 +87,8 @@ returning an array.
 - `probe.canary()`: fresh unique marker per call. Never invent canaries.
 - `probe.send(point)`: sends one request through `PolicySession` (budget,
   scope, rate limit, safe-method checks) and returns
-  `{status, headers, body, url}`.
+  `{status, headers, body, url, rttMs}` (`rttMs` is the Go-measured
+  round-trip in milliseconds for `host.oracles.timing`).
 - Points come from `ctx.injectionPoints()` as
   `{url, method, paramName, paramLocation, value}` with
   `point.withValue(next)` returning an updated copy.
@@ -105,6 +106,17 @@ returning an array.
   control semantics.
 - `host.oracles.oob(correlationId, namespace)`: OOB verdict; skipped when
   the server is unconfigured (not an error).
+- `host.oracles.timing(delayResps, controlResps[, opts])`: statistical timing
+  verdict over Go-measured `rttMs` series. `opts` accepts `min_delay_ms`
+  (default 5000), `repeats` (minimum 3), `strategy` (`mann-whitney-u` or
+  `threshold`), and `baseline_stddev`. Ceiling is `firm`; no new network
+  primitive is exposed (sandbox risk minimal: only timing of already-allowed
+  `probe.send` calls is visible).
+- `host.oracles.execution(resp[, opts])`: static DOM sink/source verdict
+  without a browser. `opts` accepts `sink`/`source` overrides; empty auto-
+  detects from the static vocabulary. Ceiling is `firm`; `confirmed` needs
+  the headless build (`Triggered` plus `ControlClean`), which is BLOCKED
+  without browser dependencies (see `docs/metrics/dom-sink-basic.md`).
 - `host.candidate(point, oracleRef, ev)`: builds the opaque candidate for
   accepted evidence; returns `null` for rejected evidence. Accepted refs
   include `reflected-xss`, `sqli-error`, `sqli-differential`, `ssrf-blind`,

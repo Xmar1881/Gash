@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,11 +18,15 @@ import (
 	"time"
 
 	"github.com/Xmar1881/Gash/internal/baseline"
+	"github.com/Xmar1881/Gash/internal/config"
+	"github.com/Xmar1881/Gash/internal/discovery"
 	"github.com/Xmar1881/Gash/internal/finding"
+	"github.com/Xmar1881/Gash/internal/oob"
 	"github.com/Xmar1881/Gash/internal/oracle"
 	"github.com/Xmar1881/Gash/internal/plugin"
 	"github.com/Xmar1881/Gash/internal/plugin/loader"
 	"github.com/Xmar1881/Gash/internal/probe"
+	"github.com/Xmar1881/Gash/internal/proto"
 )
 
 // parseTarget validates a scan target URL.
@@ -62,10 +67,38 @@ func ruleAndCWE(oracleName string) (string, string) {
 		return "GASH-016", "CWE-601"
 	case "header":
 		return "GASH-019", "CWE-693"
+	case "cookie":
+		return "GASH-022", "CWE-614"
+	case "cors":
+		return "GASH-023", "CWE-942"
 	case "oob":
 		return "GASH-008", "CWE-918"
+	case "tls":
+		return "GASH-024", "CWE-295"
+	case "dns":
+		return "GASH-025", "CWE-693"
+	case "tcp":
+		return "GASH-026", "CWE-200"
 	default:
 		return "GASH-000", "CWE-693"
+	}
+}
+
+// ruleForPlugin maps a plugin execution to rule and weakness identifiers.
+// What: Class-aware override (ssrf/idor) over the oracle-based taxonomy.
+// Why: Shared oracles (reflection/differential) would otherwise mislabel
+// SSRF as XSS and IDOR as SQLi in findings; the override matches the
+// documented evidence standards (docs/metrics/ssrf-blind-oob.md,
+// docs/metrics/idor-differential.md).
+func ruleForPlugin(pluginID, oracleName string) (string, string) {
+	id := strings.ToLower(strings.TrimSpace(pluginID))
+	switch {
+	case strings.Contains(id, "ssrf"):
+		return "GASH-008", "CWE-918"
+	case strings.Contains(id, "idor") || strings.Contains(id, "bola"):
+		return "GASH-005", "CWE-639"
+	default:
+		return ruleAndCWE(oracleName)
 	}
 }
 
@@ -97,11 +130,22 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		RatePerSecond:        e.cfg.RatePerSecond,
 		MaxResponseBytes:     5 * 1024 * 1024,
 	}, nil)
+	// P1.3: Set original target for scope rebinding detection
+	policy.SetOriginalTarget(target)
+	// P2.5: kimlik bağlamı probe'a gömülür (requires_auth kapısı New'de açıldı).
+	var extraHeaders map[string]string
+	if e.cfg.Auth != nil {
+		extraHeaders = e.cfg.Auth.HeaderMap()
+	}
 	client := probe.NewClient(probe.Options{
 		Policy:         policy,
 		RequestTimeout: 15 * time.Second,
 		MaxBytes:       5 * 1024 * 1024,
-		MaxRedirects:   5,
+		ExtraHeaders:   extraHeaders,
+		// WAF bypass yalnızca agresif profilde: blok yanıtı WAFDetected
+		// işaretlenir, sınırlı varyant aynı politika/kapsam içinden denenir.
+		// Varsayılan taramada stealth davranışı YOKTUR (§14).
+		EnableWAFBypass: e.cfg.Profile == config.ProfileAggressive,
 	})
 
 	parallelism := e.cfg.Parallelism
@@ -114,9 +158,57 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 	sem := make(chan struct{}, parallelism)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	var allFindings []*finding.Finding
+	protoFindings, protoSkipped := e.runProtoRecon(ctx, target)
+	allFindings := protoFindings
 	var execSkipped []plugin.SkippedPlugin
+	execSkipped = append(execSkipped, protoSkipped...)
 	errorCount := 0
+
+	// Attack surface discovery: probe target to extract form inputs, query params, and links
+	var surfacePoints []loader.JSPoint
+	initResp, err := client.Send(ctx, http.MethodGet, target, nil, nil)
+	if err == nil && initResp != nil {
+		e.mergeSurfaceTech(initResp.Headers, nil, initResp.Body)
+		injected := discovery.ExtractSurface(target, initResp.Body)
+		for _, ip := range injected {
+			surfacePoints = append(surfacePoints, loader.JSPoint{
+				URL:           ip.URL,
+				Method:        ip.Method,
+				ParamName:     ip.ParamName,
+				ParamLocation: ip.ParamLocation,
+				Value:         ip.Value,
+			})
+		}
+	}
+	if len(surfacePoints) == 0 {
+		injected := discovery.ExtractSurface(target, nil)
+		for _, ip := range injected {
+			surfacePoints = append(surfacePoints, loader.JSPoint{
+				URL:           ip.URL,
+				Method:        ip.Method,
+				ParamName:     ip.ParamName,
+				ParamLocation: ip.ParamLocation,
+				Value:         ip.Value,
+			})
+		}
+	}
+
+	// Görev B: atıl fuzz motoru canlı döngüde. Yalnızca --active koşar
+	// (güvenli varsayılan sessizdir); anomali → tentative Finding.
+	var fuzzRequests int64
+	if e.cfg.Active {
+		fuzzFindings, freq := e.runActiveFuzz(ctx, target, client, surfacePoints)
+		fuzzRequests = freq
+		allFindings = append(allFindings, fuzzFindings...)
+	}
+	// Görev C: çift-kullanıcı BOLA matrisi. --active + iki kimlik şart;
+	// bulgular daima tentative (sahiplik elle doğrulanır).
+	var matrixRequests int64
+	if e.cfg.Active && e.HasDualAuth() {
+		matrixFindings, mreq := e.runCrossUserMatrix(ctx, client, surfacePoints)
+		matrixRequests = mreq
+		allFindings = append(allFindings, matrixFindings...)
+	}
 
 	for _, spec := range ordered {
 		wg.Add(1)
@@ -124,7 +216,7 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			found, reason, ok := e.executeOne(ctx, s, target, client, pluginTimeout)
+			found, reason, ok := e.executeOne(ctx, s, target, client, pluginTimeout, surfacePoints)
 			mu.Lock()
 			defer mu.Unlock()
 			if !ok {
@@ -152,15 +244,22 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 	_, note := NoisyBreaker(counts, threshold)
 
 	allSkipped := append(append([]plugin.SkippedPlugin{}, skipped...), execSkipped...)
+	wafDet, wafByp := client.WAFStats()
 	rep := &Report{
 		Target:   target,
 		Findings: deduped,
 		Skipped:  allSkipped,
 		Stats: map[string]int{
-			"scheduled": len(ordered),
-			"skipped":   len(allSkipped),
-			"findings":  len(deduped),
-			"errors":    errorCount,
+			"scheduled":       len(ordered),
+			"skipped":         len(allSkipped),
+			"findings":        len(deduped),
+			"errors":          errorCount,
+			"waf_detected":    int(wafDet),
+			"waf_bypassed":    int(wafByp),
+			"fuzz_requests":   int(fuzzRequests),
+			"matrix_requests": int(matrixRequests),
+			"detected_tech":   len(e.detectedTech),
+			"detected_caps":   len(e.detectedCaps),
 		},
 		ScanID: newScanID(),
 	}
@@ -179,7 +278,7 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 // executeOne runs a single plugin with fault isolation.
 // What: Tier dispatch plus finding construction under timeout and recover.
 // Why: Panic or timeout in one plugin must never stop the remaining scan.
-func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, target string, client *probe.Client, timeout time.Duration) ([]*finding.Finding, string, bool) {
+func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, target string, client *probe.Client, timeout time.Duration, points []loader.JSPoint) ([]*finding.Finding, string, bool) {
 	var collected []*finding.Finding
 	var collectMu sync.Mutex
 	entry, ok := e.registry.Get(spec.ID)
@@ -208,7 +307,7 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 				return nil, err
 			}
 			for _, r := range results {
-				rule, cwe := ruleAndCWE(r.Candidate.OracleName)
+				rule, cwe := ruleForPlugin(spec.ID, r.Candidate.OracleName)
 				f, err := finding.Build(spec, r.Candidate, r.Evidence, rule, cwe, "", "")
 				if err != nil || f == nil {
 					continue
@@ -224,13 +323,20 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 			if err != nil {
 				return nil, fmt.Errorf("js read %s: %w", sourcePath, err)
 			}
-			env := jsEnvForScan(pctx, target, client, e.cfg.OOBServer != "")
+			// Safe plugin'ler durum-değiştiren metoda dokunamaz: POST/PUT
+			// noktaları yüzeyden çıkarılır (politika backstop'u durur; bu
+			// yalnızca panic yerine sessiz-düzgün kapsam daraltmadır).
+			pts := points
+			if spec.Safe {
+				pts = readOnlyJSPoints(points)
+			}
+			env := jsEnvForScan(pctx, target, client, e.cfg.OOBServer, pts)
 			got, err := loader.ExecuteJS(pctx, &spec, string(source), env, timeout)
 			if err != nil {
 				return nil, err
 			}
 			for _, jc := range got {
-				rule, cwe := ruleAndCWE(jc.Candidate.OracleName)
+				rule, cwe := ruleForPlugin(spec.ID, jc.Candidate.OracleName)
 				f, err := finding.Build(spec, jc.Candidate, jc.Evidence, rule, cwe, "", "")
 				if err != nil || f == nil {
 					continue
@@ -273,7 +379,7 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 				if cand.Target == "" {
 					cand.Target = target
 				}
-				rule, cwe := ruleAndCWE(cand.OracleName)
+				rule, cwe := ruleForPlugin(spec.ID, cand.OracleName)
 				f, err := finding.Build(spec, cand, ev, rule, cwe, "", "")
 				if err != nil || f == nil {
 					continue
@@ -332,10 +438,10 @@ func loadTier3ForScan(sourcePath string) (*loader.Tier3Manifest, error) {
 	return manifest, nil
 }
 
-// jsEnvForScan builds live JS bindings over the probe client.
-// What: Single generic injection point plus probe and OOB backends.
-// Why: Reference scripts expect points; live scans provide one honest target.
-func jsEnvForScan(pctx context.Context, target string, client *probe.Client, oobEnabled bool) *loader.JSEnv {
+// jsEnvForScan builds live JS bindings over the probe client with real surface and OOB.
+// What: Dynamic injection points (URL, body, headers) plus probe and OOB backends.
+// Why: Reference scripts expect points; live scans provide honest multi-point surface.
+func jsEnvForScan(pctx context.Context, target string, client *probe.Client, oobServer string, points []loader.JSPoint) *loader.JSEnv {
 	sendOne := func(p loader.JSPoint, value string) (loader.JSResponse, error) {
 		method := p.Method
 		if method == "" {
@@ -345,13 +451,31 @@ func jsEnvForScan(pctx context.Context, target string, client *probe.Client, oob
 		if rawURL == "" {
 			rawURL = target
 		}
-		if p.ParamName != "" {
-			built, err := withScanQueryParam(rawURL, p.ParamName, value)
-			if err == nil {
-				rawURL = built
+		var reqHeaders map[string]string
+		var reqBody []byte
+
+		switch strings.ToLower(p.ParamLocation) {
+		case "body":
+			reqHeaders = map[string]string{"Content-Type": "application/x-www-form-urlencoded"}
+			if p.ParamName != "" {
+				form := url.Values{}
+				form.Set(p.ParamName, value)
+				reqBody = []byte(form.Encode())
+			} else {
+				reqBody = []byte(value)
+			}
+		case "header":
+			reqHeaders = map[string]string{p.ParamName: value}
+		default: // "query"
+			if p.ParamName != "" {
+				built, err := withScanQueryParam(rawURL, p.ParamName, value)
+				if err == nil {
+					rawURL = built
+				}
 			}
 		}
-		resp, err := client.Send(pctx, method, rawURL, nil, nil)
+
+		resp, err := client.Send(pctx, method, rawURL, reqHeaders, reqBody)
 		if err != nil {
 			return loader.JSResponse{}, err
 		}
@@ -361,19 +485,53 @@ func jsEnvForScan(pctx context.Context, target string, client *probe.Client, oob
 				headers[k] = vals[0]
 			}
 		}
-		return loader.JSResponse{Status: resp.Status, Headers: headers, Body: string(resp.Body), URL: rawURL}, nil
+		rttMs := float64(resp.RTT.Milliseconds())
+		if resp.RTT > 0 && rttMs == 0 {
+			rttMs = float64(resp.RTT.Microseconds()) / 1000.0
+		}
+		return loader.JSResponse{Status: resp.Status, Headers: headers, Body: string(resp.Body), URL: rawURL, RTTMs: rttMs}, nil
 	}
+
+	jsPoints := points
+	if len(jsPoints) == 0 {
+		jsPoints = []loader.JSPoint{{URL: target, Method: http.MethodGet, ParamName: "q", ParamLocation: "query"}}
+	}
+
+	var oobProvider oob.Provider
+	if oobServer != "" {
+		oobProvider = oob.NewSelfHostedProvider(oobServer, "")
+	}
+
 	return &loader.JSEnv{
-		Points: []loader.JSPoint{{URL: target, Method: http.MethodGet, ParamName: "q", ParamLocation: "query"}},
+		Points: jsPoints,
 		Send: func(p loader.JSPoint) (loader.JSResponse, error) {
 			return sendOne(p, p.Value)
 		},
-		OOBEnabled:   oobEnabled,
+		OOBEnabled:   oobServer != "",
 		OOBNamespace: "scan",
-		OOBCallbackSeen: func(string) bool {
-			return false
+		OOBCallbackSeen: func(corrID string) bool {
+			if oobProvider == nil || !oobProvider.Enabled() {
+				return false
+			}
+			ev, err := oobProvider.PollCallback(pctx, corrID)
+			return err == nil && ev != nil
 		},
 	}
+}
+
+// readOnlyJSPoints safe Tier 2 plugin'lere verilen yüzeydir.
+// What: Yalnızca GET/HEAD/OPTIONS noktaları (boş metot GET sayılır).
+// Why: Safe plugin POST noktasında politika ihlaliyle panic'lemek yerine
+// hiç görmez; aktif plugin'ler tam yüzeyi almaya devam eder.
+func readOnlyJSPoints(points []loader.JSPoint) []loader.JSPoint {
+	out := make([]loader.JSPoint, 0, len(points))
+	for _, p := range points {
+		switch strings.ToUpper(strings.TrimSpace(p.Method)) {
+		case "", http.MethodGet, http.MethodHead, http.MethodOptions:
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // withScanQueryParam sets one query value on a URL.
@@ -391,8 +549,8 @@ func withScanQueryParam(target, param, value string) (string, error) {
 }
 
 // verifyTier3Candidate verifies a native candidate with engine oracles.
-// What: Probe fetch plus oracle dispatch for Tier 3 header and redirect.
-// Why: Native binaries propose; only engine evidence can confirm a finding.
+// What: Probe fetch plus oracle dispatch for Tier 3 header, redirect, cookie, cors, version, error, reflection.
+// Why: Native binaries propose; engine evidence confirms findings.
 func verifyTier3Candidate(pctx context.Context, client *probe.Client, target, oracleName string) (*oracle.Evidence, error) {
 	resp, err := client.Send(pctx, http.MethodGet, target, nil, nil)
 	if err != nil {
@@ -409,7 +567,137 @@ func verifyTier3Candidate(pctx context.Context, client *probe.Client, target, or
 			Location: resp.Headers.Get("Location"), PayloadHost: "",
 			ControlNoRedir: true, ResolveDNS: false,
 		})
+	case "cookie":
+		var o oracle.CookieOracle
+		return o.Verify(pctx, cls, false, oracle.CookieParams{Headers: resp.Headers, Target: target})
+	case "cors":
+		var o oracle.CORSOracle
+		return o.Verify(pctx, cls, false, oracle.CORSParams{Headers: resp.Headers})
+	case "version":
+		var o oracle.VersionOracle
+		return o.Verify(pctx, cls, false, oracle.VersionParams{Banner: string(resp.Body), Mode: "banner"})
+	case "error":
+		var o oracle.ErrorSignatureOracle
+		return o.Verify(pctx, cls, false, oracle.ErrorSignatureParams{Body: string(resp.Body)})
+	case "reflection":
+		var o oracle.ReflectionOracle
+		return o.Verify(pctx, string(resp.Body), resp.Headers, cls, false, oracle.ReflectionParams{Canary: "gash", Contexts: []string{"html", "attr", "script"}})
 	default:
 		return nil, fmt.Errorf("tier3 oracle %q not supported live: %w", oracleName, plugin.ErrValidation)
+	}
+}
+
+// runProtoRecon DNS/TLS/TCP protokol kontrollerini koşar (P2.1).
+// What: Profil kapılı (tls/dns safe'de; tcp yalnızca --active + açık --tcp-banner),
+// kapsam-izinli, süre-sınırlı pasif gözlem. Hata = bulgusuz (tarama durmaz).
+// Why: Protokol yüzeyi plugin HTTP hattının dışındadır (el sıkışması/DNS okuma);
+// ayrı recon adımı safe varsayılanı bozmaz (yıkıcı işlem yok).
+func (e *Engine) runProtoRecon(ctx context.Context, target string) ([]*finding.Finding, []plugin.SkippedPlugin) {
+	var out []*finding.Finding
+	var skipped []plugin.SkippedPlugin
+	u, err := url.Parse(target)
+	if err != nil {
+		return nil, nil
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "" {
+		return nil, nil
+	}
+	allow := e.protoAllow(u)
+	po := proto.Options{Timeout: 10 * time.Second, Allow: allow}
+
+	// TLS: yalnızca https hedefte, tls dedektörü açıksa.
+	if e.detectorEnabled("tls") && strings.EqualFold(u.Scheme, "https") {
+		port := u.Port()
+		if port == "" {
+			port = "443"
+		}
+		func(check context.Context) {
+			c, cancel := context.WithTimeout(check, 12*time.Second)
+			defer cancel()
+			res, err := proto.CheckTLS(c, net.JoinHostPort(host, port), po)
+			if err != nil || res == nil {
+				return
+			}
+			for _, pf := range proto.TLSFindings(target, res) {
+				pf := pf
+				out = append(out, pf.ToFinding())
+			}
+		}(ctx)
+	}
+	// DNS: IP literal hariç, dns dedektörü açıksa.
+	if e.detectorEnabled("dns") && net.ParseIP(host) == nil {
+		func(check context.Context) {
+			c, cancel := context.WithTimeout(check, 12*time.Second)
+			defer cancel()
+			res, err := proto.CheckDNS(c, host, po)
+			if err != nil || res == nil {
+				return
+			}
+			for _, pf := range proto.DNSFindings(target, res) {
+				pf := pf
+				out = append(out, pf.ToFinding())
+			}
+		}(ctx)
+	}
+	// TCP banner: açık bayrak + --active + tcp dedektörü (hepsi şart).
+	if len(e.cfg.TCPBanners) > 0 && e.detectorEnabled("tcp") {
+		if !e.cfg.Active {
+			// Aktivasyon yoksa her bayrak denetim iziyle skip'e düşer (sessiz drop yok).
+			for _, addr := range e.cfg.TCPBanners {
+				if strings.TrimSpace(addr) == "" {
+					continue
+				}
+				skipped = append(skipped, plugin.SkippedPlugin{
+					PluginID: "proto-tcp-banner",
+					Reason:   "skipped (tcp-banner " + strings.TrimSpace(addr) + " requires --active)",
+				})
+			}
+		} else {
+			for _, addr := range e.cfg.TCPBanners {
+				addr := strings.TrimSpace(addr)
+				if addr == "" {
+					continue
+				}
+				func(check context.Context) {
+					c, cancel := context.WithTimeout(check, 12*time.Second)
+					defer cancel()
+					res, err := proto.GrabBanner(c, addr, po)
+					if err != nil || res == nil {
+						return
+					}
+					for _, pf := range proto.BannerFindings(target, res) {
+						pf := pf
+						out = append(out, pf.ToFinding())
+					}
+				}(ctx)
+			}
+		}
+	}
+	return out, skipped
+}
+
+// protoAllow proto kontrollerinin kapsam kararıdır.
+// What: Hedef host her zaman izinli (açık tarama niyeti); diğer host'lar yalnızca
+// explicit --scope ile (domain/CIDR/URL-prefix eşleşmesi).
+// Why: Proto kontroller plugin HTTP hattının dışındadır; aynı fail-closed
+// kapsam burada da uygulanır (kapsam-dışı istek yok).
+func (e *Engine) protoAllow(target *url.URL) proto.AllowHost {
+	targetHost := strings.ToLower(target.Hostname())
+	sm := NewScopeManager(e.cfg.Scope)
+	sm.SetOriginalTarget(target.String())
+	return func(host string) bool {
+		h := strings.ToLower(strings.TrimSpace(host))
+		if h == "" {
+			return false
+		}
+		if h == targetHost {
+			return true
+		}
+		if len(e.cfg.Scope) == 0 {
+			return false // implicit scope: yalnızca hedef host
+		}
+		checkURL := &url.URL{Scheme: "https", Host: h}
+		return sm.CheckScope(context.Background(), checkURL) == nil
 	}
 }

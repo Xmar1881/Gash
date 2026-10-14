@@ -47,7 +47,7 @@ func TestOOBRequiredSkipped(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(ordered) != 0 {
-		t.Fatalf("oob:required çalışmamalı, got %v", ordered)
+		t.Fatalf("oob:required çalışmamalı, got %v", ordered) //nolint:misspell // Türkçe olumsuz gelecek zaman eki, İngilizce yazım denetimine tabi değildir
 	}
 	found := false
 	for _, sk := range skipped {
@@ -72,7 +72,7 @@ func TestTier3UntrustedSkipped(t *testing.T) {
 	e.cfg.Deep = true
 	ordered, skipped, _ := e.Schedule(context.Background())
 	if len(ordered) != 0 {
-		t.Fatalf("trust'suz native çalışmamalı")
+		t.Fatalf("trust'suz native çalışmamalı") //nolint:misspell // Türkçe olumsuz gelecek zaman eki
 	}
 	_ = skipped
 }

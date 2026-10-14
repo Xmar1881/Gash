@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/error-disclosure/error-message-disclosure.yaml
+# What: Tier 1 generic error message disclosure detection via ErrorSignatureOracle.
+# Why: Detects verbose error messages, stack traces, and debug information
+#   leakage in responses; uses existing ErrorSignatureOracle with "generic_error" mode.
+
+id: error-message-disclosure
+name: Error Message Disclosure
+description: Detects verbose error messages, stack traces, and debug information leakage in HTTP responses.
+author: GASH contributors
+severity: medium
+tags: [error-disclosure, information-leakage, debug, stack-trace]
+safe: true
+deep: false
+active: false
+requires_auth: false
+phase: probe
+order: 40
+api_version: "1.0"
+tests: tests/fixtures/error-message-disclosure/
+request:
+  method: GET
+oracle:
+  name: error
+  params:
+    mode: generic_error
+    signature_set: ["generic_error"]

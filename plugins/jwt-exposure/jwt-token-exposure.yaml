@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/jwt-exposure/jwt-token-exposure.yaml
+# What: Tier 1 JWT token exposure detection via HeaderOracle.
+# Why: Detects JWT tokens exposed in HTTP response headers and cookies
+#   without active probing; uses existing HeaderOracle with "jwt" mode.
+
+id: jwt-token-exposure
+name: JWT Token Exposure
+description: Detects JWT tokens exposed in HTTP response headers and Set-Cookie headers.
+author: GASH contributors
+severity: high
+tags: [jwt, token-exposure, authentication, information-leakage]
+safe: true
+deep: false
+active: false
+requires_auth: false
+phase: probe
+order: 50
+api_version: "1.0"
+tests: tests/fixtures/jwt-token-exposure/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: jwt

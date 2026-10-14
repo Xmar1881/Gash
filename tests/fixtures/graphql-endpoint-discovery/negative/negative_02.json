@@ -1,0 +1,1 @@
+{"body": "{\"error\":\"Not found\"}", "control_body": "", "control_status": 0, "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "JSON error response - no GraphQL", "status": 404, "target": "http://example.com/api/users"}

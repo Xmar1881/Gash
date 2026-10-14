@@ -80,7 +80,7 @@ func ParseTier1YAML(path string, data []byte) (*plugin.PluginSpec, *Tier1File, e
 	if f.Oracle.Name == "" {
 		return nil, nil, fmt.Errorf("tier1 %s: oracle.name zorunlu: %w", path, plugin.ErrValidation)
 	}
-	if err := plugin.CheckOOBOracle(f.Oracle.Name, f.PluginSpec.OOB, f.PluginSpec.ID); err != nil {
+	if err := plugin.CheckOOBOracle(f.Oracle.Name, f.OOB, f.ID); err != nil {
 		return nil, nil, fmt.Errorf("tier1 %s: %w", path, err)
 	}
 	if ww, err := IsWorldWritable(path); err == nil && ww {

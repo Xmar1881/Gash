@@ -1,6 +1,6 @@
 SPDX-License-Identifier: AGPL-3.0-only | Copyright (C) 2026 Xmar1881 / GASH contributors | Modul: github.com/Xmar1881/Gash
 
-# GASH v2 - Kanit Standardi (Faz 1)
+# Gash - Kanit Standardi (Faz 1)
 
 - Durum: Faz 1 ciktisi, KOD YOK. benioku.txt 3.3 tablosunun genisletilmis hali.
 - Modul: github.com/Xmar1881/Gash. Lisans: AGPL-3.0-only.

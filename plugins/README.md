@@ -19,11 +19,33 @@ discovers this tree automatically; no enable flag exists.
 | Plugin | Tier | Oracle | File |
 |---|---|---|---|
 | missing-security-headers | Tier 1 | header | `headers/missing-security-headers.yaml` |
+| cookie-flags | Tier 1 | cookie | `cookies/cookie-flags.yaml` |
+| cors-misconfig | Tier 1 | cors | `cors/cors-misconfig.yaml` |
 | open-redirect-param | Tier 1 | redirect | `redirect/open-redirect-param.yaml` |
 | xss-reflected-basic | Tier 2 | reflection | `xss/xss-reflected-basic.js` |
 | sqli-error-based | Tier 2 | error | `sqli/sqli-error-based.js` |
 | sqli-boolean-differential | Tier 2 | differential | `sqli/sqli-boolean-differential.js` |
 | ssrf-blind-oob | Tier 2 | oob (required) | `ssrf/ssrf-blind-oob.js` |
+| dom-sink-basic | Tier 2 | execution (static, firm max) | `xss/dom-sink-basic.js` |
+| sqli-auth-bypass | Tier 1 | error | `sqli/sqli-auth-bypass.yaml` |
+| sqli-stacked-time | Tier 1 | timing | `sqli/sqli-stacked-time.yaml` |
+| sqli-time-based | Tier 1 | timing | `sqli-time-based/sqli-time-based.yaml` |
+| ssrf-cloud-metadata | Tier 1 | reflection | `ssrf/ssrf-cloud-metadata.yaml` |
+| xss-attribute-injection | Tier 1 | reflection | `xss/xss-attribute-injection.yaml` |
+| crlf-header-injection | Tier 1 | header | `crlf/crlf-header-injection.yaml` |
+| path-traversal-error | Tier 1 | error | `path-traversal/path-traversal-error.yaml` |
+| error-message-disclosure | Tier 1 | error | `error-disclosure/error-message-disclosure.yaml` |
+| jwt-token-exposure | Tier 1 | header | `jwt-exposure/jwt-token-exposure.yaml` |
+| jwt-alg-confusion | Tier 1 | header | `jwt-alg-confusion/jwt-alg-confusion.yaml` |
+| graphql-endpoint-discovery | Tier 1 | version | `graphql-discovery/graphql-endpoint-discovery.yaml` |
+| file-upload-unrestricted | Tier 1 | error | `file-upload/file-upload-unrestricted.yaml` |
+| template-injection-reflection | Tier 1 | reflection | `template-injection/template-injection-reflection.yaml` |
+| xxe-oob | Tier 1 | oob (required) | `xxe/xxe-oob.yaml` |
+| blind-sqli-oob | Tier 1 | oob (required) | `blind-sqli-oob/blind-sqli-oob.yaml` |
+| idor-differential | Tier 1 | differential | `idor/idor-differential.yaml` |
+| ldap-injection-differential | Tier 1 | differential | `ldap-injection/ldap-injection-differential.yaml` |
+| command-injection-error | Tier 1 | error | `command-injection/command-injection-error.yaml` |
+| server-version-disclosure | Tier 1 | version | `version-disclosure/server-version-disclosure.yaml` |
 | poc-native-header-check | Tier 3 | header | `native/poc-native-header-check.gashplugin.yaml` |
 
 ## Testing

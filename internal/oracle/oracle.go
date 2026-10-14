@@ -42,6 +42,10 @@ type Oracle interface {
 }
 
 // guard ortak ön adımdır: Untrusted/taint → reject (atlamasız).
+// WAF engeli burada bulguya değil çözüme bağlanır: blok sayfa reddedilir,
+// ancak probe agresif modda bypass varyantıyla temiz yanıt alırsa o yanıt
+// normal doğrulanır (internal/wafbypass + probe.EnableWAFBypass). Sessiz
+// düşürme YOKTUR — WAF varlığı Report.Stats'ta (waf_detected) taşınır.
 func guard(cls baseline.Classification, tainted bool) *Evidence {
 	if cls.Untrusted {
 		return &Evidence{Verdict: VerdictReject, Note: "baseline untrusted (WAF/blok) — kanıt olamaz"}

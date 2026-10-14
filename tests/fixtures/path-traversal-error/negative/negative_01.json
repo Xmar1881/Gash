@@ -1,0 +1,1 @@
+{"body": "<html><body>File not found</body></html>", "control_body": "<html><body>File not found</body></html>", "control_status": 200, "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "Generic 404 - not path traversal", "status": 404, "target": "http://example.com/?file=test.txt"}

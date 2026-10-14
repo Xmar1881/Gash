@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/idor/idor-differential.yaml
+# What: Tier 1 active IDOR detector using differential oracle.
+# Why: Insecure Direct Object References confirmed via differential response analysis (3/3 stability).
+
+id: idor-differential
+name: Insecure Direct Object Reference (Differential)
+description: Detects IDOR via differential boolean response analysis on object identifiers.
+author: GASH contributors
+severity: high
+tags: [idor, authorization, broken-access-control, differential, boolean]
+safe: false
+deep: false
+active: true
+requires_auth: true
+max_requests: 200
+phase: probe
+order: 60
+api_version: "1.0"
+tests: tests/fixtures/idor-differential/
+request:
+  method: GET
+  param_names: ["id", "user_id", "account_id", "order_id", "item_id", "resource_id", "object_id"]
+  payload: "1"
+oracle:
+  name: differential

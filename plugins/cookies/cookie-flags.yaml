@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/cookies/cookie-flags.yaml
+# What: Tier 1 passive cookie-flag plugin (Secure/HttpOnly/SameSite).
+# Why: Logic-based deterministic check; missing HttpOnly confirms, missing
+#   SameSite alone firms, Secure is graded by target scheme.
+
+id: cookie-flags
+name: Insecure Cookie Flags
+description: Detects cookies missing Secure, HttpOnly, or SameSite flags via passive Set-Cookie analysis.
+author: GASH contributors
+severity: medium
+tags: [cookies, misconfig]
+safe: true
+deep: false
+active: false
+requires_auth: false
+phase: probe
+order: 11
+api_version: "1.0"
+tests: tests/fixtures/cookie-flags/
+request:
+  method: GET
+oracle:
+  name: cookie
