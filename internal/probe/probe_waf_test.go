@@ -58,11 +58,70 @@ func TestSendWAFBypassHeaderOnly(t *testing.T) {
 	if !resp.WAFDetected {
 		t.Fatal("orijinal engel WAFDetected taşınmalı")
 	}
-	if !strings.Contains(resp.ClassifyNote, "waf-bypass:header-only") {
+	if !strings.Contains(resp.ClassifyNote, "waf-bypass-verified:header-only") {
 		t.Fatalf("teknik nota işlenmeli: %q", resp.ClassifyNote)
 	}
 	if det, byp := c.WAFStats(); det != 1 || byp != 1 {
 		t.Fatalf("stats detected=1 bypassed=1 olmalı, got %d/%d", det, byp)
+	}
+}
+
+func TestSendWAFDoesNotCountAuthSoft404OrDynamicResponses(t *testing.T) {
+	cases := []struct {
+		name   string
+		body   func(int) string
+		status int
+	}{
+		{name: "auth rejection", status: http.StatusOK, body: func(int) string { return "<html>Please log in to continue</html>" }},
+		{name: "soft 404", status: http.StatusOK, body: func(int) string { return "<html><h1>Page not found</h1></html>" }},
+		{name: "dynamic response", status: http.StatusOK, body: func(n int) string { return "<html>request id=" + string(rune('a'+n)) + "</html>" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			count := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("X-Forwarded-For") != "127.0.0.1" {
+					w.WriteHeader(http.StatusForbidden)
+					_, _ = w.Write([]byte("request blocked by waf"))
+					return
+				}
+				body := tc.body(count)
+				count++
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(body))
+			}))
+			defer srv.Close()
+			c, ctx := wafTestClient(true)
+			resp, err := c.Send(ctx, http.MethodGet, srv.URL+"/s?q=1", nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.WAFBypassed {
+				t.Fatalf("%s bypass olarak sayilmamali: %+v", tc.name, resp)
+			}
+			if _, bypassed := c.WAFStats(); bypassed != 0 {
+				t.Fatalf("%s bypass sayaci artmamali: %d", tc.name, bypassed)
+			}
+		})
+	}
+}
+
+func TestSendDoesNotTreatGenericForbiddenAsWAF(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("authorization required"))
+	}))
+	defer srv.Close()
+	c, ctx := wafTestClient(true)
+	resp, err := c.Send(ctx, http.MethodGet, srv.URL+"/private", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.WAFBypassed {
+		t.Fatal("generic authorization 403 must not be treated as a WAF bypass")
+	}
+	if detected, bypassed := c.WAFStats(); detected != 0 || bypassed != 0 {
+		t.Fatalf("generic authorization 403 must not change WAF stats: %d/%d", detected, bypassed)
 	}
 }
 

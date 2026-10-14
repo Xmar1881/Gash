@@ -13,6 +13,19 @@ Why: Unimplemented paths stay documented with reasons instead of silent gaps.
 This file records what Gash deliberately does not do, with the technical
 reason for each. Nothing here is implied as covered elsewhere.
 
+## Reflected XSS execution proof: static-only boundary
+
+The reflection oracle separates HTML text, ordinary attributes, URL
+attributes, event-handler attributes, executable JavaScript, JavaScript
+strings/comments, and inert JSON script blocks. A random canary reflection is
+at most `tentative`; `confirmed` requires a recognizable execution payload,
+a clean control response, and no inline-execution-blocking CSP. This is not a
+browser proof. Stored-XSS write/render workflows and DOM source-to-sink
+browser execution remain `unsupported`/`blocked`; see the DOM metric report.
+
+The current reflected-XSS fixture result is TP=2, FP=0, TN=8, FN=0. It must
+not be generalized to real-target recall.
+
 ## Chunked Transfer-Encoding bypass: BLOCKED (transport)
 
 WAF bypass mutations cover header bypass, HPP duplication, double URL
@@ -21,6 +34,15 @@ Chunked Transfer-Encoding Kali-style body splitting is absent: Go `net/http`
 owns framing and exposes no manual chunk-size control, so a raw-TCP transport
 would be needed. WAF evasion therefore never relies on chunking, and no
 chunked claim appears in reports. See `internal/wafbypass/wafbypass.go`.
+
+## WAF bypass success rate: unmeasured outside controlled tests
+
+The scanner records WAF observation separately from bypass verification.
+Aggressive mode is opt-in, scope-checked, and bounded to five mutations. A
+non-block status alone is never a bypass: the same mutation must produce two
+stable application responses and must not look like authentication rejection,
+soft-404, challenge, error, or dynamic noise. The repository has hermetic
+regression tests for these cases, but no real-WAF success rate is claimed.
 
 ## CAA DNS checks: absent (stdlib gap)
 

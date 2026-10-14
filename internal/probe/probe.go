@@ -172,7 +172,7 @@ func (c *Client) Send(ctx context.Context, method, rawURL string, headers map[st
 	if r.WAFDetected {
 		c.wafDetected.Add(1)
 	}
-	if !c.enableWAFBypass || !wafbypass.IsBlocked(r.Status, r.Headers, r.Body) {
+	if !c.enableWAFBypass || !wafbypass.ShouldAttemptBypass(r.Status, r.Headers, r.Body) {
 		return r, nil
 	}
 	for _, att := range wafbypass.BuildAttempts(rawURL, headers, body) {
@@ -186,9 +186,18 @@ func (c *Client) Send(ctx context.Context, method, rawURL string, headers map[st
 		if wafbypass.IsBlocked(r2.Status, r2.Headers, r2.Body) {
 			continue
 		}
+		// A non-block response is only a candidate. Replay the exact variant
+		// once and require stable application behavior before counting it.
+		check, err := c.doSingle(ctx, method, att.URL, att.Headers, att.Body)
+		if err != nil || !wafbypass.VerifyApplicationBehavior(
+			r2.Status, r2.Headers, r2.Body,
+			check.Status, check.Headers, check.Body,
+		) {
+			continue
+		}
 		r2.WAFDetected = r.WAFDetected || r2.WAFDetected
 		r2.WAFBypassed = true
-		r2.ClassifyNote += " + waf-bypass:" + att.Name
+		r2.ClassifyNote += " + waf-bypass-verified:" + att.Name
 		c.wafBypassed.Add(1)
 		return r2, nil
 	}

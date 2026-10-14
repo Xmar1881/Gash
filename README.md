@@ -12,13 +12,26 @@ Why: One page for purpose, model, quickstart, docs, metrics, and license.
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Go](https://img.shields.io/badge/Go-1.26.8-00ADD8?logo=go)](go.mod)
-[![CI](https://img.shields.io/badge/CI-plugin--ci-passing-green)](.github/workflows/plugin-ci.yml)
+[![CI](https://github.com/Xmar1881/Gash/actions/workflows/plugin-ci.yml/badge.svg)](https://github.com/Xmar1881/Gash/actions/workflows/plugin-ci.yml)
 [![Release](https://img.shields.io/badge/release-v0.1.0--dev-orange)](CHANGELOG.md)
 
-> Badges above are placeholders until the first GitHub release is published;
-> CI status becomes live after push (see `.github/workflows/plugin-ci.yml`).
+> Evidence first. Plugins everywhere. Findings you can defend.
 
-## Purpose
+Gash is a Go-native, plugin-driven web security scanner for teams that care
+about signal, explainability, and controlled execution. It is not a regex bag
+with a logo: plugins propose candidates, engine-owned oracles decide whether
+those candidates deserve to become findings.
+
+## At A Glance
+
+| Core | Plugins | Proof | Output |
+|---|---|---|---|
+| Go 1.26.8 | YAML, sandboxed JS, trusted native gRPC | Control, repeat, baseline, context | SARIF, JSON, text, HTML, JUnit |
+
+`safe` is the default. `deep`, `active`, `aggressive`, and OOB behavior are
+explicit opt-ins. Scan only systems you own or have written permission to test.
+
+## What Gash Is
 
 Gash is a Go-core, hybrid-plugin security scanner engine. Community plugins
 drop in as single files; engine-owned oracles decide what becomes a finding.
@@ -27,6 +40,16 @@ The scanner runs with zero plugins and still emits a valid empty report.
 Module `github.com/Xmar1881/Gash`, toolchain `go1.26.8`, license
 `AGPL-3.0-only`. Scan only targets you own or have explicit written
 permission to test; `--scope` keeps the allowlist tight.
+
+### The Evidence Pipeline
+
+```text
+Target -> PolicySession -> Plugin -> Candidate -> Oracle -> Evidence -> Finding
+```
+
+Every tier compiles to the same internal model. The engine owns scope,
+budgets, rate limits, verification, confidence, and report generation. A
+plugin can suggest a lead; it cannot mint proof.
 
 ## Key Features
 
@@ -53,6 +76,10 @@ permission to test; `--scope` keeps the allowlist tight.
 - **WAF-aware, not stealthy:** WAF blocks become `WAFDetected` stats, never
   silent drops. Aggressive mode retries at most 5 scoped variants
   (header/HPP/encode/comment/case); block pages never count as evidence.
+  Bypass is reported only after a stable, clean application response.
+- **Reflection-aware XSS checks:** HTML, attribute, executable URL, JavaScript,
+  inert script, JSON, comment, and CSP contexts are separated. A reflected
+  canary alone is not a confirmed execution finding.
 - **Protocol recon:** TLS observation (`confirmed`), SPF/DMARC reads
   (`firm`), explicit TCP banners (`tentative`, `--active` only), all
   scope-checked. CAA and chunked-TE are documented gaps, not silent.
@@ -69,6 +96,14 @@ permission to test; `--scope` keeps the allowlist tight.
   rules.
 - **Machine reports:** SARIF 2.1.0 primary (CI code scanning), plus JSON,
   text, HTML, and JUnit. Tentative stays hidden unless `--show-tentative`.
+
+## Reality Check
+
+The current fixture corpus is measured and reproducible: the reflected XSS
+dataset reports `TP=2 FP=0 TN=8 FN=0`. That is a corpus result, not a claim of
+real-world recall across every framework, browser, WAF, or application shape.
+Real headless execution, a compose lab, and a Nuclei comparison remain tracked
+work in [`docs/known-limits.md`](docs/known-limits.md).
 
 ## How It Differs
 
@@ -91,10 +126,22 @@ Use Nuclei for template breadth, ZAP for proxy/crawl coverage, Burp for
 manual depth. Use Gash when you want a small, auditable core where no plugin
 — however sloppy — can mint a finding without engine-grade evidence.
 
-## Quickstart
+## Try It In 60 Seconds
 
 Prerequisite: Go 1.26.8+ on `PATH`. All commands run from the repo root.
 Scan only targets you own or have explicit written permission to test.
+
+```sh
+go run ./cmd/gash plugins list
+go test ./...
+go run ./cmd/gash plugins test plugins/xss/xss-reflected-basic.js
+go run ./cmd/gash scan --target http://localhost:8080 --scope localhost
+```
+
+The last command is intentionally scoped to localhost. Replace it only with a
+target you are authorized to test.
+
+## Quickstart
 
 Linux / macOS (`sh`) — 4 commands:
 
@@ -208,6 +255,7 @@ only shows help and waits for `Enter`; run it from a terminal instead:
 | `docs/api-discovery.md` | OpenAPI test-plan flow |
 | `docs/proto-checks.md` | DNS/TLS/TCP checks and CAA gap |
 | `docs/known-limits.md` | BLOCKED register (chunked-TE, CAA, headless, benchmark) |
+| `docs/technical-audit-2026-10-14.md` | Latest technical audit, priorities, and measured status |
 | `docs/report-formats.md` | JSON/SARIF/text/HTML/JUnit contracts |
 | `docs/ci-integration.md` | CI gates (`--fail-on`, corpus, bench) |
 | `docs/detector-inventory.md` | Oracle and plugin catalog |

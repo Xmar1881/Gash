@@ -16,7 +16,7 @@ func cls() baseline.Classification { return baseline.Classification{Note: "norma
 
 func TestReflectionConfirmed(t *testing.T) {
 	var o ReflectionOracle
-	ev, err := o.Verify(context.Background(), `<script>gash_abc123</script>`, nil, cls(), false, ReflectionParams{
+	ev, err := o.Verify(context.Background(), `<script>alert(gash_abc123)</script>`, nil, cls(), false, ReflectionParams{
 		Canary: "gash_abc123", RequireExecutableContext: true, ControlBody: `<p>zzz</p>`,
 	})
 	if err != nil {
@@ -85,6 +85,79 @@ func TestReflectionStyleTentative(t *testing.T) {
 	}
 }
 
+func TestReflectionNonExecutableScriptFormsReject(t *testing.T) {
+	var o ReflectionOracle
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "quoted string", body: `<script>const value = "gash_abc123";</script>`},
+		{name: "line comment", body: `<script>// gash_abc123
+alert(1)</script>`},
+		{name: "block comment", body: `<script>/* gash_abc123 */ alert(1)</script>`},
+		{name: "json", body: `<script type="application/json">{"value":"gash_abc123"}</script>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ContextOf(tc.body, "gash_abc123"); got == "script" {
+				t.Fatalf("non-executable script form classified as script: %q", got)
+			}
+			ev, err := o.Verify(context.Background(), tc.body, nil, cls(), false, ReflectionParams{
+				Canary: "gash_abc123", Contexts: []string{"script"},
+				RequireExecutableContext: true, ControlBody: `<p>clean</p>`,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ev.Verdict != VerdictReject || ev.ConfidenceContribution == "confirmed" {
+				t.Fatalf("non-executable script must reject: %+v", ev)
+			}
+		})
+	}
+}
+
+func TestReflectionCanaryNeedsExecutionPayload(t *testing.T) {
+	var o ReflectionOracle
+	ev, err := o.Verify(context.Background(), `<script>gash_abc123</script>`, nil, cls(), false, ReflectionParams{
+		Canary: "gash_abc123", Contexts: []string{"script"},
+		RequireExecutableContext: true, ControlBody: `<p>clean</p>`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Verdict != VerdictAccept || ev.ConfidenceContribution != "tentative" {
+		t.Fatalf("bare canary must not be confirmed: %+v", ev)
+	}
+}
+
+func TestReflectionContextsAreEnforced(t *testing.T) {
+	var o ReflectionOracle
+	ev, err := o.Verify(context.Background(), `<div onerror="alert(gash_abc123)">x</div>`, nil, cls(), false, ReflectionParams{
+		Canary: "gash_abc123", Contexts: []string{"html"},
+		RequireExecutableContext: true, ControlBody: `<p>clean</p>`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Verdict != VerdictReject {
+		t.Fatalf("disallowed event-handler context must reject: %+v", ev)
+	}
+}
+
+func TestReflectionCSPDowngradesInlineExecution(t *testing.T) {
+	var o ReflectionOracle
+	h := http.Header{"Content-Security-Policy": []string{"default-src 'self'"}}
+	ev, err := o.Verify(context.Background(), `<script>alert(gash_abc123)</script>`, h, cls(), false, ReflectionParams{
+		Canary: "gash_abc123", Contexts: []string{"script"},
+		RequireExecutableContext: true, ControlBody: `<p>clean</p>`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Verdict != VerdictAccept || ev.ConfidenceContribution != "tentative" {
+		t.Fatalf("CSP-blocked inline execution must be tentative: %+v", ev)
+	}
+}
+
 func TestReflectionURLPrecision(t *testing.T) {
 	// Metin yansıması, 200 karakter yakınında ilgisiz bir `href=` var diye
 	// `url` sayılmamalı (eski pencere sezgisinin FP'si). Bağlam tokenizer
@@ -103,9 +176,9 @@ func TestReflectionControlIndistinguishable(t *testing.T) {
 	var o ReflectionOracle
 	// Kontrol yanıtı da aynı executable bağlamda canary taşıyorsa aday ayırt
 	// edici değildir → reject (kontrolsüz confirmed YOK kuralı).
-	ev, err := o.Verify(context.Background(), `<script>gash_abc123</script>`, nil, cls(), false, ReflectionParams{
+	ev, err := o.Verify(context.Background(), `<script>alert(gash_abc123)</script>`, nil, cls(), false, ReflectionParams{
 		Canary: "gash_abc123", RequireExecutableContext: true,
-		ControlBody: `<script>gash_abc123</script>`,
+		ControlBody: `<script>alert(gash_abc123)</script>`,
 	})
 	if err != nil {
 		t.Fatal(err)

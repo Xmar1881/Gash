@@ -261,9 +261,13 @@ func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File
 				reqExecutable = b
 			}
 		}
+		contexts := getStringSliceParam(oracleParams, "contexts")
+		if len(contexts) == 0 {
+			contexts = []string{"html", "attr", "attr-executable", "script", "url", "url-executable"}
+		}
 		ev, err := o.Verify(ctx, body, headers, cls, false, oracle.ReflectionParams{
 			Canary:                   canary,
-			Contexts:                 []string{"html", "attr", "script"},
+			Contexts:                 contexts,
 			RequireExecutableContext: reqExecutable,
 			ControlBody:              ctrlBody,
 		})

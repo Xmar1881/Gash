@@ -47,7 +47,7 @@ PASS. Precision 1.00 is above the 0.99 gate. Corpus holds 0 findings.
 
 ## Dataset
 
-- Dataset hash: `1075e0bd49b4d03ec69092278d800e093c4c8d093b7e73d2298990daa56cff15` (sha256 over all 4 fixture files under `tests/fixtures/idor-differential/`).
+- Dataset hash: `26e742461f24fb1776c57a6379be814bd89f80b860967a6216cd293a89614556` (sha256 over all 4 fixture files under `tests/fixtures/idor-differential/`).
 - Samples: TP=2, FP=0, TN=2, FN=0. Fixture-only measurement; lab pending above.
   `TestMetricGate` fails the build if this hash drifts from the fixtures.
 

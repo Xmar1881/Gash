@@ -48,7 +48,7 @@ PASS. Precision 1.00 is above the 0.99 gate. Corpus holds 0 `firm` plus.
 
 ## Dataset
 
-- Dataset hash: `615fe43b84d2104390908019e2c0e3345b5b6c7f22855b37dd0b938d458b0b48`
+- Dataset hash: `b2e72eaf9a8cfa360f8ff0ba5c2d8b3b8b2306a57f61af4923c851ff3833dd35`
   (sha256 over all 4 fixture files under `tests/fixtures/jwt-token-exposure/`).
 - Samples: TP=2, FP=0, TN=2, FN=0. Fixture-only measurement; lab pending above.
   `TestMetricGate` fails the build if this hash drifts from the fixtures.

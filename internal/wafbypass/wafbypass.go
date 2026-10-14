@@ -78,6 +78,59 @@ func IsBlocked(status int, headers http.Header, body []byte) bool {
 	return status == http.StatusForbidden || status == http.StatusTooManyRequests
 }
 
+// ShouldAttemptBypass is narrower than IsBlocked. A generic 401/403 can be an
+// authentication or authorization decision, not a WAF. Mutating credentials
+// or retrying such a response would create both noise and unnecessary load.
+func ShouldAttemptBypass(status int, headers http.Header, body []byte) bool {
+	if status == http.StatusUnauthorized || containsAuthRejection(body) {
+		return false
+	}
+	cls := baseline.ClassifyStatic(status, headers, body)
+	return cls.WAFDetected || status == http.StatusTooManyRequests
+}
+
+// VerifyApplicationBehavior requires two equivalent, non-blocking application
+// responses. A single changed status or a different dynamic body is only a
+// bypass candidate, never a measured bypass.
+func VerifyApplicationBehavior(status1 int, headers1 http.Header, body1 []byte, status2 int, headers2 http.Header, body2 []byte) bool {
+	if !isApplicationResponse(status1, headers1, body1) || !isApplicationResponse(status2, headers2, body2) {
+		return false
+	}
+	if status1 != status2 {
+		return false
+	}
+	// Do not reuse baseline masking here. Masking is useful for differential
+	// analysis, but a bypass counter must not turn changing dynamic responses
+	// into an apparently stable application response.
+	return string(body1) == string(body2)
+}
+
+func isApplicationResponse(status int, headers http.Header, body []byte) bool {
+	if status < http.StatusOK || status >= http.StatusMultipleChoices || len(body) == 0 || IsBlocked(status, headers, body) {
+		return false
+	}
+	lower := strings.ToLower(string(body))
+	for _, marker := range []string{
+		"unauthorized", "authentication required", "login required", "please log in",
+		"sign in", "access denied", "not found", "page does not exist", "no such page", "soft 404", "404",
+	} {
+		if strings.Contains(lower, marker) {
+			return false
+		}
+	}
+	return true
+}
+
+func containsAuthRejection(body []byte) bool {
+	lower := strings.ToLower(string(body))
+	for _, marker := range []string{"unauthorized", "authentication required", "login required", "please log in", "sign in", "authorization required"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // MutateValue tek bir query/form değerine teknik uygular.
 func MutateValue(v, technique string) string {
 	switch technique {

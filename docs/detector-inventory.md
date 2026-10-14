@@ -4,6 +4,14 @@ This document catalogs all detectors (oracles + plugins) in GASH, their test cov
 
 ## Oracles (Engine-Owned)
 
+`reflection` now enforces the requested context set. It distinguishes HTML
+text, ordinary attributes, URL attributes, event-handler attributes,
+executable JavaScript, JavaScript strings/comments, and inert JSON script
+blocks. A random canary is not execution proof; confirmed XSS requires an
+execution payload, a clean control, and no blocking inline CSP. Browser DOM
+execution, Stored XSS write/render flows, and real-target recall remain
+unmeasured or blocked as noted below.
+
 | Oracle | Plugin(s) Using | Tier | Confidence Ladder | Requires Control | Active Probing | OOB | Notes |
 |--------|-----------------|------|-------------------|------------------|----------------|-----|-------|
 | `reflection` | XSS plugins | 1/2/3 | tentative → firm → confirmed | Yes (for confirmed) | Yes (canary injection) | No | HTML tokenizer + context analysis; GASH-001/002/007/009/011/014/017 |
@@ -31,7 +39,7 @@ This document catalogs all detectors (oracles + plugins) in GASH, their test cov
 
 | Plugin ID | Oracle | Phase | Safe | Active | Deep | Severity | Tags | Fixture Path |
 |-----------|--------|-------|------|--------|------|----------|------|--------------|
-| `xss-reflected-basic` | reflection | probe | true | false | false | high | xss, client | `tests/fixtures/xss-reflected-basic/` |
+| `xss-reflected-basic` | reflection | probe | false | true | false | high | xss, client | `tests/fixtures/xss-reflected-basic/` |
 | `sqli-error-based` | error | probe | true | false | false | high | sqli, injection | `tests/fixtures/sqli-error-based/` |
 | `sqli-boolean-differential` | differential | probe | true | false | false | high | sqli, injection | `tests/fixtures/sqli-boolean-differential/` |
 | `ssrf-blind-oob` | oob | probe | false | true | false | critical | ssrf, blind, oob | `tests/fixtures/ssrf-blind-oob/` |
@@ -78,6 +86,21 @@ This document catalogs all detectors (oracles + plugins) in GASH, their test cov
 ## Fixture Coverage
 
 Each oracle has positive/negative fixture sets under `tests/fixtures/<plugin-id>/positive/` and `negative/`. The `plugintest.Run` evaluates precision/recall against these.
+
+The reflected-XSS fixture set currently measures TP=2, FP=0, TN=8, FN=0
+(dataset hash `c928c76632bff8dc2ffd84050584e72a407977635eb209ad1f41c6e212c574bd`).
+The set includes executable payloads, text/encoded/comment/style reflections,
+JavaScript strings, and `application/json` script data. This is a fixture
+measurement, not browser execution or real-target recall.
+
+## WAF Measurement Boundary
+
+`probe.Client` separates `waf_detected` from `waf_bypassed`. Aggressive mode
+tries at most five scoped mutations, and increments `waf_bypassed` only after
+two equivalent non-blocking application responses. Auth rejection, soft-404,
+challenge/error pages, and unstable dynamic bodies do not count. No real WAF
+or external lab bypass rate is measured in this repository; such results stay
+`unmeasured` until an authorized, pinned lab run is recorded.
 
 ## Gap Analysis (P1.2 Profile Impact)
 

@@ -55,7 +55,7 @@ PASS. Precision 1.00 is above the 0.99 gate. Corpus holds 0 `firm` plus.
 
 ## Dataset
 
-- Dataset hash: `8c69c69460faf6482a5a89715f4d7d33c9be240b76e623ca57c506db642fb07b`
+- Dataset hash: `88b7f12f2ec8e683929475bcf3f50812775bb560fb1f00f8728132a405a497db`
   (sha256 over all 4 fixture files under `tests/fixtures/ssrf-blind-oob/`).
 - Samples: TP=2, FP=0, TN=2, FN=0 on the mocked callback path.
   Fixture-only measurement; lab pending above. `TestMetricGate` fails the

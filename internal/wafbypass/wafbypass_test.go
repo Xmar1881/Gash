@@ -90,6 +90,28 @@ func TestIsBlocked(t *testing.T) {
 	}
 }
 
+func TestShouldAttemptBypassSeparatesWAFFromAuth(t *testing.T) {
+	if !ShouldAttemptBypass(403, nil, []byte("request blocked by waf")) {
+		t.Fatal("WAF-marked 403 should be eligible for an opt-in attempt")
+	}
+	if ShouldAttemptBypass(403, nil, []byte("authorization required")) {
+		t.Fatal("generic authorization 403 must not trigger bypass attempts")
+	}
+}
+
+func TestVerifyApplicationBehaviorRequiresStableCleanResponse(t *testing.T) {
+	body := []byte("<html>application page</html>")
+	if !VerifyApplicationBehavior(200, nil, body, 200, nil, body) {
+		t.Fatal("stable application responses should verify")
+	}
+	if VerifyApplicationBehavior(200, nil, []byte("request id=a"), 200, nil, []byte("request id=b")) {
+		t.Fatal("dynamic responses must not verify")
+	}
+	if VerifyApplicationBehavior(200, nil, []byte("login required"), 200, nil, []byte("login required")) {
+		t.Fatal("authentication rejection must not verify")
+	}
+}
+
 func TestBuildAttemptsBounded(t *testing.T) {
 	atts := BuildAttempts("http://example.com/s?id=1' OR 1=1", nil, nil)
 	if len(atts) == 0 || len(atts) > MaxAttempts {

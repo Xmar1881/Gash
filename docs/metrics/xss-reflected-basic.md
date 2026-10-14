@@ -12,10 +12,12 @@ Why: Proves the spec section 4.6 JS example meets the gate with controls.
 
 ## Overview
 
-Tier 2 plugin following the specification section 4.6 JavaScript example.
-Oracle `reflection` over `html`, `attr`, and `script` contexts. Executable
-reflection plus clean control confirms; text or encoded reflection stays
-`tentative`.
+Tier 2 active plugin following the specification section 4.6 JavaScript
+example. The probe sends `alert(canary)`: a random canary reflection alone is
+not an XSS proof. Oracle `reflection` separates HTML, attributes, executable
+attributes, URLs, JavaScript code, strings/comments, and inert JSON blocks.
+Executable payload plus clean control confirms; text or encoded reflection
+stays `tentative`.
 
 ## Evidence Standard
 
@@ -25,9 +27,9 @@ WAF block pages are untrusted and always reject. Missing reflection rejects.
 ## Fixtures
 
 - Positive: 2 of 2 accepted at `confirmed` (script block, event handler).
-- Negative: 6 of 6 clean (text stays `tentative`, encoded at most `tentative`,
+- Negative: 8 of 8 clean (text stays `tentative`, encoded at most `tentative`,
   WAF rejects, absent reflection rejects, comment reflection rejects,
-  style context at most `tentative`).
+  style context at most `tentative`, JavaScript strings and JSON reject).
 - Command: `go run ./cmd/gash plugins test plugins/xss/xss-reflected-basic.js`
 
 ## Corpus Result
@@ -62,10 +64,10 @@ behaviour, not a plugin weakness.
 
 ## Dataset
 
-- Dataset hash: `230171a4d90350320c35af275f48a513e2a73ac952a13f6af95bdcee5ee6bd17`
-  (sha256 over all 8 fixture files under `tests/fixtures/xss-reflected-basic/`).
-- Samples: TP=2, FP=0, TN=6, FN=0. Fixture-only measurement; lab pending above.
-- Scope: script/attr-executable/text/encoded/comment/style/URL contexts.
-  Multi-layer encoding, JS-string escapes, and browser-executed DOM XSS are
-  NOT covered — see `ContextOf` limitation note in `internal/oracle/reflection.go`.
+- Dataset hash: `c928c76632bff8dc2ffd84050584e72a407977635eb209ad1f41c6e212c574bd`
+  (sha256 over all 10 fixture files under `tests/fixtures/xss-reflected-basic/`).
+- Samples: TP=2, FP=0, TN=8, FN=0. Fixture-only measurement; lab pending above.
+- Scope: script/attr-executable/text/encoded/comment/style/URL contexts,
+  JavaScript strings/comments, and JSON script blocks. Multi-layer encoding,
+  stored XSS, and browser-executed DOM XSS are NOT covered.
   `TestMetricGate` fails the build if this hash drifts from the fixtures.

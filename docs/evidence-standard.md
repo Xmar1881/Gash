@@ -78,6 +78,13 @@ oob required yalnizca GASH-008/010/012/013'tedir (+ GASH-005/006/015'te optional
 
 ### GASH-001 Reflected XSS
 
+Implementation note: a random canary reflection is not an execution proof.
+The current oracle requires the requested context to be allowed, separates
+JavaScript code from strings/comments and inert JSON script blocks, and only
+confirms a recognizable execution payload plus a clean control and no
+blocking inline CSP. A bare `<script>gash_canary</script>` is at most
+`tentative`.
+
 - Oracle: ReflectionOracle(canary=gash_hex8, contexts=[html,attr,script], require_executable_context=true).
 - confirmed kabul: canary script veya event-handler veya executable attr baglaminda yansiyor + kontrol payload'i ayni baglamda yurutulebilir degil + Untrusted yok + taint yok.
 - firm: yansima var ama baglam HTML-text (yurutulebilir degil) -> en fazla firm degil, tentative. Kural: text-baglam tek basina firm vermez.
