@@ -156,9 +156,9 @@ description: Starter Tier 2 plugin for ` + id + `; detects reflected canary in e
 author: GASH contributors
 severity: high
 tags: [xss, client]
-safe: true
+safe: false
 deep: false
-active: false
+active: true
 requires_auth: false
 phase: probe
 order: 50
@@ -178,8 +178,9 @@ function run(probe, ctx) {
   const candidates = [];
   for (const point of points) {
     const canary = probe.canary();
-    const resp = probe.send(point.withValue(canary));
-    const ev = host.oracles.reflection(resp, canary, ["html", "attr", "script"]);
+    const payload = "alert(" + canary + ")";
+    const resp = probe.send(point.withValue(payload));
+    const ev = host.oracles.reflection(resp, canary, ["html", "attr-executable", "script", "url", "url-executable"]);
     if (ev) {
       candidates.push(host.candidate(point, "reflected-xss", ev));
     }
@@ -237,7 +238,7 @@ func fixtureCases(oracle string) []fixtureCase {
 				body: map[string]any{
 					"name": "canary inside script block", "target": "http://example.com/search?q=gash_a1b2c3d4",
 					"status": 200, "headers": map[string]string{"Content-Type": "text/html"},
-					"body":                "<html><body><script>gash_a1b2c3d4</script></body></html>",
+					"body":                "<html><body><script>alert(gash_a1b2c3d4)</script></body></html>",
 					"control_body":        "<html><body><p>zzz</p></body></html>",
 					"canary":              "gash_a1b2c3d4",
 					"expected_verdict":    "accept",

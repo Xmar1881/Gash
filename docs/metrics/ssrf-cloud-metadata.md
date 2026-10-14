@@ -62,7 +62,7 @@ PASS. Precision 1.00 is above the 0.99 gate. Corpus holds 0 `firm` plus.
 
 ## Dataset
 
-- Dataset hash: `d117a1a6be1be73b1bad6f3b08434468c1a953e781cd8ccb38a6a0d5471b5c50`
+- Dataset hash: `881d9f495fe06a45062a95cedc24408b7685be9fa971a91f0f6a0ea09a9bf061`
   (sha256 over all 4 fixture files under `tests/fixtures/ssrf-cloud-metadata/`).
 - Samples: TP=2, FP=0, TN=2, FN=0. Fixture-only measurement; lab pending above.
   `TestMetricGate` fails the build if this hash drifts from the fixtures.

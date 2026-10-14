@@ -47,7 +47,7 @@ PASS. Precision 1.00 is above the 0.99 gate. Corpus holds 0 `firm` plus.
 
 ## Dataset
 
-- Dataset hash: `22bdbf3c353e0c5566a42abd75d288dce927059ca0bcfbf89806c387a2f0e4e6` (sha256 over all 4 fixture files under `tests/fixtures/file-upload-unrestricted/`).
+- Dataset hash: `b1e64595eff7dd1198a0f6938e0b398d0685e0c42b2e060f791f403d103112e4` (sha256 over all 4 fixture files under `tests/fixtures/file-upload-unrestricted/`).
 - Samples: TP=2, FP=0, TN=2, FN=0. Fixture-only measurement; lab pending above.
   `TestMetricGate` fails the build if this hash drifts from the fixtures.
 

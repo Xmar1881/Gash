@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Xmar1881 / GASH contributors
-// Modül: github.com/Xmar1881/Gash
+// Module: github.com/Xmar1881/Gash
 
 package oracle
 
@@ -15,87 +15,117 @@ import (
 	nethtml "golang.org/x/net/html"
 )
 
-// ReflectionParams benzersiz canary + bağlam analizidir (GASH-001/002/007/009/011/014/017).
+// ReflectionParams describes the canary and the contexts that are allowed to
+// support a reflection claim. Contexts is intentionally enforced by Verify;
+// it is not merely a hint for a plugin author.
 type ReflectionParams struct {
 	Canary                   string
-	Contexts                 []string // html, attr, script, url
+	Contexts                 []string // html, attr, attr-executable, script, url
 	RequireExecutableContext bool
-	ControlBody              string // temiz-kontrol (confirmed için zorunlu)
+	ControlBody              string // clean control; required for confirmed
 }
 
-// ReflectionOracle HTML tokenizer (x/net/html token stream) + bağlam makinesi kullanır.
-// Tam DOM render YOKTUR.
+// ReflectionOracle performs a tokenizer pass and a small JavaScript lexical
+// pass. It does not render a browser, so browser execution is never claimed.
 type ReflectionOracle struct{}
 
 func (ReflectionOracle) Name() string { return "reflection" }
 
-// ContextOf canary'nin bağlamını döndürür
-// (script/attr-executable/url/attr/style/html-text/comment/encoded/none).
-//
-// Sıralama disiplini (P0.1): önce tokenizer geçişi yapılır; yürütülebilir
-// bağlam (script/attr-executable) her zaman kazanır — tek bir yürütülebilir
-// yansıma bile bulgu için yeterlidir. Kodlanmışlık bitişikteki HTML-entity
-// (`&lt;` vb.) varlığıyla sezilir; ham-tokenizer bağlamı bundan etkilenmez.
-//
-// Bilinen sınırlama (dürüstlük notu): canary alfabesi (`gash_` + hex) HTML-,
-// URL- ve JS-kaçışlarında değişmez (identity) olduğundan çok katmanlı
-// kodlama ayırt edilemez; `encoded` yalnızca bitişik entity izine dayanır.
-// Bu durumda karar en fazla `tentative` olur, `firm` verilmez.
+type reflectionMatch struct {
+	Context string
+	Source  string
+}
+
+// ContextOf returns the strongest context in which canary occurs. The
+// script-string/script-comment/json results are deliberately distinct from
+// executable script: HTML tokenization alone is not JavaScript proof.
 func ContextOf(body, canary string) string {
-	if canary == "" || !strings.Contains(body, canary) {
+	matches := inspectReflection(body, canary)
+	if likelyEncoded(body, canary) {
+		return "encoded"
+	}
+	if len(matches) == 0 {
 		return "none"
 	}
-	// 1. Tokenizer geçişi: bağlam kümesi toplanır, en yüksek öncelik kazanır.
-	// Öncelik: script/attr-executable (5) > url/attr (4) > style (3) >
-	// html-text (2) > comment (1). Yorum içi `<script>` yazımı executable
-	// sayılmaz (CommentToken ayrıca ele alınır).
-	rank := map[string]int{
-		"script": 5, "attr-executable": 5,
-		"url": 4, "attr": 4,
-		"style": 3, "html-text": 2, "comment": 1,
-	}
-	best, bestRank := "none", 0
-	consider := func(ctx string) {
-		if r, ok := rank[ctx]; ok && r > bestRank {
-			best, bestRank = ctx, r
+	best := matches[0].Context
+	bestRank := contextRank(best)
+	for _, m := range matches[1:] {
+		if r := contextRank(m.Context); r > bestRank {
+			best, bestRank = m.Context, r
 		}
 	}
+	return best
+}
+
+func contextRank(ctx string) int {
+	switch ctx {
+	case "script", "attr-executable":
+		return 6
+	case "url-executable":
+		return 5
+	case "url", "attr":
+		return 4
+	case "style":
+		return 3
+	case "html-text":
+		return 2
+	case "script-string", "script-comment", "json", "script-inert":
+		return 1
+	case "comment":
+		return 0
+	default:
+		return -1
+	}
+}
+
+// inspectReflection identifies each occurrence instead of letting one high
+// level string label every canary in the response.
+func inspectReflection(body, canary string) []reflectionMatch {
+	if canary == "" || !strings.Contains(body, canary) {
+		return nil
+	}
+	var matches []reflectionMatch
+	add := func(ctx, source string) {
+		if source == "" {
+			source = body
+		}
+		matches = append(matches, reflectionMatch{Context: ctx, Source: source})
+	}
+
 	tok := nethtml.NewTokenizer(strings.NewReader(body))
 	inScript, inStyle := false, false
-	tokenizerOK := false
-loop:
+	scriptExecutable := false
+	scriptContext := "script-inert"
 	for {
 		tt := tok.Next()
 		switch tt {
 		case nethtml.ErrorToken:
-			break loop
+			return matches
 		case nethtml.CommentToken:
-			tokenizerOK = true
 			if strings.Contains(string(tok.Text()), canary) {
-				consider("comment")
+				add("comment", string(tok.Text()))
 			}
 		case nethtml.StartTagToken, nethtml.SelfClosingTagToken:
-			tokenizerOK = true
 			tn, hasAttr := tok.TagName()
-			tag := string(tn)
-			if strings.EqualFold(tag, "script") {
-				inScript = true
-			}
-			if strings.EqualFold(tag, "style") {
-				inStyle = true
-			}
+			tag := strings.ToLower(string(tn))
+			typeValue := ""
 			if hasAttr {
 				for {
 					k, v, more := tok.TagAttr()
-					ks, vs := string(k), string(v)
-					if strings.Contains(vs, canary) {
-						lk := strings.ToLower(ks)
-						if strings.HasPrefix(lk, "on") {
-							consider("attr-executable")
-						} else if lk == "href" || lk == "src" || lk == "action" {
-							consider("url")
-						} else {
-							consider("attr")
+					name, value := strings.ToLower(string(k)), string(v)
+					if tag == "script" && name == "type" {
+						typeValue = value
+					}
+					if strings.Contains(value, canary) {
+						switch {
+						case strings.HasPrefix(name, "on"):
+							add("attr-executable", value)
+						case isURLAttribute(name) && isJavaScriptURL(value):
+							add("url-executable", value)
+						case isURLAttribute(name):
+							add("url", value)
+						default:
+							add("attr", value)
 						}
 					}
 					if !more {
@@ -103,107 +133,187 @@ loop:
 					}
 				}
 			}
-		case nethtml.EndTagToken:
-			tokenizerOK = true
-			tn, _ := tok.TagName()
-			if strings.EqualFold(string(tn), "script") {
-				inScript = false
+			if tag == "script" {
+				scriptExecutable = executableScriptType(typeValue)
+				if scriptExecutable {
+					scriptContext = "script"
+				} else if isJSONScriptType(typeValue) {
+					scriptContext = "json"
+				} else {
+					scriptContext = "script-inert"
+				}
+				inScript = tt == nethtml.StartTagToken
 			}
-			if strings.EqualFold(string(tn), "style") {
+			if tag == "style" {
+				inStyle = tt == nethtml.StartTagToken
+			}
+		case nethtml.EndTagToken:
+			tn, _ := tok.TagName()
+			tag := strings.ToLower(string(tn))
+			if tag == "script" {
+				inScript = false
+				scriptExecutable = false
+				scriptContext = "script-inert"
+			}
+			if tag == "style" {
 				inStyle = false
 			}
 		case nethtml.TextToken:
-			tokenizerOK = true
-			txt := string(tok.Text())
-			if !strings.Contains(txt, canary) {
+			text := string(tok.Text())
+			if !strings.Contains(text, canary) {
 				continue
 			}
 			switch {
+			case inScript && scriptExecutable:
+				add(jsContext(text, canary), text)
 			case inScript:
-				consider("script")
+				add(scriptContext, text)
 			case inStyle:
-				consider("style")
+				add("style", text)
 			default:
-				consider("html-text")
+				add("html-text", text)
 			}
 		}
 	}
-	if bestRank >= 5 {
-		return best // yürütülebilir bağlam kesindir; kodlama bitişikliği aranmaz.
-	}
-	// 2. Kodlanmışlık sezgisi: canary oluşumunun ±48 karakter penceresinde
-	// HTML-entity (`&lt; &gt; &amp; &quot; &#...;`) veya JS-unicode kaçışı
-	// (`\u...`) varsa yansıma kodlanmış sayılır → en fazla tentative.
-	if likelyEncoded(body, canary) {
-		return "encoded"
-	}
-	if best != "none" {
-		return best
-	}
-	if !tokenizerOK {
-		return "none"
-	}
-	// 3. Bozuk HTML geri dönüşü: tokenizer hiç token üretemediyse (tokenizerOK
-	// false iken best==none olur, yukarıda dönüldü) buraya ulaşılmaz; bozuk
-	// ama kısmen okunabilen gövdelerde pencere sezgisi uygulanır.
-	return fallbackContext(body, canary)
 }
 
-// likelyEncoded canary çevresinde kodlama izi arar (bitişiklik sezgisi).
-func likelyEncoded(body, canary string) bool {
-	markers := []string{"&lt;", "&gt;", "&amp;", "&quot;", "&#", `\u`}
-	from := 0
-	for {
-		idx := strings.Index(body[from:], canary)
-		if idx < 0 {
-			return false
+func isURLAttribute(name string) bool {
+	switch name {
+	case "href", "src", "action", "formaction", "xlink:href":
+		return true
+	default:
+		return false
+	}
+}
+
+func isJavaScriptURL(value string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(value)), "javascript:")
+}
+
+func executableScriptType(value string) bool {
+	t := strings.ToLower(strings.TrimSpace(value))
+	if t == "" || t == "module" {
+		return true
+	}
+	if strings.Contains(t, ";") {
+		t = strings.TrimSpace(strings.SplitN(t, ";", 2)[0])
+	}
+	switch t {
+	case "text/javascript", "application/javascript", "text/ecmascript", "application/ecmascript":
+		return true
+	default:
+		return false
+	}
+}
+
+func isJSONScriptType(value string) bool {
+	t := strings.ToLower(strings.TrimSpace(value))
+	return strings.Contains(t, "json") || t == "importmap"
+}
+
+// jsContext classifies the canary token, not the whole script element. A
+// canary in a string or comment can coexist with executable code elsewhere,
+// but it is not evidence that the canary itself is executable.
+func jsContext(source, canary string) string {
+	const (
+		jsCode = iota
+		jsSingle
+		jsDouble
+		jsTemplate
+		jsLineComment
+		jsBlockComment
+	)
+	state := jsCode
+	foundCode, foundString, foundComment := false, false, false
+	for i := 0; i < len(source); {
+		if strings.HasPrefix(source[i:], canary) {
+			switch state {
+			case jsCode:
+				foundCode = true
+			case jsLineComment, jsBlockComment:
+				foundComment = true
+			default:
+				foundString = true
+			}
+			i += len(canary)
+			continue
 		}
-		abs := from + idx
-		lo := abs - 48
-		if lo < 0 {
-			lo = 0
-		}
-		hi := abs + len(canary) + 48
-		if hi > len(body) {
-			hi = len(body)
-		}
-		window := strings.ToLower(body[lo:hi])
-		for _, m := range markers {
-			if strings.Contains(window, m) {
-				return true
+		ch := source[i]
+		switch state {
+		case jsCode:
+			switch {
+			case ch == '/' && i+1 < len(source) && source[i+1] == '/':
+				state, i = jsLineComment, i+2
+			case ch == '/' && i+1 < len(source) && source[i+1] == '*':
+				state, i = jsBlockComment, i+2
+			case ch == '\\' && i+1 < len(source):
+				i += 2
+			case ch == '\'':
+				state, i = jsSingle, i+1
+			case ch == '"':
+				state, i = jsDouble, i+1
+			case ch == '`':
+				state, i = jsTemplate, i+1
+			default:
+				i++
+			}
+		case jsSingle, jsDouble, jsTemplate:
+			if ch == '\\' && i+1 < len(source) {
+				i += 2
+			} else if (state == jsSingle && ch == '\'') || (state == jsDouble && ch == '"') || (state == jsTemplate && ch == '`') {
+				state, i = jsCode, i+1
+			} else {
+				i++
+			}
+		case jsLineComment:
+			if ch == '\n' || ch == '\r' {
+				state = jsCode
+			}
+			i++
+		case jsBlockComment:
+			if ch == '*' && i+1 < len(source) && source[i+1] == '/' {
+				state, i = jsCode, i+2
+			} else {
+				i++
 			}
 		}
-		from = abs + len(canary)
+	}
+	if foundCode {
+		return "script"
+	}
+	if foundString {
+		return "script-string"
+	}
+	if foundComment {
+		return "script-comment"
+	}
+	return "script"
+}
+
+// likelyEncoded is intentionally local to the canary. An unrelated entity in
+// a large response must not downgrade a genuine reflection.
+func likelyEncoded(body, canary string) bool {
+	for from := 0; ; {
+		rel := strings.Index(body[from:], canary)
+		if rel < 0 {
+			return false
+		}
+		idx := from + rel
+		lo := max(0, idx-12)
+		prefix := strings.ToLower(body[lo:idx])
+		if strings.HasSuffix(prefix, "&lt;") || strings.HasSuffix(prefix, "&gt;") || strings.HasSuffix(prefix, "&amp;") || strings.HasSuffix(prefix, "&quot;") || strings.Contains(prefix, "&#") || strings.HasSuffix(prefix, `\u`) {
+			return true
+		}
+		from = idx + len(canary)
 		if from >= len(body) {
 			return false
 		}
 	}
 }
 
-// fallbackContext bozuk HTML için pencere sezgisidir (son çare).
-// Not: `href=` komşuluğu tek başına `url` kararı vermez; yalnızca pencere
-// içinde canary ile aynı attribute değerindeyse dikkate alınır. Belirsizlikte
-// html-text döner (tentative tavanı Verify'da uygulanır).
-func fallbackContext(body, canary string) string {
-	lower := strings.ToLower(body)
-	idx := strings.Index(body, canary)
-	if idx < 0 {
-		return "none"
-	}
-	window := body[max(0, idx-200):min(len(body), idx+200)]
-	if strings.Contains(lower, "<script") && strings.Contains(window, canary) {
-		return "script"
-	}
-	if strings.Contains(window, "onerror=") || strings.Contains(window, "onload=") || strings.Contains(window, "onclick=") {
-		return "attr-executable"
-	}
-	if strings.Contains(window, "=") && strings.Contains(window, canary) {
-		return "attr"
-	}
-	return "html-text"
-}
-
-// Verify yansıma + bağlam + kontrol üçlüsünü uygular (G-02: kontrolsüz confirmed YOK).
+// Verify applies baseline, allowed-context, lexical and control checks. A
+// canary alone can at most produce tentative reflection; confirmed requires a
+// recognizable execution payload plus a clean control.
 func (ReflectionOracle) Verify(ctx context.Context, body string, headers http.Header, cls baseline.Classification, tainted bool, p ReflectionParams) (*Evidence, error) {
 	if err := checkCtx(ctx); err != nil {
 		return nil, err
@@ -212,51 +322,251 @@ func (ReflectionOracle) Verify(ctx context.Context, body string, headers http.He
 		return g, nil
 	}
 	if p.Canary == "" {
-		return &Evidence{Verdict: VerdictReject, Note: "boş canary"}, nil
+		return &Evidence{Verdict: VerdictReject, Note: "empty canary"}, nil
 	}
-	if !strings.Contains(body, p.Canary) {
-		return &Evidence{Verdict: VerdictReject, Note: "yansıma yok"}, nil
+	matches := inspectReflection(body, p.Canary)
+	if len(matches) == 0 {
+		if likelyEncoded(body, p.Canary) {
+			return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceTentative, Artifacts: map[string]string{"context": "encoded", "canary": p.Canary}, Note: "encoded reflection"}, nil
+		}
+		return &Evidence{Verdict: VerdictReject, Note: "no reflection"}, nil
 	}
-	bctx := ContextOf(body, p.Canary)
-	art := map[string]string{"context": bctx, "canary": p.Canary}
-	switch bctx {
+
+	selected, proof := selectReflectionMatch(matches, p)
+	if selected == nil {
+		return &Evidence{Verdict: VerdictReject, Note: "reflection context is not allowed"}, nil
+	}
+	art := map[string]string{"context": selected.Context, "canary": p.Canary}
+	if !contextAllowed(selected.Context, p.Contexts) {
+		return &Evidence{Verdict: VerdictReject, Artifacts: art, Note: "reflection context is not allowed"}, nil
+	}
+
+	switch selected.Context {
 	case "encoded":
-		return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceTentative, Artifacts: art, Note: "encode'lu yansıma → tentative"}, nil
-	case "comment":
-		return &Evidence{Verdict: VerdictReject, Note: "yorum içi yansıma yürütülmez — kanıt olamaz"}, nil
+		return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceTentative, Artifacts: art, Note: "encoded reflection"}, nil
+	case "comment", "script-comment", "script-string", "json", "script-inert":
+		return &Evidence{Verdict: VerdictReject, Artifacts: art, Note: "non-executable reflection"}, nil
 	case "style":
-		return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceTentative, Artifacts: art, Note: "CSS bağlamı statik analizle yürütülebilirlik kanıtlanamaz → tentative"}, nil
-	case "none":
-		return &Evidence{Verdict: VerdictReject, Note: "yansıma bağlamı çözülemedi"}, nil
+		return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceTentative, Artifacts: art, Note: "CSS reflection is not execution proof"}, nil
 	case "html-text":
 		if p.RequireExecutableContext {
-			return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceTentative, Artifacts: art, Note: "text bağlam tek başına firm vermez → tentative"}, nil
+			return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceTentative, Artifacts: art, Note: "HTML text reflection is not execution proof"}, nil
 		}
-		return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceFirm, Artifacts: art, Note: "text yansıma"}, nil
-	case "script", "attr-executable":
-		// Kontrol: temiz payload aynı bağlamda yürütülebilir değil.
-		if p.ControlBody != "" && ContextOf(p.ControlBody, p.Canary) == bctx {
-			return &Evidence{Verdict: VerdictReject, Note: "kontrol de aynı executable bağlamda — ayırt edici değil"}, nil
-		}
-		if p.ControlBody == "" {
-			return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceFirm, Artifacts: art, Note: "kontrolsüz executable yansıma → firm (confirmed için kontrol zorunlu)"}, nil
-		}
-		// Kontrolde canary yoksa veya farklı bağlamdaysa confirmed.
-		if strings.Contains(p.ControlBody, p.Canary) {
-			return &Evidence{Verdict: VerdictReject, Note: "kontrolde de canary executable"}, nil
-		}
-		return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceConfirmed, Artifacts: art, Repeats: 1, ControlResult: "clean", Note: "bağlamsal yürütülebilir yansıma + kontrol"}, nil
+		return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceFirm, Artifacts: art, Note: "text reflection"}, nil
 	case "attr", "url":
 		if p.RequireExecutableContext {
-			return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceTentative, Artifacts: art, Note: "yürütülebilir olmayan bağlam → tentative"}, nil
+			return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceTentative, Artifacts: art, Note: "non-executable attribute/URL reflection"}, nil
 		}
-		if p.ControlBody != "" && !strings.Contains(p.ControlBody, p.Canary) {
-			return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceConfirmed, Artifacts: art, Repeats: 1, ControlResult: "clean"}, nil
+		return controlEvidence(p, art, selected.Context, false)
+	case "script", "attr-executable", "url-executable":
+		if strings.Contains(p.ControlBody, p.Canary) && ContextOf(p.ControlBody, p.Canary) == selected.Context {
+			return &Evidence{Verdict: VerdictReject, Artifacts: art, Note: "control also reflects in the same executable context"}, nil
 		}
-		return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceFirm, Artifacts: art}, nil
+		if p.RequireExecutableContext && !proof {
+			return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceTentative, Artifacts: art, Note: "canary reflection without an execution payload"}, nil
+		}
+		if cspBlocksInline(headers) {
+			art["csp"] = "inline-execution-blocked"
+			return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceTentative, Artifacts: art, Note: "CSP blocks inline execution"}, nil
+		}
+		return controlEvidence(p, art, selected.Context, proof)
 	default:
-		return &Evidence{Verdict: VerdictReject, Note: fmt.Sprintf("bilinmeyen bağlam %q", bctx)}, nil
+		return &Evidence{Verdict: VerdictReject, Note: fmt.Sprintf("unknown reflection context %q", selected.Context)}, nil
 	}
+}
+
+func selectReflectionMatch(matches []reflectionMatch, p ReflectionParams) (*reflectionMatch, bool) {
+	var selected *reflectionMatch
+	selectedRank := -1
+	selectedProof := false
+	for i := range matches {
+		m := &matches[i]
+		if !contextAllowed(m.Context, p.Contexts) {
+			continue
+		}
+		proof := executableProof(m.Context, m.Source, p.Canary)
+		rank := contextRank(m.Context)
+		if proof {
+			rank += 10
+		}
+		if selected == nil || rank > selectedRank {
+			selected, selectedRank, selectedProof = m, rank, proof
+		}
+	}
+	return selected, selectedProof
+}
+
+func contextAllowed(actual string, allowed []string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, raw := range allowed {
+		a := strings.ToLower(strings.TrimSpace(raw))
+		switch a {
+		case "html", "html-text":
+			a = "html-text"
+		case "script":
+			a = "script"
+		case "attr-executable", "event-handler":
+			a = "attr-executable"
+		case "url-executable", "javascript-url":
+			a = "url-executable"
+		case "json":
+			a = "json"
+		}
+		if actual == a {
+			return true
+		}
+	}
+	return false
+}
+
+func executableProof(ctx, source, canary string) bool {
+	if ctx != "script" && ctx != "attr-executable" && ctx != "url-executable" {
+		return false
+	}
+	masked := maskJSLiterals(source)
+	if !strings.Contains(masked, canary) && !strings.Contains(strings.ToLower(masked), strings.ToLower(canary)) {
+		return false
+	}
+	lower := strings.ToLower(masked)
+	markers := []string{"alert", "confirm", "prompt", "eval", "fetch", "settimeout", "setinterval", "document.write", "document.writeln", "window.open", "javascript:"}
+	for _, marker := range markers {
+		for start := 0; ; {
+			i := strings.Index(lower[start:], marker)
+			if i < 0 {
+				break
+			}
+			i += start
+			end := min(len(masked), i+256)
+			if strings.Contains(strings.ToLower(masked[i:end]), strings.ToLower(canary)) {
+				return true
+			}
+			start = i + len(marker)
+			if start >= len(lower) {
+				break
+			}
+		}
+	}
+	return false
+}
+
+// maskJSLiterals leaves code and punctuation intact while hiding strings and
+// comments. This prevents a literal "alert(gash_...)" from being treated as
+// an execution payload.
+func maskJSLiterals(source string) string {
+	b := []byte(source)
+	const (
+		code = iota
+		single
+		double
+		template
+		lineComment
+		blockComment
+	)
+	state := code
+	for i := 0; i < len(b); {
+		switch state {
+		case code:
+			switch {
+			case b[i] == '/' && i+1 < len(b) && b[i+1] == '/':
+				b[i], b[i+1], state = ' ', ' ', lineComment
+				i += 2
+			case b[i] == '/' && i+1 < len(b) && b[i+1] == '*':
+				b[i], b[i+1], state = ' ', ' ', blockComment
+				i += 2
+			case b[i] == '\\' && i+1 < len(b):
+				i += 2
+			case b[i] == '\'':
+				b[i], state, i = ' ', single, i+1
+			case b[i] == '"':
+				b[i], state, i = ' ', double, i+1
+			case b[i] == '`':
+				b[i], state, i = ' ', template, i+1
+			default:
+				i++
+			}
+		case single, double, template:
+			if b[i] == '\\' && i+1 < len(b) {
+				b[i], b[i+1], i = ' ', ' ', i+2
+			} else {
+				closing := (state == single && b[i] == '\'') || (state == double && b[i] == '"') || (state == template && b[i] == '`')
+				b[i] = ' '
+				i++
+				if closing {
+					state = code
+				}
+			}
+		case lineComment:
+			if b[i] == '\n' || b[i] == '\r' {
+				state = code
+			} else {
+				b[i] = ' '
+			}
+			i++
+		case blockComment:
+			if b[i] == '*' && i+1 < len(b) && b[i+1] == '/' {
+				b[i], b[i+1], state = ' ', ' ', code
+				i += 2
+			} else {
+				b[i] = ' '
+				i++
+			}
+		}
+	}
+	return string(b)
+}
+
+func controlEvidence(p ReflectionParams, art map[string]string, ctx string, proof bool) (*Evidence, error) {
+	if p.ControlBody == "" {
+		return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceFirm, Artifacts: art, Note: "executable reflection without control"}, nil
+	}
+	if strings.Contains(p.ControlBody, p.Canary) {
+		controlCtx := ContextOf(p.ControlBody, p.Canary)
+		if controlCtx == ctx || executableProof(controlCtx, p.ControlBody, p.Canary) {
+			return &Evidence{Verdict: VerdictReject, Note: "control also reflects the canary"}, nil
+		}
+		return &Evidence{Verdict: VerdictReject, Note: "control contains the canary"}, nil
+	}
+	if proof {
+		return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceConfirmed, Artifacts: art, Repeats: 1, ControlResult: "clean", Note: "execution payload plus clean control"}, nil
+	}
+	return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceFirm, Artifacts: art, ControlResult: "clean", Note: "executable context without payload proof"}, nil
+}
+
+func cspBlocksInline(headers http.Header) bool {
+	if headers == nil {
+		return false
+	}
+	policy := headers.Get("Content-Security-Policy")
+	if policy == "" {
+		return false
+	}
+	defaultBlocks, scriptBlocks := false, false
+	hasScriptSource := false
+	for _, directive := range strings.Split(strings.ToLower(policy), ";") {
+		fields := strings.Fields(directive)
+		if len(fields) == 0 || (fields[0] != "script-src" && fields[0] != "default-src") {
+			continue
+		}
+		blocks := true
+		for _, token := range fields[1:] {
+			if token == "'unsafe-inline'" {
+				blocks = false
+				break
+			}
+		}
+		if fields[0] == "script-src" {
+			hasScriptSource = true
+			scriptBlocks = blocks
+		} else {
+			defaultBlocks = blocks
+		}
+	}
+	if hasScriptSource {
+		return scriptBlocks
+	}
+	return defaultBlocks
 }
 
 func max(a, b int) int {

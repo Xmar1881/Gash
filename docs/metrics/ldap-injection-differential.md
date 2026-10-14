@@ -56,7 +56,7 @@ PASS. Precision 1.00 is above the 0.99 gate. Corpus holds 0 `firm` plus.
 
 ## Dataset
 
-- Dataset hash: `ceb3e49a868dc4e1ff5791cacc357162c548ac1a225c24c715d4d0b6f5386bbc`
+- Dataset hash: `6e1b3eb3c6293b4aee7cea1af09f0d80efadf238db602e77a4387fe44c4ad86e`
   (sha256 over all 4 fixture files under `tests/fixtures/ldap-injection-differential/`).
 - Samples: TP=2, FP=0, TN=2, FN=0. Fixture-only measurement; lab pending above.
   `TestMetricGate` fails the build if this hash drifts from the fixtures.

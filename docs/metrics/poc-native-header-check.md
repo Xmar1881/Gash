@@ -67,7 +67,7 @@ reference build and must be re-pinned per platform via `gash plugins trust`.
 
 ## Dataset
 
-- Dataset hash: `405ce940f34a9b605c7bcca333b8b2dc462f451fd58f08c44bf5ac426f0b14cd`
+- Dataset hash: `11242151ff279b5782a9ba9944c9966f017959face3c7fcd9c755f7d4d9a239c`
   (sha256 over all 2 fixture files under `tests/fixtures/poc-native-header-check/`).
 - Samples: TP=1, FP=0, TN=1, FN=0. Fixture-only measurement; lab pending above.
   `TestMetricGate` fails the build if this hash drifts from the fixtures.

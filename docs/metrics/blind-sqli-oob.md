@@ -56,7 +56,7 @@ PASS. Precision 1.00 is above the 0.99 gate. Corpus holds 0 `firm` plus.
 
 ## Dataset
 
-- Dataset hash: `7f473c825594eab3a36de8a64d878de61525654580d5cb664fbc6bcf83fb0c88`
+- Dataset hash: `e61015851c60167c40fc3df9de23d0e7c20247fa1b0d4e2eca7a54992d7371fb`
   (sha256 over all 4 fixture files under `tests/fixtures/blind-sqli-oob/`).
 - Samples: TP=2, FP=0, TN=2, FN=0. Fixture-only measurement; lab pending above.
   `TestMetricGate` fails the build if this hash drifts from the fixtures.

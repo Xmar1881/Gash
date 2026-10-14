@@ -47,7 +47,7 @@ PASS. Precision 1.00 is above the 0.99 gate. Corpus holds 0 `firm` plus.
 
 ## Dataset
 
-- Dataset hash: `124271b01acac11380f4343b28b9ff9ef0da5822c7f7bbf021fb560dd5c9376c` (sha256 over all 4 fixture files under `tests/fixtures/jwt-alg-confusion/`).
+- Dataset hash: `91d0363a37235e931a28bf1854854cfbf2b44482a5692260e236bb227908f832` (sha256 over all 4 fixture files under `tests/fixtures/jwt-alg-confusion/`).
 - Samples: TP=2, FP=0, TN=2, FN=0. Fixture-only measurement; lab pending above.
   `TestMetricGate` fails the build if this hash drifts from the fixtures.
 

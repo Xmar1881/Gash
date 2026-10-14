@@ -32,3 +32,5 @@ oracle:
   name: reflection
   params:
     canary: "alert(1)"
+    contexts: [attr-executable]
+    require_executable_context: true

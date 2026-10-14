@@ -39,7 +39,7 @@ var (
 	wafMarkers = []string{
 		"cf-chl", "cf-ray", "cloudflare", "akamai", "incapsula", "imperva",
 		"__cf_bm", "cf_chl", "recaptcha", "hcaptcha", "captcha",
-		"retry-after", "access denied", "request blocked", "waf",
+		"retry-after", "access denied", "request blocked", "waf", "challenge",
 	}
 	maskPatterns = []string{
 		`name="csrf[^"]*" value="[^"]*"`,

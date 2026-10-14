@@ -1,0 +1,1 @@
+{"body":"<script type=\"application/json\">{\"q\":\"gash_a1b2c3d4\"}</script>","canary":"gash_a1b2c3d4","control_body":"{}","expected_verdict":"reject","headers":{"Content-Type":"application/json"},"name":"JSON script data is inert","status":200,"target":"http://example.com/search?q=gash_a1b2c3d4"}

@@ -52,6 +52,9 @@ go run ./cmd/gash plugins test plugins/<category>/<file>
 
 ## Gate Rule
 
+The reflected-XSS dataset is currently 10 fixtures (TP=2, FP=0, TN=8,
+FN=0), pinned by its report hash. Fixture counts are not real-target recall.
+
 Precision below 0.99 fails the build. Corpus `firm` plus findings fail the build.
 Lab runs are manual and follow the procedure inside each report.
 

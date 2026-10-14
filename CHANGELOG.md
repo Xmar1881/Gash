@@ -18,7 +18,12 @@ Dates are UTC.
 
 ### Added
 
-- Nothing yet (public release starts at `v0.1.0-dev` below).
+- Context-aware XSS reflection evidence: JavaScript strings/comments and inert
+  JSON blocks no longer look executable; allowed contexts, execution payloads,
+  clean controls, and CSP are enforced.
+- WAF statistics now distinguish detection from verified bypass. Aggressive
+  bypass counts require stable application responses and exclude auth,
+  soft-404, challenge, error, and dynamic responses.
 
 ## [v0.1.0-dev] - 2026-10-13
 

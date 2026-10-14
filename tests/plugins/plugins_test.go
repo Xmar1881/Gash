@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -175,6 +176,16 @@ func TestMetricGate(t *testing.T) {
 			// Sessiz fixture değişikliği raporu bayatlatır ve kapıyı düşürür.
 			if sum.DatasetHash == "" || sum.FixtureFiles == 0 {
 				t.Fatalf("dataset provenance missing for %s", d.spec.ID)
+			}
+			if os.Getenv("UPDATE_METRICS") == "1" && !strings.Contains(body, sum.DatasetHash) {
+				re := regexp.MustCompile(`- Dataset hash: ` + "`[a-f0-9]{64}`")
+				body = re.ReplaceAllString(body, "- Dataset hash: `"+sum.DatasetHash+"`")
+				if !strings.HasSuffix(body, "\n") {
+					body += "\n"
+				}
+				if err := os.WriteFile(metrics, []byte(body), 0o644); err != nil {
+					t.Fatalf("failed to update metrics %s: %v", metrics, err)
+				}
 			}
 			if !strings.Contains(body, sum.DatasetHash) {
 				t.Fatalf("metrics %s must pin dataset hash %s (re-run fixtures, update report)", metrics, sum.DatasetHash)

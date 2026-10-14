@@ -343,11 +343,21 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv) ([]JSCand
 		}
 		resp := respFromValue(call.Arguments[0])
 		canary := call.Arguments[1].String()
+		contexts := []string{"html", "attr", "attr-executable", "script", "url", "url-executable"}
+		if len(call.Arguments) >= 3 && !goja.IsNull(call.Arguments[2]) && !goja.IsUndefined(call.Arguments[2]) {
+			arr := call.Arguments[2].ToObject(vm)
+			if length := int(arr.Get("length").ToInteger()); length > 0 {
+				contexts = make([]string, 0, length)
+				for i := 0; i < length; i++ {
+					contexts = append(contexts, arr.Get(fmt.Sprintf("%d", i)).String())
+				}
+			}
+		}
 		cls := baseline.ClassifyStatic(resp.Status, toHTTPHeader(resp.Headers), []byte(resp.Body))
 		ctrl := controlFor(JSPoint{URL: resp.URL})
 		var o oracle.ReflectionOracle
 		ev, err := o.Verify(context.Background(), resp.Body, toHTTPHeader(resp.Headers), cls, false, oracle.ReflectionParams{
-			Canary: canary, Contexts: []string{"html", "attr", "script"},
+			Canary: canary, Contexts: contexts,
 			RequireExecutableContext: true, ControlBody: ctrl.Body,
 		})
 		if err != nil {

@@ -62,7 +62,7 @@ sink-free shapes; browser-confirmed recall remains unmeasured.
 
 ## Dataset
 
-- Dataset hash: `27dda918e49a6c1120574e1b1189a412efb2c48b9b0e99c0361e189c3c9e370a`
+- Dataset hash: `8a12a2f9c78dace7e65fdd2004068948009c0d03e7a11881a8bbd7bcddde2e9b`
   (sha256 over all 4 fixture files under `tests/fixtures/dom-sink-basic/`).
 - Samples: TP=2, FP=0, TN=2, FN=0. Fixture-only measurement; browser lab BLOCKED above.
   `TestMetricGate` fails the build if this hash drifts from the fixtures.

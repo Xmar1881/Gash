@@ -47,7 +47,7 @@ PASS. Precision 1.00 is above the 0.99 gate. Corpus holds 0 findings (OOB requir
 
 ## Dataset
 
-- Dataset hash: `e96e9d7cde71ab362a5b4532c83d852312e26751dd885d43aa745b0fb620cbc4` (sha256 over all 4 fixture files under `tests/fixtures/xxe-oob/`).
+- Dataset hash: `fb28aa6cb9e12f1a2e8dd90bdb281eed883ce759fa40460a0171c2339f7f2ecb` (sha256 over all 4 fixture files under `tests/fixtures/xxe-oob/`).
 - Samples: TP=2, FP=0, TN=2, FN=0. Fixture-only measurement; lab pending above.
   `TestMetricGate` fails the build if this hash drifts from the fixtures.
 

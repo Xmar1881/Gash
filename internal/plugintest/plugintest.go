@@ -9,6 +9,7 @@
 package plugintest
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -221,9 +222,17 @@ func Evaluate(ctx context.Context, oracleName string, f Fixture, oobEnabled bool
 	case "reflection":
 		var o oracle.ReflectionOracle
 		ctrl := f.ControlBody
+		contexts := getStringSliceParam(oracleParams, "contexts")
+		if len(contexts) == 0 {
+			contexts = []string{"html", "attr", "attr-executable", "script", "url", "url-executable"}
+		}
+		requireExecutable := true
+		if v, ok := oracleParams["require_executable_context"].(bool); ok {
+			requireExecutable = v
+		}
 		return o.Verify(ctx, f.Body, toHeader(f.Headers), cls, false, oracle.ReflectionParams{
-			Canary: canary, Contexts: []string{"html", "attr", "script"},
-			RequireExecutableContext: true, ControlBody: ctrl,
+			Canary: canary, Contexts: contexts,
+			RequireExecutableContext: requireExecutable, ControlBody: ctrl,
 		})
 	case "error":
 		var o oracle.ErrorSignatureOracle
@@ -550,7 +559,7 @@ func hashDataset(root string) (string, int, error) {
 		if err != nil {
 			return fmt.Errorf("plugintest rel %s: %w", p, err)
 		}
-		rels = append(rels, rel)
+		rels = append(rels, filepath.ToSlash(rel))
 		return nil
 	})
 	if err != nil {
@@ -559,10 +568,11 @@ func hashDataset(root string) (string, int, error) {
 	sort.Strings(rels)
 	h := sha256.New()
 	for _, rel := range rels {
-		data, err := os.ReadFile(filepath.Join(root, rel))
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
 			return "", 0, fmt.Errorf("plugintest hash read %s: %w", rel, err)
 		}
+		data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
 		h.Write([]byte(rel))
 		h.Write([]byte{0})
 		h.Write(data)
