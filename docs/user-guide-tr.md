@@ -1,6 +1,6 @@
 <!--
 SPDX-License-Identifier: AGPL-3.0-only
-Copyright (C) 2026 Xmar1881 / GASH contributors
+Copyright (C) 2026 Xmar1881 / Gash contributors
 Module: github.com/Xmar1881/Gash
 
 File: docs/user-guide-tr.md
@@ -8,13 +8,13 @@ What: Yeni başlayanlar için Türkçe kullanıcı rehberi.
 Why: `gash --help` ekranından sonra ilk adımları sade dille anlatır.
 -->
 
-# GASH Kullanıcı Rehberi (Türkçe)
+# Gash Kullanıcı Rehberi (Türkçe)
 
 Bu rehber yeni başlayanlar içindir. Kısa, sade ve kopyala-yapıştır komutlarla ilerler.
 
-## 1. GASH nedir?
+## 1. Gash nedir?
 
-GASH, Go ile yazılmış bir güvenlik tarama motorudur.
+Gash, Go ile yazılmış bir güvenlik tarama motorudur.
 
 Mantık basittir:
 
@@ -34,7 +34,7 @@ Güven seviyeleri:
 
 ## 2. Nasıl çalıştırılır? (Önemli)
 
-GASH bir komut satırı aracıdır. `.exe` dosyasına çift tıklarsan pencere açılıp kapanır, tarama yapmaz.
+Gash bir komut satırı aracıdır. `.exe` dosyasına çift tıklarsan pencere açılıp kapanır, tarama yapmaz.
 
 Windows'ta **PowerShell** veya **cmd** aç ve içinden çalıştır.
 
@@ -57,12 +57,11 @@ Available Commands:
   bench       Benchmark
   completion  Shell completion
   help        Help about any command
+  openapi     OpenAPI/Swagger spec'ten test planı üret (taramasız)
   plugins     Plugin yönetimi
-  scan        Hedefi tara (Faz 2: schedule + boş rapor iskeleti)
+  scan        Hedefi tara (Candidate→Verify→Finding hattı)
   suppress    Yerel suppress yönetimi
 ```
-
-> Not: Şu an `scan` Faz 2 iskelettir. Gerçek tarama motoru çağrısı henüz tamamlanmadı.
 
 ## 3. İlk 3 komut
 
@@ -79,29 +78,21 @@ go run ./cmd/gash plugins --help
 
 Yüklü pluginleri çalıştırma yapmadan listeler.
 
-Gerçek çıktı örneği:
-
-```text
-7 plugins
-- missing-security-headers [yaml] phase=probe order=10 oob= plugins\headers\missing-security-headers.yaml
-- open-redirect-param [yaml] phase=probe order=30 oob= plugins\redirect\open-redirect-param.yaml
-- poc-native-header-check [native] phase=deep order=70 oob= trusted=no (needs `gash plugins trust`) plugins\native\poc-native-header-check.gashplugin.yaml
-- sqli-boolean-differential [js] phase=probe order=51 oob= plugins\sqli\sqli-boolean-differential.js
-- sqli-error-based [js] phase=probe order=50 oob= plugins\sqli\sqli-error-based.js
-- ssrf-blind-oob [js] phase=probe order=60 oob=required plugins\ssrf\ssrf-blind-oob.js
-- xss-reflected-basic [js] phase=probe order=40 oob= plugins\xss\xss-reflected-basic.js
-```
-
 ### Komut 2: `scan --help`
 
 Tarama seçeneklerini gösterir. Uydurma flag kullanma, listede ne varsa o geçerlidir:
 
 ```text
-Flags:
       --active                        state-changing/OOB payload kapısı
+      --aggressive                    tam güç ofansif tarama (active+deep+yüksek bütçe)
+      --auth-header strings           kimlik header'ı 'Ad: değer' (tekrarlanabilir)
+      --auth-user-a strings           BOLA matrisi kullanıcı A başlığı (--auth-user-b ile birlikte)
+      --auth-user-b strings           BOLA matrisi kullanıcı B başlığı (--auth-user-a ile birlikte)
+      --basic-auth string             basic kimlik 'kullanıcı:parola'
+      --cookie strings                oturum cookie'si 'a=b[; c=d]' (tekrarlanabilir)
       --deep                          deep faz + ExecutionOracle kapısı
       --fail-on string                CI kapısı (firm|confirmed)
-      --format strings                json|sarif|text|html (tekrarlanabilir) (default [text])
+      --format strings                json|sarif|text|html|junit (tekrarlanabilir) (default [text])
       --ignore-plugin strings         döngü kırma / susturma
       --max-requests-per-target int   per-target bütçe (default 1000)
       --max-requests-total int        global bütçe (default 10000)
@@ -110,28 +101,25 @@ Flags:
       --oob-wait string               scan-sonu OOB penceresi (default "60s")
       --parallelism int               worker sayısı (default 8)
       --plugin-timeout string         per-plugin timeout (default "30s")
+      --profile string                scan profile: safe|standard|deep|aggressive (default "standard")
       --rate-limit float              per-target req/s (default 10)
       --safe                          varsayılan safe (default true)
       --scope strings                 CIDR/domain allowlist
       --show-tentative                tentative'i dahil et
       --strict-plugins                yalnızca trust'lı Tier3
       --target string                 hedef URL
+      --tcp-banner strings            açık TCP banner probu 'host:port' (--active şart)
+      --tech strings                  bilinen teknoloji (örn. wordpress,graphql)
 ```
 
-### Komut 3: Örnek local tarama (dry-run)
+### Komut 3: Örnek local tarama
 
 > DİKKAT: İzinsiz hedefe tarama YASAKTIR. Yalnızca kendi makinen veya yazılı izinli hedefin üzerinde dene.
 
 Güvenli deneme:
 
 ```powershell
-go run ./cmd/gash scan --target http://localhost:8080
-```
-
-Şu anki gerçek çıktı:
-
-```text
-GASH scan: http://localhost:8080 (faz2 iskelet — motor çağrısı)
+go run ./cmd/gash scan --target http://localhost:8080 --scope localhost
 ```
 
 `--target` yazmazsan hata alırsın, bu normaldir:
@@ -164,16 +152,78 @@ Diğer yararlı komutlar:
 ```powershell
 go run ./cmd/gash plugins info xss-reflected-basic
 go run ./cmd/gash bench --help
+go run ./cmd/gash openapi --spec openapi.json
 ```
 
-`bench` altında şu an yalnızca `lab` vardır:
+`openapi` komutu tarama yapmaz; OpenAPI/Swagger dosyasından test planı çıkarır.
+`bench lab` recall laboratuvarıdır (DVWA/JuiceShop/WebGoat, localhost).
 
-```text
-Available Commands:
-  lab  Recall lab (DVWA/JuiceShop/WebGoat)
+## 5. Tarama profilleri (P2)
+
+Profil, hangi dedektörlerin koşacağını ve bütçeyi tek yerden seçer:
+
+| Profil | Ne yapar | Ne zaman kullan |
+|---|---|---|
+| `safe` | Pasif kontroller, düşük bütçe (100 req/hedef) | CI ve üretim, izinsiz yük yok |
+| `standard` | Kontrollü aktif testler (500 req/hedef) | Yetkili web uygulaması (varsayılan) |
+| `deep` | Tarayıcı/OOB dahil yüksek bütçe (2000 req/hedef), `--deep` ister | Açıkça yetkilendirilmiş hedef |
+| `aggressive` | Tam güç ofansif (50000 req/hedef, 100 req/s, 32 worker) | Yalnızca lab ve yazılı izinli hedef |
+
+```powershell
+go run ./cmd/gash scan --target http://localhost:8080 --scope localhost --profile safe
+go run ./cmd/gash scan --target http://localhost:8080 --scope localhost --profile deep --deep
 ```
 
-## 5. Trust (Tier 3)
+## 6. Agresif tarama (`--aggressive`)
+
+`--aggressive` tek bayrakla tam güç açar: `active=true`, `safe=false`,
+`deep=true`, profil `aggressive`, `show-tentative=true` (değiştirmediğin
+sürece). Tüm dedektörler, tüm HTTP metotları, genişletilmiş bütçe.
+
+> DİKKAT: Yalnızca kendi lab'ın veya yazılı izinli hedefin üzerinde kullan.
+> Üçüncü parti sistemlere agresif payload, timing döngüsü veya OOB gönderme.
+
+```powershell
+go run ./cmd/gash scan --target http://127.0.0.1:8081 --scope 127.0.0.1 --aggressive --format json
+```
+
+WAF ile karşılaşırsan tarama durmaz: durum `waf_detected` sayacına işlenir,
+agresif modda sınırlı bypass varyantı (header/HPP/encode/yorum/case, en fazla
+5 deneme, aynı kapsam ve bütçe içinde) denenir. Blok sayfanın kendisi asla
+kanıt sayılmaz. Chunked gönderim desteklenmez (bkz. `docs/known-limits.md`).
+
+## 7. Kimlik ve kapsam (P2)
+
+Kimlik gerektiren sayfaları test etmek için:
+
+```powershell
+go run ./cmd/gash scan --target http://localhost:8080 --scope localhost --active `
+  --auth-header "Authorization: Bearer TOKEN" --cookie "session=abc"
+```
+
+İki kullanıcılı yetki (BOLA/IDOR) matrisi için iki kimlik birlikte verilir
+(`--active` şart, bulgular daima `tentative` ve elle doğrulanır):
+
+```powershell
+go run ./cmd/gash scan --target http://localhost:8080 --scope localhost --active `
+  --auth-user-a "Authorization: Bearer AAAA" --auth-user-b "Authorization: Bearer BBBB"
+```
+
+Değerler asla loglanmaz; raporda yalnızca maskeli özet görünür.
+
+Teknoloji kapısı (`--tech`) ve TCP probları:
+
+```powershell
+go run ./cmd/gash scan --target http://localhost:8080 --scope localhost --tech wordpress,graphql
+go run ./cmd/gash scan --target https://localhost:8443 --scope localhost --active --tcp-banner localhost:22
+```
+
+Motor ayrıca yanıttan teknolojiyi kendisi çıkarır (Server başlığı, cookie
+adı, `wp-json`/`_next/`/`graphql` izleri, favicon); `--tech` vermesen bile
+uygun dedektör açılır. Görülen yetenekler (`login-form`, `graphql-endpoint`)
+zincir beslemesine girer. Detay: `docs/auth.md`, `docs/api-discovery.md`.
+
+## 8. Trust (Tier 3)
 
 Tier 3, native (çalıştırılabilir) plugin demektir. Güvenlik için otomatik çalışmaz.
 
@@ -194,14 +244,14 @@ Bu komut dosyanın `sha256` özetini kontrol edip güven dosyasına (`~/.gash/tr
 Kurumsal / CI ortamında ek koruma:
 
 ```powershell
-go run ./cmd/gash scan --target http://localhost:8080 --strict-plugins
+go run ./cmd/gash scan --target http://localhost:8080 --scope localhost --strict-plugins
 ```
 
 `--strict-plugins` yalnızca güven verilmiş Tier 3 çalıştırır.
 
-## 6. Suppress
+## 9. Suppress
 
-Bulgu gizlemek / geri almak için kullanılır (Faz 2'de iskelet düzeyindedir):
+Bulgu gizlemek / geri almak için kullanılır:
 
 ```powershell
 go run ./cmd/gash suppress list
@@ -209,13 +259,7 @@ go run ./cmd/gash suppress add <finding-id>
 go run ./cmd/gash suppress remove <finding-id>
 ```
 
-Gerçek `suppress list` çıktısı şu an şudur:
-
-```text
-suppress list
-```
-
-## 7. OOB notu
+## 10. OOB notu
 
 OOB (Out-of-Band), kör açıklar için dış doğrulama kanalıdır.
 
@@ -225,7 +269,19 @@ OOB (Out-of-Band), kör açıklar için dış doğrulama kanalıdır.
 
 Özet: `--oob-server` yoksa blind/OOB bulgusu bekleme, bu normaldir.
 
-## 8. SSS
+## 11. Raporlar ve CI
+
+```powershell
+go run ./cmd/gash scan --target http://localhost:8080 --scope localhost --format sarif --output rapor.sarif
+go run ./cmd/gash scan --target http://localhost:8080 --scope localhost --format junit --output rapor.xml
+go run ./cmd/gash scan --target http://localhost:8080 --scope localhost --fail-on firm
+```
+
+`--fail-on firm|confirmed` CI kapısıdır: eşik ve üstü bulgu varsa çıkış kodu
+1 olur. Metrik kapıları (`TestMetricGate`, korpus, bench) için
+`docs/metrics/README.md` ve `docs/ci-integration.md` dosyasına bak.
+
+## 12. SSS
 
 **Çift tıklayınca pencere kapanıyor, ne yapayım?**
 
@@ -246,7 +302,7 @@ Hiç plugin yoksa veya hiç kanıt bulunamazsa motor boş ama geçerli rapor ür
 Zayıf kanıtlı bulgudur. Varsayılan raporda görünmez. Görmek istersen:
 
 ```powershell
-go run ./cmd/gash scan --target http://localhost:8080 --show-tentative
+go run ./cmd/gash scan --target http://localhost:8080 --scope localhost --show-tentative
 ```
 
 **Shell tamamlama var mı?**
@@ -259,11 +315,17 @@ go run ./cmd/gash completion --help
 
 Altında `bash`, `zsh`, `fish`, `powershell` vardır.
 
-## 9. Sorumlu kullanım
+**Neleri yapamaz?**
+
+Tarayıcılı DOM doğrulama, chunked bypass, CAA kaydı ve Nuclei karşılaştırması
+yoktur veya ölçülmemiştir. Bahane değil, kayıt: `docs/known-limits.md`.
+
+## 13. Sorumlu kullanım
 
 - Yalnızca izinli hedef tara.
 - `--scope` ile kapsamı dar tut.
-- Varsayılan `--safe` modda kal.
+- Varsayılan `--safe` modda kal; `--active`/`--aggressive` yalnızca izinli lab'da.
 - OOB sunucusu kurmadan OOB açmaya çalışma.
+- Secret ve oturum değerlerini rapora elle yapıştırma.
 
 Detay: `docs/SECURITY.md`, `docs/plugin-development.md`.

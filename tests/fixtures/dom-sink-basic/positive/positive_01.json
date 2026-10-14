@@ -1,0 +1,1 @@
+{"body": "<div id=\"out\"></div><script>var h=location.hash; document.getElementById('out').innerHTML = h;</script>", "expected_confidence": "firm", "expected_verdict": "accept", "headers": {"Content-Type": "text/html"}, "name": "innerHTML sink with location.hash source", "status": 200, "target": "http://example.com/app#x"}

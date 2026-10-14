@@ -1,0 +1,1 @@
+{"body": "<html><body>Welcome user</body></html>", "delay_samples": [5100, 5200, 5150], "control_samples": [4900, 5000, 5100], "baseline_stddev": 100, "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "delay but high jitter in control", "status": 200, "target": "http://example.com/?id=1"}

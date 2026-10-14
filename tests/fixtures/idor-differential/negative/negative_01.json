@@ -1,0 +1,1 @@
+{"body": "{\"error\":\"Unauthorized\"}", "control_body": "{\"id\":1,\"name\":\"Alice\"}", "control_status": 200, "expected_confidence": "tentative", "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "idor prevented - returns 401", "status": 401, "target": "https://example.com/api/users/2", "differential_stable": false}

@@ -52,3 +52,11 @@ True positives 2, false negatives 0 on the mocked callback path. Recall 1.00.
 ## Gate Verdict
 
 PASS. Precision 1.00 is above the 0.99 gate. Corpus holds 0 `firm` plus.
+
+## Dataset
+
+- Dataset hash: `8c69c69460faf6482a5a89715f4d7d33c9be240b76e623ca57c506db642fb07b`
+  (sha256 over all 4 fixture files under `tests/fixtures/ssrf-blind-oob/`).
+- Samples: TP=2, FP=0, TN=2, FN=0 on the mocked callback path.
+  Fixture-only measurement; lab pending above. `TestMetricGate` fails the
+  build if this hash drifts from the fixtures.

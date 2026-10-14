@@ -129,28 +129,6 @@ func median(in []float64) float64 {
 	return (cp[m-1] + cp[m]) / 2
 }
 
-func stddev(in []float64, mean float64) float64 {
-	if len(in) < 2 {
-		return 0
-	}
-	var s float64
-	for _, v := range in {
-		s += (v - mean) * (v - mean)
-	}
-	return math.Sqrt(s / float64(len(in)-1))
-}
-
-func mean(in []float64) float64 {
-	if len(in) == 0 {
-		return 0
-	}
-	var s float64
-	for _, v := range in {
-		s += v
-	}
-	return s / float64(len(in))
-}
-
 // mannWhitneyU iki-örneklem U testi (tek-yönlü, normal yaklaşım, alpha=0.05 → z>1.645).
 func mannWhitneyU(a, b []float64) (u float64, z float64) {
 	n1, n2 := float64(len(a)), float64(len(b))

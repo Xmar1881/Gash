@@ -1,0 +1,1 @@
+{"body": "<html><!-- alert(1) test hook disabled --><body>ok</body></html>", "canary": "alert(1)", "control_body": "<html><body>ok</body></html>", "control_status": 200, "expected_confidence": "tentative", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "canary only inside html comment", "status": 200, "target": "http://example.com/search?q=gash"}

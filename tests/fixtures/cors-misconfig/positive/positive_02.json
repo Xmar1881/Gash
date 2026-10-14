@@ -1,0 +1,1 @@
+{"body": "<html><body>hello</body></html>", "control_body": "", "control_status": 0, "expected_confidence": "firm", "expected_verdict": "accept", "headers": {"Access-Control-Allow-Origin": "*", "Content-Type": "text/html"}, "name": "plain wildcard", "status": 200, "target": "https://example.com/"}

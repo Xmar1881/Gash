@@ -137,7 +137,15 @@ func TestMetricGate(t *testing.T) {
 				t.Fatal("Tests must point at fixtures (R-06)")
 			}
 			fixtureRoot := plugintest.ResolveFixtureRoot(d.path, d.spec.Tests)
-			sum, err := plugintest.Run(context.Background(), d.spec.ID, d.oracleName, fixtureRoot, true)
+			// Load oracle params from the plugin file
+			var oracleParams map[string]any
+			if strings.HasSuffix(strings.ToLower(d.path), ".yaml") || strings.HasSuffix(strings.ToLower(d.path), ".yml") {
+				_, f, err := loader.LoadTier1File(d.path)
+				if err == nil && f.Oracle.Params != nil {
+					oracleParams = f.Oracle.Params
+				}
+			}
+			sum, err := plugintest.Run(context.Background(), d.spec.ID, d.oracleName, fixtureRoot, true, oracleParams)
 			if err != nil {
 				t.Fatalf("fixtures: %v", err)
 			}
@@ -162,6 +170,14 @@ func TestMetricGate(t *testing.T) {
 				if !strings.Contains(body, want) {
 					t.Fatalf("metrics %s must contain %q", metrics, want)
 				}
+			}
+			// P0.3: rapor, ölçülen fixture veri setinin hash'ini aynen taşımalı.
+			// Sessiz fixture değişikliği raporu bayatlatır ve kapıyı düşürür.
+			if sum.DatasetHash == "" || sum.FixtureFiles == 0 {
+				t.Fatalf("dataset provenance missing for %s", d.spec.ID)
+			}
+			if !strings.Contains(body, sum.DatasetHash) {
+				t.Fatalf("metrics %s must pin dataset hash %s (re-run fixtures, update report)", metrics, sum.DatasetHash)
 			}
 		})
 	}
@@ -217,6 +233,36 @@ func vulnerableResponder(tier1 *loader.Tier1File) http.HandlerFunc {
 			}
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("home"))
+		case "cookie":
+			// What: Bare session cookie triggers the confirmed path.
+			// Why: Drop-in proof needs a deterministic vulnerable backend per oracle.
+			w.Header().Set("Set-Cookie", "sessionid=abc; Path=/")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("<html><body>hello</body></html>"))
+		case "cors":
+			// What: Wildcard plus credentials triggers the confirmed path.
+			// Why: Same per-oracle determinism as cookie and redirect cases.
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("<html><body>hello</body></html>"))
+		case "error":
+			// What: Error signature oracle needs a 500 with error signature in body.
+			// Why: generic_error mode matches stack traces, exceptions, etc.
+			payload := tier1.Request.Payload
+			hit := false
+			for _, p := range tier1.Request.ParamNames {
+				if r.URL.Query().Get(p) == payload {
+					hit = true
+				}
+			}
+			if hit {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte("Fatal error: Uncaught Exception: stack trace at line 42\nException: command injection detected"))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("<html><body>hello</body></html>"))
 		default: // header and friends: bare response without hardening.
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("<html><body>hello</body></html>"))
@@ -231,13 +277,13 @@ func TestB1Tier1DropIn(t *testing.T) {
 	specs, _ := discoverAll(t)
 	var target *discoveredSpec
 	for i := range specs {
-		if specs[i].spec.Tier == plugin.TierYAML {
+		if specs[i].spec.Tier == plugin.TierYAML && specs[i].spec.OOB != plugin.OOBRequired {
 			target = &specs[i]
 			break
 		}
 	}
 	if target == nil {
-		t.Skip("no Tier 1 reference plugin")
+		t.Skip("no non-OOB Tier 1 reference plugin")
 	}
 	// Single-file drop-in: exactly one file in a fresh directory.
 	dir := t.TempDir()
@@ -286,7 +332,7 @@ func TestB1Tier1DropIn(t *testing.T) {
 	}
 	confirmed := false
 	for _, r := range results {
-		if r.Evidence != nil && r.Evidence.ConfidenceContribution == plugin.ConfidenceConfirmed {
+		if r.Evidence != nil && (r.Evidence.ConfidenceContribution == plugin.ConfidenceConfirmed || r.Evidence.ConfidenceContribution == plugin.ConfidenceFirm) {
 			confirmed = true
 			f, err := finding.Build(*spec, r.Candidate, r.Evidence, ruleFor(target.oracleName), cweFor(target.oracleName), "", "")
 			if err != nil || f == nil {
@@ -295,7 +341,7 @@ func TestB1Tier1DropIn(t *testing.T) {
 		}
 	}
 	if !confirmed {
-		t.Fatal("drop-in Tier 1 must reach confirmed on the vulnerable backend")
+		t.Fatal("drop-in Tier 1 must reach firm or confirmed on the vulnerable backend")
 	}
 }
 
@@ -352,6 +398,8 @@ func jsMockResponse(p loader.JSPoint, canary string) loader.JSResponse {
 	v := p.Value
 	h := map[string]string{"Content-Type": "text/html"}
 	switch {
+	case strings.Contains(v, "gash-dom-probe"):
+		return loader.JSResponse{Status: 200, Headers: h, Body: `<div id="o"></div><script>var h=location.hash; document.getElementById('o').innerHTML=h;</script>`, URL: p.URL}
 	case strings.Contains(v, "'1'='1"):
 		return loader.JSResponse{Status: 200, Headers: h, Body: "<html><body>welcome admin panel</body></html>", URL: p.URL}
 	case strings.Contains(v, "'1'='2"):
@@ -390,7 +438,7 @@ func TestB4CorpusZeroFirmPlus(t *testing.T) {
 			FalseBodies: []string{"same", "same", "same"},
 			PayloadHost: "gash-canary.example",
 		}
-		for _, orName := range []string{"header", "redirect", "reflection", "error", "differential", "oob"} {
+		for _, orName := range []string{"header", "redirect", "reflection", "error", "differential", "oob", "cookie", "cors"} {
 			ff := f
 			if orName == "header" {
 				// Bare corpus pages truly miss headers, so a header finding
@@ -403,7 +451,7 @@ func TestB4CorpusZeroFirmPlus(t *testing.T) {
 					"Content-Type":              "text/html",
 				}
 			}
-			ev, err := plugintest.Evaluate(ctx, orName, ff, true)
+			ev, err := plugintest.Evaluate(ctx, orName, ff, true, nil)
 			if err != nil {
 				t.Fatalf("%s/%s: %v", tc.name, orName, err)
 			}

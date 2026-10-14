@@ -1,0 +1,1 @@
+{"body": "<html><body>OK</body></html>", "control_body": "", "control_status": 0, "expected_confidence": "confirmed", "expected_verdict": "accept", "headers": {"Content-Type": "text/html", "X-Custom-Header": "value\r\nInjected: header"}, "name": "CRLF in response header", "status": 200, "target": "http://example.com/"}

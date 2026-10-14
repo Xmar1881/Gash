@@ -1,0 +1,1 @@
+{"body": "{\"data\":{\"__schema\":{\"types\":[{\"name\":\"Query\"},{\"name\":\"Mutation\"},{\"name\":\"User\"}]}}}", "control_body": "", "control_status": 0, "expected_confidence": "confirmed", "expected_verdict": "accept", "headers": {"Content-Type": "application/json"}, "name": "GraphQL introspection response", "status": 200, "target": "http://example.com/graphql"}

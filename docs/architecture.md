@@ -1,18 +1,18 @@
 <!--
 SPDX-License-Identifier: AGPL-3.0-only
-Copyright (C) 2026 Xmar1881 / GASH contributors
+Copyright (C) 2026 Xmar1881 / Gash contributors
 Modül: github.com/Xmar1881/Gash
-Bu dosya GASH v2 tasarım dokümanıdır; kod değildir.
+Bu dosya Gash tasarım dokümanıdır; kod değildir.
 Lisans metni için bkz. COPYING (Faz 2'de eklenecek) ve https://www.gnu.org/licenses/agpl-3.0.html
 -->
 
-# GASH v2 — Mimari Tasarım (Faz 1)
+# Gash — Mimari Tasarım (Faz 1)
 
 - **Durum:** Faz 1 çıktısı — KOD YOK. Motor kodu, `go.mod`, Go implementasyonu yazılmadı.
 - **Modül yolu (donduruldu):** `github.com/Xmar1881/Gash`
 - **Lisans (donduruldu):** `AGPL-3.0-only` (SPDX). Tüm tasarım artefaktları bu lisansa tabidir.
 - **Toolchain (Faz 0 D1'den devralındı):** `go1.26.8`, `go.mod` dili `go 1.26.0`, CI imajı `golang:1.26.8-bookworm`, `CGO_ENABLED=0`.
-- **Kaynaklar:** `benioku.txt` (GASH v2 spec) + `docs/design/00-scope.md` (Faz 0 kararları D1–D6, sorular S1–S5).
+- **Kaynaklar:** `benioku.txt` (Gash spec) + `docs/design/00-scope.md` (Faz 0 kararları D1–D6, sorular S1–S5).
 - **Faz kapısı:** Bu dosya + `docs/evidence-standard.md` + `proto/gash/v1/plugin.proto` sunulur, **DURULUR, onay beklenir.** Faz 2'ye geçilmez, kod yazılmaz.
 - **Faz 0'dan sapma:** YOK. Tüm Faz 0 kararları (D1–D6) korunmuştur. S1–S5 varsayımları bu dosyada karara dönüştürülmüştür (detay §18); sapma değil, Faz 0'ın öngördüğü netleştirmedir. Sapma gerektiği düşünülen tek aday (modül yolundaki büyük harf `Xmar1881/Gash`) kullanıcı onayıyla aynen kabul edilmiştir — gerekçe §1.3'te.
 

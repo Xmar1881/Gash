@@ -1,0 +1,1 @@
+{"body": "<html><body>Welcome</body></html>", "control_body": "", "control_status": 0, "expected_confidence": "tentative", "expected_verdict": "accept", "headers": {"Server": "Apache/2.4.41", "Content-Type": "text/html"}, "name": "apache version in server header", "status": 200, "target": "http://example.com/"}

@@ -22,6 +22,7 @@ import (
 var KnownOracles = []string{
 	"reflection", "differential", "error", "timing",
 	"oob", "header", "redirect", "version", "execution",
+	"cookie", "cors",
 }
 
 // InferJSOracle returns the first known oracle referenced by a Tier 2 source.

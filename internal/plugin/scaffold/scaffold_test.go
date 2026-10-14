@@ -31,7 +31,7 @@ func TestGenerateYAMLWritesPassingSkeleton(t *testing.T) {
 	if spec.ID != "demo-starter" {
 		t.Fatalf("id = %q", spec.ID)
 	}
-	sum, err := plugintest.Run(context.Background(), spec.ID, file.Oracle.Name, res.FixtureRoot, true)
+	sum, err := plugintest.Run(context.Background(), spec.ID, file.Oracle.Name, res.FixtureRoot, true, nil)
 	if err != nil {
 		t.Fatalf("run fixtures: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestGenerateJSWritesPassingSkeleton(t *testing.T) {
 	if got := plugintest.InferJSOracle(string(data)); got != "reflection" {
 		t.Fatalf("inferred oracle = %q, want reflection", got)
 	}
-	sum, err := plugintest.Run(context.Background(), spec.ID, "reflection", res.FixtureRoot, true)
+	sum, err := plugintest.Run(context.Background(), spec.ID, "reflection", res.FixtureRoot, true, nil)
 	if err != nil {
 		t.Fatalf("run fixtures: %v", err)
 	}

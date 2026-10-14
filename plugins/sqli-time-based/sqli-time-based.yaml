@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/sqli-time-based/sqli-time-based.yaml
+# What: Tier 1 time-based SQLi plugin backed by TimingOracle.
+# Why: Reference for statistical timing analysis with baseline jitter control;
+#   Mann-Whitney U test + median delay threshold proves blind SQLi without OOB.
+
+id: sqli-time-based
+name: SQL Injection Time-Based
+description: Detects time-based blind SQL injection via statistical delay analysis with control baseline.
+author: GASH contributors
+severity: high
+tags: [sqli, injection, blind, timing]
+safe: false
+deep: false
+active: true
+requires_auth: false
+phase: probe
+order: 55
+api_version: "1.0"
+tests: tests/fixtures/sqli-time-based/
+request:
+  method: GET
+  param_names: [id, query, search, q, page, cat, item]
+  payload: "1' WAITFOR DELAY '0:0:6'--"
+oracle:
+  name: timing
+  params:
+    min_delay_ms: 5000
+    repeats: 3
+    strategy: "mann-whitney-u"

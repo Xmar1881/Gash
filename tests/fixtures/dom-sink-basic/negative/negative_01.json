@@ -1,0 +1,1 @@
+{"body": "<p>temiz sayfa, sink yok</p>", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "no sink at all", "status": 200, "target": "http://example.com/app"}

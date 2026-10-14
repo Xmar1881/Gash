@@ -114,7 +114,7 @@ func TestB9_OOBRequiredSkips(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(ordered) != 0 {
-		t.Fatal("B9: oob:required çalışmamalı")
+		t.Fatal("B9: oob:required çalışmamalı") //nolint:misspell // Türkçe ek
 	}
 	found := false
 	for _, sk := range skipped {
@@ -139,7 +139,7 @@ func TestB10_Tier3NeedsTrust(t *testing.T) {
 		t.Fatalf("manifest: %v", err)
 	}
 	if _, err := loader.NewTier3Client(m, map[string]string{}); !errors.Is(err, plugin.ErrTrustRequired) {
-		t.Fatalf("B10: trust'suz client kurulmamalı, got %v", err)
+		t.Fatalf("B10: trust'suz client kurulmamalı, got %v", err) //nolint:misspell // Türkçe ek
 	}
 }
 

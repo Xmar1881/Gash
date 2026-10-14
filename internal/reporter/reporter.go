@@ -137,7 +137,7 @@ func WriteSARIF(w io.Writer, rep *engine.Report, opts Options) error {
 			r.ShortDescription.Text = f.Title
 			rules = append(rules, r)
 		}
-		level := "warning"
+		level := ""
 		switch f.Confidence {
 		case string(plugin.ConfidenceConfirmed):
 			level = "error"
@@ -178,11 +178,11 @@ func WriteSARIF(w io.Writer, rep *engine.Report, opts Options) error {
 func WriteHTML(w io.Writer, rep *engine.Report, opts Options) error {
 	vis, supp := filter(rep, opts)
 	var sb strings.Builder
-	sb.WriteString("<!doctype html><html><head><meta charset=\"utf-8\"><title>GASH report</title>")
+	sb.WriteString("<!doctype html><html><head><meta charset=\"utf-8\"><title>Gash report</title>")
 	sb.WriteString("<style>body{font-family:sans-serif;margin:2em}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:.4em}</style></head><body>")
-	sb.WriteString("<h1>GASH report</h1>")
+	sb.WriteString("<h1>Gash report</h1>")
 	sb.WriteString("<p>Target: " + html.EscapeString(rep.Target) + "</p>")
-	sb.WriteString(fmt.Sprintf("<p>%d findings (%d suppressed)</p>", len(vis), supp))
+	_, _ = fmt.Fprintf(&sb, "<p>%d findings (%d suppressed)</p>", len(vis), supp)
 	sb.WriteString("<table><tr><th>Severity</th><th>Confidence</th><th>Title</th><th>Rule</th><th>Target</th></tr>")
 	for _, f := range vis {
 		sb.WriteString("<tr><td>" + html.EscapeString(f.Severity) + "</td><td>" + html.EscapeString(f.Confidence) +

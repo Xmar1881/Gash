@@ -4,6 +4,7 @@
 
 // Package probe HTTP client wrapper + canary üretimi + response store'dur.
 // Tüm gönderimler PolicySession (http.RoundTripper) üzerinden geçer (B6).
+// P1.1: Centralized retry/backoff, redirect+scope re-validation, error classification.
 package probe
 
 import (
@@ -13,27 +14,36 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/Xmar1881/Gash/internal/baseline"
 	"github.com/Xmar1881/Gash/internal/plugin"
+	"github.com/Xmar1881/Gash/internal/wafbypass"
 )
 
 // Response ham body'yi store'da tutar; Candidate yalnızca id referansı taşır (bellek disiplini).
 type Response struct {
-	ID           string
-	URL          string
-	Method       string
-	Status       int
-	Headers      http.Header
-	Body         []byte
-	RTT          time.Duration
-	Untrusted    bool
-	Soft404      bool
+	ID        string
+	URL       string
+	Method    string
+	Status    int
+	Headers   http.Header
+	Body      []byte
+	RTT       time.Duration
+	Untrusted bool
+	Soft404   bool
+	// WAFDetected baseline WAF/blok işareti (403/429/işaret).
+	// Taramayı durdurmaz; rapor istatistiğine işlenir.
+	WAFDetected bool
+	// WAFBypassed agresif-mod varyant denemesi engeli aştıysa true.
+	WAFBypassed  bool
 	ClassifyNote string
 	TaintedBy    string
+	ErrorClass   plugin.ErrorClass // P1.1: classified error for deterministic logging
+	RetryCount   int               // P1.1: number of retries attempted
 }
 
 // Store thread-safe response deposudur.
@@ -66,23 +76,35 @@ func (s *Store) Get(id string) (*Response, bool) {
 
 // Client politika-filtreli HTTP istemcisidir.
 type Client struct {
-	http       *http.Client
 	policy     *plugin.PolicySession
 	store      *Store
 	maxBytes   int64
+	extra      map[string]string
 	classifier func(status int, headers http.Header, body []byte) baseline.Classification
+	// enableWAFBypass blok yanıtında sınırlı varyant denemesine izin verir.
+	// Yalnızca agresif profil açar (varsayılan kapalı — stealth YOK).
+	enableWAFBypass bool
+	wafDetected     atomic.Int64
+	wafBypassed     atomic.Int64
 }
 
 // Options istemci ayarlarıdır.
 type Options struct {
 	Policy         *plugin.PolicySession
-	BaseTransport  http.RoundTripper
 	RequestTimeout time.Duration
 	MaxBytes       int64
-	MaxRedirects   int
+	// ExtraHeaders her isteğe uygulanan bağlam başlıklarıdır (P2.5 auth).
+	// What: Tarama-ölçekli kimlik bilgisi (Authorization/Cookie); istekteki
+	// açık değer korunur, bağlam ezmez. Değerler asla loglanmaz.
+	ExtraHeaders map[string]string
+	// EnableWAFBypass blok (403/429/WAF) yanıtında en fazla 5 varyant
+	// (header/HPP/encode/comment/case) denemesine izin verir. Yalnızca
+	// --aggressive profili açar; tüm denemeler politika/kapsam içindedir.
+	EnableWAFBypass bool
 }
 
 // NewClient politika + baseline sınıflandırmalı istemci kurar.
+// P1.1: Retry/redirect/backpressure handled by PolicySession.RoundTripWithRetry.
 func NewClient(opts Options) *Client {
 	if opts.RequestTimeout <= 0 {
 		opts.RequestTimeout = 15 * time.Second
@@ -90,41 +112,33 @@ func NewClient(opts Options) *Client {
 	if opts.MaxBytes <= 0 {
 		opts.MaxBytes = 5 * 1024 * 1024
 	}
-	if opts.MaxRedirects < 0 {
-		opts.MaxRedirects = 0
-	}
-	if opts.MaxRedirects == 0 {
-		opts.MaxRedirects = 5
-	}
-	var rt http.RoundTripper = opts.BaseTransport
-	if rt == nil {
-		rt = http.DefaultTransport
-	}
-	if opts.Policy != nil {
-		// PolicySession base'i sarar; istemci policy üzerinden konuşur.
-		// Not: PolicySession'ın base'i opts.BaseTransport olmalıydı; burada istemci
-		// transport'u doğrudan policy yapıyoruz (policy zaten base'i içeriyor).
-		rt = opts.Policy
-	}
 	c := &Client{
 		policy:   opts.Policy,
 		store:    NewStore(),
 		maxBytes: opts.MaxBytes,
+		extra:    cloneMap(opts.ExtraHeaders),
 		classifier: func(status int, headers http.Header, body []byte) baseline.Classification {
 			return baseline.ClassifyStatic(status, headers, body)
 		},
-	}
-	c.http = &http.Client{
-		Transport: rt,
-		Timeout:   opts.RequestTimeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= opts.MaxRedirects {
-				return fmt.Errorf("redirect limiti (%d): %w", opts.MaxRedirects, http.ErrUseLastResponse)
-			}
-			return nil
-		},
+		enableWAFBypass: opts.EnableWAFBypass,
 	}
 	return c
+}
+
+// extraHeaders bağlam başlıklarının kopyasını döner (çağıran değiştiremez).
+func (c *Client) extraHeaders() map[string]string {
+	return cloneMap(c.extra)
+}
+
+func cloneMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // Canary benzersiz kanıt değeri üretir (gash_hex8, kriptografik rastgele).
@@ -147,7 +161,47 @@ func MustCanary() string {
 
 // Send politika + baseline sınıflandırmalı GET/POST gönderir.
 // ctx pluginCtx (WithPlugin) taşımalıdır; taşımazsa safe=false sayılır.
+// P1.1: Uses PolicySession.RoundTripWithRetry for retry/redirect/scope/backpressure.
+// Agresif modda (EnableWAFBypass) blok yanıtı WAFDetected işaretlenir ve
+// sınırlı bypass varyantı aynı politika/kapsam içinden denenir.
 func (c *Client) Send(ctx context.Context, method, rawURL string, headers map[string]string, body []byte) (*Response, error) {
+	r, err := c.doSingle(ctx, method, rawURL, headers, body)
+	if err != nil {
+		return nil, err
+	}
+	if r.WAFDetected {
+		c.wafDetected.Add(1)
+	}
+	if !c.enableWAFBypass || !wafbypass.IsBlocked(r.Status, r.Headers, r.Body) {
+		return r, nil
+	}
+	for _, att := range wafbypass.BuildAttempts(rawURL, headers, body) {
+		if ctx.Err() != nil {
+			break
+		}
+		r2, err := c.doSingle(ctx, method, att.URL, att.Headers, att.Body)
+		if err != nil {
+			continue
+		}
+		if wafbypass.IsBlocked(r2.Status, r2.Headers, r2.Body) {
+			continue
+		}
+		r2.WAFDetected = r.WAFDetected || r2.WAFDetected
+		r2.WAFBypassed = true
+		r2.ClassifyNote += " + waf-bypass:" + att.Name
+		c.wafBypassed.Add(1)
+		return r2, nil
+	}
+	return r, nil
+}
+
+// WAFStats tarama boyunca görülen WAF işareti ve başarılı bypass sayısını
+// döner (Report.Stats girdisi; bulgu DEĞİLDIR).
+func (c *Client) WAFStats() (detected, bypassed int64) {
+	return c.wafDetected.Load(), c.wafBypassed.Load()
+}
+
+func (c *Client) doSingle(ctx context.Context, method, rawURL string, headers map[string]string, body []byte) (*Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, rawURL, readerOf(body))
 	if err != nil {
 		return nil, fmt.Errorf("probe new request: %w", err)
@@ -155,11 +209,56 @@ func (c *Client) Send(ctx context.Context, method, rawURL string, headers map[st
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	start := time.Now()
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("probe do %s %s: %w", method, rawURL, err)
+	// P2.5: bağlam başlıkları (auth) — açık istek değeri kazanır.
+	for k, v := range c.extraHeaders() {
+		if strings.TrimSpace(req.Header.Get(k)) == "" {
+			req.Header.Set(k, v)
+		}
 	}
+
+	start := time.Now()
+	var resp *http.Response
+	var errResp error
+	retryCount := 0
+
+	if c.policy != nil {
+		// Use PolicySession's centralized RoundTripWithRetry
+		resp, errResp = c.policy.RoundTripWithRetry(req)
+		if errResp != nil {
+			// Classify error for deterministic logging
+			errClass := plugin.ClassifyError(errResp)
+			r := &Response{
+				URL:          rawURL,
+				Method:       method,
+				Untrusted:    false,
+				Soft404:      false,
+				ClassifyNote: fmt.Sprintf("error: %v", errResp),
+				ErrorClass:   errClass,
+				RetryCount:   retryCount,
+			}
+			c.store.Put(r)
+			return nil, fmt.Errorf("probe do %s %s: %w", method, rawURL, errResp)
+		}
+	} else {
+		// Fallback: direct transport without policy (tests only)
+		tr := http.DefaultTransport
+		resp, errResp = tr.RoundTrip(req)
+		if errResp != nil {
+			errClass := plugin.ClassifyError(errResp)
+			r := &Response{
+				URL:          rawURL,
+				Method:       method,
+				Untrusted:    false,
+				Soft404:      false,
+				ClassifyNote: fmt.Sprintf("error: %v", errResp),
+				ErrorClass:   errClass,
+				RetryCount:   retryCount,
+			}
+			c.store.Put(r)
+			return nil, fmt.Errorf("probe do %s %s: %w", method, rawURL, errResp)
+		}
+	}
+
 	defer resp.Body.Close()
 	rtt := time.Since(start)
 	limited := io.LimitReader(resp.Body, c.maxBytes+1)
@@ -180,7 +279,10 @@ func (c *Client) Send(ctx context.Context, method, rawURL string, headers map[st
 		RTT:          rtt,
 		Untrusted:    cls.Untrusted,
 		Soft404:      cls.Soft404,
+		WAFDetected:  cls.WAFDetected,
 		ClassifyNote: cls.Note,
+		ErrorClass:   plugin.ErrorClassUnknown,
+		RetryCount:   retryCount,
 	}
 	c.store.Put(r)
 	return r, nil

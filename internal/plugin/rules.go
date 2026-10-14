@@ -155,11 +155,12 @@ func CheckRequires(s PluginSpec, providesSet map[string]bool) error {
 // sınıf-bazlı "OOB geçersiz sınıfta required" kontrolü Tier1 oracle adı üzerinden yapılır.
 var oobInvalidOracles = map[string]bool{
 	"reflection": true, "header": true, "redirect": true, "version": true, "execution": true,
+	"cookie": true, "cors": true,
 }
 
 // CheckOOBOracle kuralı: OOB geçersiz oracle'da oob=required validasyon hatasıdır (G-03).
 func CheckOOBOracle(oracleName string, oob OOBRequirement, pluginID string) error {
-	if oob == OOBRequired && oobInvalidOracles[oracleName] {
+	if oob == OOBRequired && oobInvalidOracles[strings.ToLower(oracleName)] {
 		return &ValidationError{
 			PluginID: pluginID, Field: "oob", Rule: "G-03",
 			Msg: fmt.Sprintf("oracle %q OOB geçersiz sınıfta, required olamaz", oracleName),

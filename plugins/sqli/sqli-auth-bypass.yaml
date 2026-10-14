@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/sqli/sqli-auth-bypass.yaml
+# What: Tier 1 SQLi auth-bypass detector aimed at login/credential fields.
+# Why: Login forms concatenating credentials into SQL are still common; a DB
+#   error signature absent in the neutral control proves injectability of the
+#   credential field without performing any login or state change.
+
+id: sqli-auth-bypass
+name: SQL Injection Authentication Bypass (Login Forms)
+description: Detects SQL injection in login and credential fields via database error signature with absent-in-control proof.
+author: GASH contributors
+severity: critical
+tags: [sqli, injection, auth-bypass, error]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 200
+phase: probe
+order: 58
+api_version: "1.0"
+tests: tests/fixtures/sqli-auth-bypass/
+request:
+  method: GET
+  param_names: [username, user, login, email, password, passwd]
+  payload: "' OR '1'='1' -- "
+oracle:
+  name: error
+  params:
+    mode: "sqli"

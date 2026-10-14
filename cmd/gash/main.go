@@ -19,6 +19,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Xmar1881/Gash/internal/auth"
+	"github.com/Xmar1881/Gash/internal/config"
+	"github.com/Xmar1881/Gash/internal/discovery"
 	"github.com/Xmar1881/Gash/internal/engine"
 	"github.com/Xmar1881/Gash/internal/plugin"
 	"github.com/Xmar1881/Gash/internal/plugin/loader"
@@ -98,10 +101,11 @@ func waitForEnter() {
 func newRoot() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "gash",
-		Short: "GASH v2 — hibrit plugin mimarili güvenlik tarayıcı motoru",
-		Long:  "GASH v2 çekirdek altyapı (Faz 2). Zafiyet plugin'i içermez; Candidate→Verify→Finding hattı + oracle/baseline/OOB iskeleti.",
+		Short: "Gash — hibrit plugin mimarili güvenlik tarayıcı motoru",
+		Long:  "Gash çekirdek altyapı. Candidate→Verify→Finding hattı + oracle/baseline/OOB ile referans pluginleri çalıştırır.",
 	}
 	root.AddCommand(newScanCmd())
+	root.AddCommand(newOpenAPICmd())
 	root.AddCommand(newPluginsCmd())
 	root.AddCommand(newBenchCmd())
 	root.AddCommand(newSuppressCmd())
@@ -115,6 +119,7 @@ func newScanCmd() *cobra.Command {
 		safe          bool
 		deep          bool
 		active        bool
+		aggressive    bool
 		scope         []string
 		maxPerTarget  int64
 		maxTotal      int64
@@ -127,21 +132,49 @@ func newScanCmd() *cobra.Command {
 		failOn        string
 		noPluginCache bool
 		strictPlugins bool
+		profile       string
 		ignorePlugins []string
 		rateLimit     float64
 		parallelism   int
+		authHeaders   []string
+		cookies       []string
+		basicAuth     string
+		authUserA     []string
+		authUserB     []string
+		techFlags     []string
+		tcpBanners    []string
 	)
 	cmd := &cobra.Command{
 		Use:   "scan",
 		Short: "Hedefi tara (Candidate→Verify→Finding hattı)",
-		Long: "Target scanner with live Tier1/Tier2/Tier3 execution and oracle verification.\n\nResponsibility note: scan only targets you own or have explicit written permission to test.\nScan only with explicit permission; unauthorized scanning may be illegal and is strictly prohibited.\nUse --scope to lock the allowlist and keep --safe unless you understand active payloads.",
+		Long:  "Target scanner with live Tier1/Tier2/Tier3 execution and oracle verification.\n\nResponsibility note: scan only targets you own or have explicit written permission to test.\nScan only with explicit permission; unauthorized scanning may be illegal and is strictly prohibited.\nUse --scope to lock the allowlist and keep --safe unless you understand active payloads.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
+			if aggressive {
+				active = true
+				safe = false
+				deep = true
+				if !cmd.Flags().Changed("profile") {
+					profile = "aggressive"
+				}
+				if !cmd.Flags().Changed("show-tentative") {
+					showTentative = true
+				}
+			}
 			if strings.TrimSpace(target) == "" {
 				return fmt.Errorf("scan: --target zorunlu")
 			}
 			if oobServer != "" && !active {
 				return fmt.Errorf("scan: --oob-server verildiyse --active zorunlu (OOB invasive'dir)")
+			}
+			// P2.1: TCP banner açık aktif probdur — bayrak + --active ikisi şart.
+			for _, b := range tcpBanners {
+				if h, p, err := net.SplitHostPort(strings.TrimSpace(b)); err != nil || strings.TrimSpace(h) == "" || strings.TrimSpace(p) == "" {
+					return fmt.Errorf("scan: --tcp-banner host:port olmalı (got %q)", b)
+				}
+			}
+			if len(tcpBanners) > 0 && !active {
+				return fmt.Errorf("scan: --tcp-banner verildiyse --active zorunlu (banner probu aktiftir)")
 			}
 			normalized, err := validateScanTarget(target)
 			if err != nil {
@@ -161,6 +194,53 @@ func newScanCmd() *cobra.Command {
 			failLevel, err := normalizeFailOn(failOn)
 			if err != nil {
 				return err
+			}
+			// P2.5: kimlik bağlamı (parse fail-closed; değerler asla loglanmaz).
+			authCtx := auth.New()
+			for _, h := range authHeaders {
+				if err := authCtx.ParseAuthHeader(h); err != nil {
+					return err
+				}
+			}
+			for _, c := range cookies {
+				if err := authCtx.ParseCookie(c); err != nil {
+					return err
+				}
+			}
+			if strings.TrimSpace(basicAuth) != "" {
+				if err := authCtx.ParseBasicAuth(basicAuth); err != nil {
+					return err
+				}
+			}
+			// Çift-kullanıcı BOLA matrisi (--auth-user-a/b): her biri bağımsız
+			// "Ad: değer" başlık setidir (değerler asla loglanmaz).
+			authA, authB := auth.New(), auth.New()
+			for _, h := range authUserA {
+				if err := authA.ParseAuthHeader(h); err != nil {
+					return fmt.Errorf("scan: --auth-user-a %w", err)
+				}
+			}
+			for _, h := range authUserB {
+				if err := authB.ParseAuthHeader(h); err != nil {
+					return fmt.Errorf("scan: --auth-user-b %w", err)
+				}
+			}
+			dualAuth := authA.HasAuth() && authB.HasAuth()
+			if (authA.HasAuth() || authB.HasAuth()) && !dualAuth {
+				return fmt.Errorf("scan: --auth-user-a ve --auth-user-b birlikte verilmeli (BOLA matrisi iki kimlik ister)")
+			}
+			if dualAuth && !active {
+				fmt.Fprintln(cmd.ErrOrStderr(), "warn: çift kullanıcı verildi ama --active kapalı — BOLA matrisi koşmaz")
+			}
+			if dualAuth {
+				fmt.Fprintln(cmd.ErrOrStderr(), "user-a: "+authA.Redacted())
+				fmt.Fprintln(cmd.ErrOrStderr(), "user-b: "+authB.Redacted())
+			}
+			if authCtx.HasAuth() && !active {
+				fmt.Fprintln(cmd.ErrOrStderr(), "warn: kimlik bilgisi verildi ama --active kapalı — requires_auth plugin'ler koşar, aktif problar koşmaz")
+			}
+			if authCtx.HasAuth() {
+				fmt.Fprintln(cmd.ErrOrStderr(), authCtx.Redacted())
 			}
 			if len(scope) > 0 {
 				if err := enforceScanScope(ctx, normalized, scope); err != nil {
@@ -193,6 +273,11 @@ func newScanCmd() *cobra.Command {
 			cfg.Deep = deep
 			cfg.Active = active
 			cfg.HasAuth = false
+			cfg.Auth = authCtx
+			cfg.AuthA = authA
+			cfg.AuthB = authB
+			cfg.Technologies = techFlags
+			cfg.TCPBanners = tcpBanners
 			cfg.Scope = scope
 			cfg.MaxRequestsPerTarget = maxPerTarget
 			cfg.MaxRequestsTotal = maxTotal
@@ -204,6 +289,43 @@ func newScanCmd() *cobra.Command {
 			cfg.ShowTentative = showTentative
 			cfg.IgnorePlugins = ignoreSet
 			cfg.Target = normalized
+
+			// P1.2: Apply scan profile
+			profileName := config.ProfileName(strings.ToLower(strings.TrimSpace(profile)))
+			if profileName != "" {
+				cfg.Profile = profileName
+				if p := config.GetProfile(profileName); p != nil {
+					// Profile sets defaults; explicit flags override
+					if !cmd.Flags().Changed("safe") {
+						cfg.Safe = !p.AllowActive
+					}
+					if !cmd.Flags().Changed("deep") {
+						cfg.Deep = p.AllowDeep
+					}
+					if !cmd.Flags().Changed("active") {
+						cfg.Active = p.AllowActive
+					}
+					if !cmd.Flags().Changed("max-requests-per-target") {
+						cfg.MaxRequestsPerTarget = p.MaxRequestsPerTarget
+					}
+					if !cmd.Flags().Changed("max-requests-total") {
+						cfg.MaxRequestsTotal = p.MaxRequestsTotal
+					}
+					if !cmd.Flags().Changed("rate-limit") {
+						cfg.RatePerSecond = p.RatePerSecond
+					}
+					if !cmd.Flags().Changed("parallelism") {
+						cfg.Parallelism = p.Parallelism
+					}
+					if !cmd.Flags().Changed("plugin-timeout") {
+						cfg.PluginTimeoutMs = p.PluginTimeoutMs
+					}
+					// Deep profile requires explicit opt-in
+					if p.RequireExplicitOptIn && !cmd.Flags().Changed("deep") {
+						fmt.Fprintln(cmd.ErrOrStderr(), "warn: deep profile requires explicit --deep flag; use --deep to enable")
+					}
+				}
+			}
 			eng := engine.New(reg, cfg)
 			for id, rec := range records {
 				platform := rec.Platform
@@ -230,6 +352,7 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&safe, "safe", true, "varsayılan safe")
 	cmd.Flags().BoolVar(&deep, "deep", false, "deep faz + ExecutionOracle kapısı")
 	cmd.Flags().BoolVar(&active, "active", false, "state-changing/OOB payload kapısı")
+	cmd.Flags().BoolVar(&aggressive, "aggressive", false, "tam güç ofansif tarama: tüm dedektörler, genişletilmiş bütçe, yüksek rate-limit")
 	cmd.Flags().StringSliceVar(&scope, "scope", nil, "CIDR/domain allowlist (verilirse hedef doğrulanır)")
 	cmd.Flags().Int64Var(&maxPerTarget, "max-requests-per-target", 1000, "per-target bütçe")
 	cmd.Flags().Int64Var(&maxTotal, "max-requests-total", 10000, "global bütçe")
@@ -237,7 +360,7 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().StringVar(&oobWait, "oob-wait", "60s", "scan-sonu OOB penceresi")
 	cmd.Flags().StringVar(&oobServer, "oob-server", "", "self-hosted interaction sunucusu (boş=kapalı)")
 	cmd.Flags().BoolVar(&showTentative, "show-tentative", false, "tentative'i dahil et")
-	cmd.Flags().StringSliceVar(&format, "format", []string{"text"}, "json|sarif|text|html (tekrarlanabilir)")
+	cmd.Flags().StringSliceVar(&format, "format", []string{"text"}, "json|sarif|text|html|junit (tekrarlanabilir)")
 	cmd.Flags().StringVar(&output, "output", "", "rapor dosyası (tek format ile kullanın)")
 	cmd.Flags().StringVar(&failOn, "fail-on", "", "CI kapısı (firm|confirmed)")
 	cmd.Flags().BoolVar(&noPluginCache, "no-plugin-cache", false, "cache bypass (debug)")
@@ -245,6 +368,14 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&ignorePlugins, "ignore-plugin", nil, "döngü kırma / susturma")
 	cmd.Flags().Float64Var(&rateLimit, "rate-limit", 10, "per-target req/s")
 	cmd.Flags().IntVar(&parallelism, "parallelism", 8, "worker sayısı")
+	cmd.Flags().StringVar(&profile, "profile", "standard", "scan profile: safe|standard|deep|aggressive (safe=pasif+düşük bütçe, standard=kontrollü aktif, deep=browser+yüksek bütçe, aggressive=tam ofansif)")
+	cmd.Flags().StringSliceVar(&authHeaders, "auth-header", nil, "kimlik header'ı 'Ad: değer' (tekrarlanabilir, requires_auth kapısını açar)")
+	cmd.Flags().StringSliceVar(&cookies, "cookie", nil, "oturum cookie'si 'a=b[; c=d]' (tekrarlanabilir)")
+	cmd.Flags().StringVar(&basicAuth, "basic-auth", "", "basic kimlik 'kullanıcı:parola'")
+	cmd.Flags().StringSliceVar(&authUserA, "auth-user-a", nil, "BOLA matrisi kullanıcı A başlığı 'Ad: değer' (tekrarlanabilir, --auth-user-b ile birlikte, --active şart)")
+	cmd.Flags().StringSliceVar(&authUserB, "auth-user-b", nil, "BOLA matrisi kullanıcı B başlığı 'Ad: değer' (tekrarlanabilir, --auth-user-a ile birlikte, --active şart)")
+	cmd.Flags().StringSliceVar(&techFlags, "tech", nil, "bilinen teknoloji (tekrarlanabilir/virgüllü, örn. wordpress,graphql — chain kapısı)")
+	cmd.Flags().StringSliceVar(&tcpBanners, "tcp-banner", nil, "açık TCP banner probu 'host:port' (tekrarlanabilir, --active şart, kapsam-izinli)")
 	return cmd
 }
 
@@ -273,13 +404,12 @@ func validateScanTarget(raw string) (string, error) {
 }
 
 // normalizeScanFormats validates repeatable reporter formats.
-// What: Lowercase plus allowlist check for json/sarif/text/html.
+// What: Lowercase plus registry allowlist check (json|sarif|text|html|junit).
 // Why: Typos must fail fast instead of producing a silent empty report.
 func normalizeScanFormats(formats []string) ([]string, error) {
 	if len(formats) == 0 {
 		return []string{"text"}, nil
 	}
-	allowed := map[string]bool{"json": true, "sarif": true, "text": true, "html": true}
 	var out []string
 	for _, f := range formats {
 		for _, part := range strings.Split(f, ",") {
@@ -287,8 +417,8 @@ func normalizeScanFormats(formats []string) ([]string, error) {
 			if name == "" {
 				continue
 			}
-			if !allowed[name] {
-				return nil, fmt.Errorf("scan: --format %q geçersiz (json|sarif|text|html)", part)
+			if _, err := reporter.Lookup(name); err != nil {
+				return nil, fmt.Errorf("scan: --format %q geçersiz (%s)", part, strings.Join(reporter.Names(), "|"))
 			}
 			out = append(out, name)
 		}
@@ -421,21 +551,12 @@ func openScanOutput(path string) (*os.File, error) {
 }
 
 // writeOneScanFormat dispatches a single reporter format.
-// What: Format router for text plus json plus sarif plus html.
+// What: Registry router for all registered formats (json|sarif|text|html|junit).
 // Why: One router keeps CLI output identical to reporter contract tests.
 func writeOneScanFormat(w interface {
 	Write([]byte) (int, error)
 }, rep *engine.Report, name string, opts reporter.Options) error {
-	switch name {
-	case "json":
-		return reporter.WriteJSON(w, rep, opts)
-	case "sarif":
-		return reporter.WriteSARIF(w, rep, opts)
-	case "html":
-		return reporter.WriteHTML(w, rep, opts)
-	default:
-		return reporter.WriteText(w, rep, opts)
-	}
+	return reporter.Write(name, w, rep, opts)
 }
 
 // scanFailTriggered reports whether the CI gate level is present.
@@ -717,7 +838,7 @@ func runFixtureSuite(cmd *cobra.Command, ctx context.Context, spec *plugin.Plugi
 	if st, err := os.Stat(root); err != nil || !st.IsDir() {
 		return fmt.Errorf("test %s: fixture root %q not found: %w", spec.ID, spec.Tests, errFixtureRoot(root))
 	}
-	sum, err := plugintest.Run(ctx, spec.ID, oracleName, root, true)
+	sum, err := plugintest.Run(ctx, spec.ID, oracleName, root, true, nil)
 	if err != nil {
 		return err
 	}
@@ -735,6 +856,10 @@ func runFixtureSuite(cmd *cobra.Command, ctx context.Context, spec *plugin.Plugi
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "precision=%.2f recall=%d/%d positives, %d false positives\n",
 		sum.Precision, sum.TruePositives, sum.TruePositives+sum.FalseNegatives, sum.FalsePositives)
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "dataset=%s fixtures=%d (TP=%d FP=%d TN=%d FN=%d)\n",
+		sum.DatasetHash, sum.FixtureFiles, sum.TruePositives, sum.FalsePositives, sum.TrueNegatives, sum.FalseNegatives); err != nil {
+		return fmt.Errorf("test %s: dataset satırı yazılamadı: %w", spec.ID, err)
+	}
 	if positives := sum.TruePositives + sum.FalseNegatives; positives == 0 {
 		return fmt.Errorf("test %s: no positive fixtures under %s/positive — add at least one", spec.ID, root)
 	}
@@ -890,6 +1015,73 @@ func runPluginsInfo(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "fixtures: none (findings stay tentative)\n")
 	}
 	return nil
+}
+
+// newOpenAPICmd builds the offline API test-plan command (P2.2).
+// What: `gash openapi --spec <file|url>` parses OpenAPI 3.x / Swagger 2.0 and
+// prints endpoints + parameters as a test plan. No scan, no probing — the only
+// network call is the single explicit spec fetch (--spec URL).
+// Why: API surface enumeration must be reviewable before any scan traffic.
+func newOpenAPICmd() *cobra.Command {
+	var spec, format, server, timeout string
+	c := &cobra.Command{
+		Use:   "openapi",
+		Short: "OpenAPI/Swagger spec'ten test planı üret (taramasız)",
+		Long:  "Parse an OpenAPI 3.x / Swagger 2.0 document (local file or http(s) URL) and print the endpoint/parameter test plan.\nNo scanning is performed; a remote --spec URL is fetched once and never probed further.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.TrimSpace(spec) == "" {
+				return fmt.Errorf("openapi: --spec zorunlu (dosya yolu veya http(s) URL)")
+			}
+			var plan *discovery.Plan
+			var err error
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(spec)), "http://") ||
+				strings.HasPrefix(strings.ToLower(strings.TrimSpace(spec)), "https://") {
+				dur, perr := time.ParseDuration(strings.TrimSpace(timeout))
+				if perr != nil {
+					return fmt.Errorf("openapi: --timeout geçersiz %q: %w", timeout, perr)
+				}
+				plan, err = discovery.FetchSpec(cmd.Context(), spec, dur)
+			} else {
+				plan, err = discovery.LoadSpecFile(spec)
+			}
+			if err != nil {
+				return err
+			}
+			switch strings.ToLower(strings.TrimSpace(format)) {
+			case "", "text":
+				fmt.Fprintf(cmd.OutOrStdout(), "spec: %s (%s)\n", plan.Title, plan.Version)
+				fmt.Fprintf(cmd.OutOrStdout(), "servers: %s\n", strings.Join(plan.Servers, ", "))
+				for _, t := range plan.Targets(server) {
+					fmt.Fprintf(cmd.OutOrStdout(), "- %s\n", t)
+				}
+				for _, ep := range plan.Endpoints {
+					if len(ep.Params) == 0 {
+						continue
+					}
+					var ps []string
+					for _, p := range ep.Params {
+						ps = append(ps, p.In+":"+p.Name)
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "  %s %s params=[%s]\n", ep.Method, ep.Path, strings.Join(ps, ", "))
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%d endpoints\n", len(plan.Endpoints))
+			case "json":
+				data, err := plan.MarshalJSON()
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), string(data))
+			default:
+				return fmt.Errorf("openapi: --format %q geçersiz (text|json)", format)
+			}
+			return nil
+		},
+	}
+	c.Flags().StringVar(&spec, "spec", "", "OpenAPI/Swagger dosyası veya http(s) URL")
+	c.Flags().StringVar(&format, "format", "text", "text|json")
+	c.Flags().StringVar(&server, "server", "", "hedef baz sunucu (boşsa spec'teki ilk servers[] girdisi)")
+	c.Flags().StringVar(&timeout, "timeout", "15s", "uzak spec çekme zaman aşımı")
+	return c
 }
 
 func newBenchCmd() *cobra.Command {

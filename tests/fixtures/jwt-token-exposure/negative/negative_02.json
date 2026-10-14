@@ -1,0 +1,1 @@
+{"body": "<html><body>Welcome</body></html>", "control_body": "", "control_status": 0, "expected_verdict": "reject", "headers": {"Content-Type": "text/html", "Set-Cookie": "session=abc123; HttpOnly; Secure"}, "name": "Normal session cookie - no JWT", "status": 200, "target": "http://example.com/login"}

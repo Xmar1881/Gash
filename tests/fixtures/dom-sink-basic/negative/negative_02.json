@@ -1,0 +1,1 @@
+{"body": "<p>dokuman ornegi, yurutulebilir icerik yok</p>", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "plain text, no sink", "status": 200, "target": "http://example.com/app"}

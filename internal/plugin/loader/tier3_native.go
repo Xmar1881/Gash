@@ -45,7 +45,7 @@ func ParseTier3Manifest(path string, data []byte) (*plugin.PluginSpec, *Tier3Man
 	if m.SHA256 == "" {
 		return nil, nil, fmt.Errorf("tier3 %s: sha256 pin zorunlu: %w", path, plugin.ErrValidation)
 	}
-	if err := plugin.CheckOOBOracle("", m.PluginSpec.OOB, m.PluginSpec.ID); err != nil {
+	if err := plugin.CheckOOBOracle("", m.OOB, m.ID); err != nil {
 		// oracle adı manifestte yoksa genel R-02/R-03 zaten Validate'te; burada ek yok.
 		_ = err
 	}

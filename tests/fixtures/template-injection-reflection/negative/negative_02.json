@@ -1,0 +1,1 @@
+{"body": "Invalid input detected", "control_body": "", "control_status": 0, "expected_confidence": "tentative", "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "waf blocked template payload", "status": 403, "target": "https://example.com/template?name={{7*7}}"}

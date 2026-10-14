@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/graphql-discovery/graphql-endpoint-discovery.yaml
+# What: Tier 1 GraphQL endpoint discovery via VersionOracle.
+# Why: Discovers GraphQL endpoints by detecting GraphQL indicators in response
+#   bodies and common endpoint paths; uses existing VersionOracle with "graphql" mode.
+
+id: graphql-endpoint-discovery
+name: GraphQL Endpoint Discovery
+description: Discovers GraphQL API endpoints by detecting GraphQL schema indicators and common endpoint paths.
+author: GASH contributors
+severity: low
+tags: [graphql, api-discovery, endpoint-enumeration, reconnaissance]
+safe: true
+deep: false
+active: false
+requires_auth: false
+phase: discovery
+order: 60
+api_version: "1.0"
+tests: tests/fixtures/graphql-endpoint-discovery/
+request:
+  method: GET
+  param_names: ["query"]
+  payload: "{ __schema { types { name } } }"
+oracle:
+  name: version
+  params:
+    mode: graphql

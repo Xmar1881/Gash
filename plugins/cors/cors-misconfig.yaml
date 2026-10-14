@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/cors/cors-misconfig.yaml
+# What: Tier 1 passive CORS plugin (wildcard and reflected-origin grading).
+# Why: Wildcard with credentials confirms; plain wildcard firms. Reflected
+#   origin detection is passive-only when Origin is known; active Origin
+#   probing is out of scope for v1 (documented limitation).
+
+id: cors-misconfig
+name: CORS Misconfiguration
+description: Detects permissive CORS policies via passive Access-Control-Allow-Origin analysis.
+author: GASH contributors
+severity: medium
+tags: [cors, misconfig]
+safe: true
+deep: false
+active: false
+requires_auth: false
+phase: probe
+order: 12
+api_version: "1.0"
+tests: tests/fixtures/cors-misconfig/
+request:
+  method: GET
+oracle:
+  name: cors

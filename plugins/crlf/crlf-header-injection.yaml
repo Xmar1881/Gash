@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/crlf/crlf-header-injection.yaml
+# What: Tier 1 passive CRLF/HTTP header injection detection via HeaderOracle.
+# Why: Detects CRLF injection in response headers (and reflected request headers)
+#   without active probing; uses existing HeaderOracle with "crlf" mode.
+
+id: crlf-header-injection
+name: CRLF/HTTP Header Injection
+description: Detects CRLF injection vulnerabilities in HTTP response headers via passive analysis.
+author: GASH contributors
+severity: medium
+tags: [crlf, http-splitting, header-injection, misconfig]
+safe: true
+deep: false
+active: false
+requires_auth: false
+phase: probe
+order: 20
+api_version: "1.0"
+tests: tests/fixtures/crlf-header-injection/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: crlf

@@ -1,0 +1,1 @@
+{"body": "User: gash_a1b2c3d4", "control_body": "User: {{7*7}}", "control_status": 200, "expected_confidence": "tentative", "expected_verdict": "accept", "headers": {"Content-Type": "text/html"}, "name": "twig/config exposure", "status": 200, "target": "https://example.com/profile?input=gash_a1b2c3d4", "canary": "gash_a1b2c3d4"}

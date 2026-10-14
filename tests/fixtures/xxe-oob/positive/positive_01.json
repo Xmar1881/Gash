@@ -1,0 +1,1 @@
+{"body": "XML processed", "control_body": "", "control_status": 0, "expected_confidence": "confirmed", "expected_verdict": "accept", "headers": {"Content-Type": "application/xml"}, "name": "oob callback received for blind xxe", "status": 200, "target": "https://example.com/api/xml", "oob_callback": true, "correlation_id": "c_abcdef123456", "namespace": "scan_abcdef1234567890"}

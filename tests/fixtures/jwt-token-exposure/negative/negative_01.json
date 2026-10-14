@@ -1,0 +1,1 @@
+{"body": "<html><body>Welcome</body></html>", "control_body": "", "control_status": 0, "expected_verdict": "reject", "headers": {"Content-Type": "text/html", "Authorization": "Bearer not-a-jwt-token"}, "name": "Bearer token but not JWT format", "status": 200, "target": "http://example.com/api/profile"}

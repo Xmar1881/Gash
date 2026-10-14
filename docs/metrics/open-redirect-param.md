@@ -50,3 +50,10 @@ True positives 2, false negatives 0. Recall 1.00.
 ## Gate Verdict
 
 PASS. Precision 1.00 is above the 0.99 gate. Corpus holds 0 `firm` plus.
+
+## Dataset
+
+- Dataset hash: `3278b239e3ba13d5b061a611d5f7b9e5da0cca98b47db84c715ba04f7cb03cbe`
+  (sha256 over all 5 fixture files under `tests/fixtures/open-redirect-param/`).
+- Samples: TP=2, FP=0, TN=3, FN=0. Fixture-only measurement; lab pending above.
+  `TestMetricGate` fails the build if this hash drifts from the fixtures.

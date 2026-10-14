@@ -1,0 +1,1 @@
+{"body": "<script>var q = location.search; document.write(q);</script>", "expected_confidence": "firm", "expected_verdict": "accept", "headers": {"Content-Type": "text/html"}, "name": "document.write sink with location.search source", "status": 200, "target": "http://example.com/app?q=x"}

@@ -1,0 +1,1 @@
+{"body": "<html><body>Internal Server Error</body></html>", "control_body": "<html><body>Internal Server Error</body></html>", "control_status": 500, "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "Generic error page - no details", "status": 500, "target": "http://example.com/"}

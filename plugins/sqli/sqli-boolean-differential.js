@@ -26,13 +26,23 @@ tests: tests/fixtures/sqli-boolean-differential/
 function run(probe, ctx) {
   const points = ctx.injectionPoints();
 
+  const TRUE_PAY = "1' AND '1'='1";
+  const FALSE_PAY = "1' AND '1'='2";
   const candidates = [];
   for (const point of points) {
     const trueResps = [];
     const falseResps = [];
     for (let i = 0; i < 3; i++) {
-      trueResps.push(probe.send(point.withValue("1' AND '1'='1")));
-      falseResps.push(probe.send(point.withValue("1' AND '1'='2")));
+      trueResps.push(probe.send(point.withValue(TRUE_PAY)));
+      falseResps.push(probe.send(point.withValue(FALSE_PAY)));
+    }
+    // Yansıma açıklaması: gövde payload'u aynen yansıtıyorsa sapma enjeksiyon
+    // kanıtı değil yansıma gürültüsüdür (örn. arama sayfaları deterministik
+    // yansıtır). Gerçek boolean körlükte sayfa içeriği payload'u echo'lamadan
+    // farklılaşır; echo varsa bu nokta atlanır (FP disiplini).
+    const echoes = (resps, pay) => resps.some((r) => r.body && r.body.includes(pay));
+    if (echoes(trueResps, TRUE_PAY) || echoes(falseResps, FALSE_PAY)) {
+      continue;
     }
     const controlResp = probe.send(point.withValue("1"));
     const ev = host.oracles.differential(trueResps, falseResps, controlResp);
