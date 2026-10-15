@@ -64,6 +64,9 @@ SARIF v2.1.0, one `run` with tool `gash`:
 - `confirmed` → `error`, `firm` → `warning`, `tentative` → `note`
   (tentative only with `--show-tentative`).
 - `fingerprints: {"gash/v1": "<fp>"}` enables baseline/diff workflows.
+- `properties: {"evidenceType": "<static-execution-evidence|browser-confirmed|...>",
+  "confidence": "<confidence>"}` records the §8 evidence discriminator
+  (static parser proof vs controlled browser execution).
 
 ## GitHub Actions example
 

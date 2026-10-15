@@ -1,0 +1,1 @@
+{"body": "<result>entity:GASH_XXE_CANARY:end</result>", "canary": "GASH_XXE_CANARY", "control_body": "<result>entity:empty:end</result>", "control_status": 200, "expected_confidence": "firm", "expected_verdict": "accept", "headers": {"Content-Type": "application/xml"}, "name": "canary entity expanded inside result element", "status": 200, "target": "http://example.com/api/xml"}

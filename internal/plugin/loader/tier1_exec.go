@@ -108,6 +108,7 @@ func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File
 			Headers:        headers,
 			Mode:           mode,
 			RequestHeaders: reqHeaders,
+			Body:           body,
 		})
 		if err != nil {
 			return nil, err

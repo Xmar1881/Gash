@@ -125,6 +125,35 @@ func TestSendDoesNotTreatGenericForbiddenAsWAF(t *testing.T) {
 	}
 }
 
+func TestSendWAFBypassEncodedVariant(t *testing.T) {
+	// Header-only varyantı engellenir, double-encode varyantı stabil 200
+	// döndürür: sayaçlar 403→200 bypass'ı kanıtlar (§9 WAF satırı).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.RawQuery, "%25") {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("<html>application page</html>"))
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("<html>request blocked by waf</html>"))
+	}))
+	defer srv.Close()
+	c, ctx := wafTestClient(true)
+	resp, err := c.Send(ctx, http.MethodGet, srv.URL+"/s?q=hello%20world", nil, nil)
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if resp.Status != http.StatusOK || !resp.WAFBypassed {
+		t.Fatalf("encode varyantı bypass sayılmalı, got %+v", resp)
+	}
+	if !strings.Contains(resp.ClassifyNote, "waf-bypass-verified:double-encode") {
+		t.Fatalf("teknik nota işlenmeli: %q", resp.ClassifyNote)
+	}
+	if det, byp := c.WAFStats(); det != 1 || byp != 1 {
+		t.Fatalf("stats detected=1 bypassed=1 olmalı, got %d/%d", det, byp)
+	}
+}
+
 func TestSendWAFDisabledKeepsBlock(t *testing.T) {
 	srv := wafTestServer(t)
 	defer srv.Close()
@@ -166,5 +195,9 @@ func TestSendWAFUnbypassableStaysBlocked(t *testing.T) {
 	}
 	if !resp.WAFDetected {
 		t.Fatal("WAF işareti taşınmalı")
+	}
+	// §9: sürekli-403 → detected sayacı artar, bypass sayacı artmaz.
+	if det, byp := c.WAFStats(); det != 1 || byp != 0 {
+		t.Fatalf("aşılamayan engelde detected=1 bypassed=0 olmalı, got %d/%d", det, byp)
 	}
 }

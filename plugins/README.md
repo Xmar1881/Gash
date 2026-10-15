@@ -27,6 +27,8 @@ discovers this tree automatically; no enable flag exists.
 | sqli-boolean-differential | Tier 2 | differential | `sqli/sqli-boolean-differential.js` |
 | ssrf-blind-oob | Tier 2 | oob (required) | `ssrf/ssrf-blind-oob.js` |
 | dom-sink-basic | Tier 2 | execution (static, firm max) | `xss/dom-sink-basic.js` |
+| hpp-duplicate-emission | Tier 2 | differential | `hpp/hpp-duplicate-emission.js` |
+| xss-stored-two-step | Tier 2 | reflection | `xss/xss-stored-two-step.js` |
 | sqli-auth-bypass | Tier 1 | error | `sqli/sqli-auth-bypass.yaml` |
 | sqli-stacked-time | Tier 1 | timing | `sqli/sqli-stacked-time.yaml` |
 | sqli-time-based | Tier 1 | timing | `sqli-time-based/sqli-time-based.yaml` |
@@ -45,6 +47,14 @@ discovers this tree automatically; no enable flag exists.
 | idor-differential | Tier 1 | differential | `idor/idor-differential.yaml` |
 | ldap-injection-differential | Tier 1 | differential | `ldap-injection/ldap-injection-differential.yaml` |
 | command-injection-error | Tier 1 | error | `command-injection/command-injection-error.yaml` |
+| command-injection-timing | Tier 1 | timing | `command-injection/command-injection-timing.yaml` |
+| xss-stored-basic | Tier 1 | reflection | `xss/xss-stored-basic.yaml` |
+| xxe-reflected-basic | Tier 1 | reflection | `xxe/xxe-reflected-basic.yaml` |
+| csrf-token-absence | Tier 1 | header | `csrf/csrf-token-absence.yaml` |
+| clickjacking-frameable | Tier 1 | header | `clickjacking/clickjacking-frameable.yaml` |
+| hpp-parameter-pollution | Tier 1 | differential | `hpp/hpp-parameter-pollution.yaml` |
+| rfi-remote-include | Tier 1 | reflection | `rfi/rfi-remote-include.yaml` |
+| cve-dependency-scan | Tier 1 | version | `cve/cve-dependency-scan.yaml` |
 | server-version-disclosure | Tier 1 | version | `version-disclosure/server-version-disclosure.yaml` |
 | poc-native-header-check | Tier 3 | header | `native/poc-native-header-check.gashplugin.yaml` |
 

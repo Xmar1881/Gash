@@ -1,0 +1,1 @@
+{"body": "<html><body><form action=\"/search\" method=\"GET\"><input name=\"q\"></form></body></html>", "control_body": "", "control_status": 0, "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "edge: GET-only search form is out of scope for this rule", "status": 200, "target": "http://example.com/search"}

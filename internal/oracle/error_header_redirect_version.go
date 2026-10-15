@@ -132,14 +132,18 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 
 // HeaderParams güvenlik header kontrolüdür (GASH-019). Kontrol gerekmez (deterministik).
 // Extended for P1.4: CRLF injection, JWT exposure, and JWT algorithm confusion detection modes.
+// Extended for deep-research report: csrf (GASH-020 passive form-token screen) and
+// frame (GASH-019 clickjacking framing screen) modes; both need Body for form analysis.
 type HeaderParams struct {
 	Headers        http.Header
-	Mode           string      // "security" (default), "crlf", "jwt", "jwt_alg"
+	Mode           string      // "security" (default), "crlf", "jwt", "jwt_alg", "csrf", "frame"
 	RequestHeaders http.Header // For CRLF: check if request headers were reflected
+	Body           string      // Response body (form analysis for csrf mode; ignored otherwise)
 }
 
 // HeaderOracle mantık-tabanlıdır; tentative YOKTUR (ya var ya yok; zayıf → firm).
 // Extended for P1.4: supports "security" (default), "crlf", "jwt", "jwt_alg" modes.
+// Extended for deep-research report: "csrf" (GASH-020) and "frame" (GASH-019 clickjacking) modes.
 type HeaderOracle struct{}
 
 func (HeaderOracle) Name() string { return "header" }
@@ -165,6 +169,10 @@ func (HeaderOracle) Verify(ctx context.Context, cls baseline.Classification, tai
 		return verifyJWTExposure(p.Headers)
 	case "jwt_alg":
 		return verifyJWTAlgConfusion(p.Headers)
+	case "csrf":
+		return verifyCSRFTokenAbsence(p.Headers, p.Body)
+	case "frame":
+		return verifyFrameable(p.Headers)
 	default:
 		return verifySecurityHeaders(p.Headers)
 	}
@@ -192,6 +200,99 @@ func verifySecurityHeaders(h http.Header) (*Evidence, error) {
 		ConfidenceContribution: plugin.ConfidenceConfirmed,
 		Artifacts:              map[string]string{"missing": strings.Join(missing, ",")},
 		Note:                   "mantık-tabanlı header bulgusu → confirmed",
+	}, nil
+}
+
+// verifyCSRFTokenAbsence pasif CSRF ekranıdır (GASH-020, CWE-352).
+// What: POST formu var + anti-CSRF token yok + SameSite=Strict yok → confirmed.
+// Why: State-changing formda token yokluğu deterministik mantık bulgusudur;
+// kontrol isteği gerekmez, tentative YOKTUR (GET-only/token'lı → reject).
+// Güvenlik: yalnızca pasif gözlem, state-changing istek gönderilmez.
+func verifyCSRFTokenAbsence(h http.Header, body string) (*Evidence, error) {
+	lower := strings.ToLower(body)
+	formIdx := strings.Index(lower, "<form")
+	if formIdx < 0 {
+		return &Evidence{Verdict: VerdictReject, Note: "form yok — CSRF kuralı GET-only/passive dışı"}, nil
+	}
+	formRegion := lower[formIdx:]
+	if end := strings.Index(formRegion, ">"); end >= 0 {
+		formRegion = formRegion[:end]
+	}
+	// State-changing formu yalnızca POST (veya method'suz GET varsayılanı dışı) sayılır.
+	// Method belirtilmemiş form GET varsayılır → bu kuralda reject.
+	if !strings.Contains(formRegion, "post") {
+		return &Evidence{Verdict: VerdictReject, Note: "POST formu yok — bu kuralda reject"}, nil
+	}
+	for _, token := range []string{"csrf", "xsrf", "authenticity", "_token", "requestverification"} {
+		if strings.Contains(lower, token) {
+			return &Evidence{Verdict: VerdictReject, Note: "anti-CSRF token mevcut — korumalı"}, nil
+		}
+	}
+	// SameSite=Strict çerezi varsa tek başına token yokluğu firm'a düşer.
+	for _, c := range h.Values("Set-Cookie") {
+		if strings.Contains(strings.ToLower(c), "samesite=strict") {
+			return &Evidence{
+				Verdict:                VerdictAccept,
+				ConfidenceContribution: plugin.ConfidenceFirm,
+				Artifacts:              map[string]string{"form": "post", "missing": "csrf-token", "samesite": "strict"},
+				Note:                   "POST formda token yok ama SameSite=Strict var → firm",
+			}, nil
+		}
+	}
+	return &Evidence{
+		Verdict:                VerdictAccept,
+		ConfidenceContribution: plugin.ConfidenceConfirmed,
+		Artifacts:              map[string]string{"form": "post", "missing": "csrf-token"},
+		Note:                   "POST formda anti-CSRF token yok → confirmed (pasif ekran)",
+	}, nil
+}
+
+// verifyFrameable clickjacking çerçeve ekranıdır (GASH-019, CWE-1021).
+// What: X-Frame-Options + CSP frame-ancestors ikisi de yok → confirmed.
+// Why: Çerçeve koruması deterministik header mantığıdır; tentative YOKTUR.
+func verifyFrameable(h http.Header) (*Evidence, error) {
+	xfo := strings.ToUpper(strings.TrimSpace(h.Get("X-Frame-Options")))
+	switch xfo {
+	case "DENY", "SAMEORIGIN":
+		return &Evidence{Verdict: VerdictReject, Note: "X-Frame-Options korumalı"}, nil
+	case "":
+		// CSP'ye düş.
+	default:
+		// ALLOW-FROM ve bilinmeyen değerler zayıf kabul edilir.
+		return &Evidence{
+			Verdict:                VerdictAccept,
+			ConfidenceContribution: plugin.ConfidenceFirm,
+			Artifacts:              map[string]string{"x-frame-options": xfo},
+			Note:                   "X-Frame-Options zayıf/bilinmeyen → firm",
+		}, nil
+	}
+	csp := strings.ToLower(h.Get("Content-Security-Policy"))
+	if csp != "" {
+		if idx := strings.Index(csp, "frame-ancestors"); idx >= 0 {
+			directive := csp[idx:]
+			if end := strings.Index(directive, ";"); end >= 0 {
+				directive = directive[:end]
+			}
+			switch {
+			case strings.Contains(directive, "'none'"), strings.Contains(directive, "'self'"):
+				return &Evidence{Verdict: VerdictReject, Note: "CSP frame-ancestors korumalı"}, nil
+			case strings.Contains(directive, "*"):
+				return &Evidence{
+					Verdict:                VerdictAccept,
+					ConfidenceContribution: plugin.ConfidenceConfirmed,
+					Artifacts:              map[string]string{"csp": "frame-ancestors-wildcard"},
+					Note:                   "CSP frame-ancestors wildcard → confirmed",
+				}, nil
+			default:
+				return &Evidence{Verdict: VerdictReject, Note: "CSP frame-ancestors allowlist-spesifik"}, nil
+			}
+		}
+	}
+	return &Evidence{
+		Verdict:                VerdictAccept,
+		ConfidenceContribution: plugin.ConfidenceConfirmed,
+		Artifacts:              map[string]string{"missing": "x-frame-options,frame-ancestors"},
+		Note:                   "çerçeve koruması yok → confirmed (clickjacking)",
 	}, nil
 }
 

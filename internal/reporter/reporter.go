@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/Xmar1881/Gash/internal/engine"
+	"github.com/Xmar1881/Gash/internal/finding"
 	"github.com/Xmar1881/Gash/internal/plugin"
 )
 
@@ -38,6 +39,7 @@ func filter(rep *engine.Report, opts Options) (visible []*findingView, suppresse
 			ID: f.ID, RuleID: f.RuleID, CWE: f.CWE, Title: f.Title,
 			Severity: string(f.Severity), Confidence: string(f.Confidence),
 			Target: f.Target, PluginID: f.PluginID, Fingerprint: f.Fingerprint,
+			EvidenceType: evidenceTypeFor(f), Evidence: f.Evidence,
 		})
 	}
 	sort.Slice(visible, func(i, j int) bool {
@@ -59,6 +61,29 @@ type findingView struct {
 	Target      string `json:"target"`
 	PluginID    string `json:"plugin_id"`
 	Fingerprint string `json:"fingerprint"`
+	// EvidenceType is the §8 evidence discriminator: static-execution-evidence
+	// for parser-recognized payloads without a browser run, browser-confirmed
+	// only after a controlled headless execution, otherwise the confidence.
+	EvidenceType string            `json:"evidence_type,omitempty"`
+	Evidence     map[string]string `json:"evidence,omitempty"`
+}
+
+// evidenceTypeFor derives the report-level evidence discriminator from the
+// stored artifacts. The execution artifact is authoritative when present:
+// "static" maps to static-execution-evidence, "browser-confirmed" stays as is.
+func evidenceTypeFor(f *finding.Finding) string {
+	if f == nil {
+		return ""
+	}
+	if f.Evidence != nil {
+		switch f.Evidence["execution"] {
+		case "static":
+			return "static-execution-evidence"
+		case "browser-confirmed":
+			return "browser-confirmed"
+		}
+	}
+	return string(f.Confidence)
 }
 
 // WriteJSON tam Finding[] + scan_meta + skipped + stats (deterministik sıralı).
@@ -124,6 +149,7 @@ func WriteSARIF(w io.Writer, rep *engine.Report, opts Options) error {
 		} `json:"message"`
 		Locations    []any             `json:"locations"`
 		Fingerprints map[string]string `json:"fingerprints,omitempty"`
+		Properties   map[string]string `json:"properties,omitempty"`
 	}
 	ruleIdx := make(map[string]int)
 	var rules []sarifRule
@@ -147,9 +173,10 @@ func WriteSARIF(w io.Writer, rep *engine.Report, opts Options) error {
 			level = "note"
 		}
 		res := sarifResult{RuleID: f.RuleID, RuleIndex: idx, Level: level}
-		res.Message.Text = fmt.Sprintf("%s [%s]", f.Title, f.Fingerprint)
+		res.Message.Text = fmt.Sprintf("%s [%s] (%s)", f.Title, f.Fingerprint, f.EvidenceType)
 		res.Locations = []any{map[string]any{"physicalLocation": map[string]any{"artifactLocation": map[string]any{"uri": f.Target}}}}
 		res.Fingerprints = map[string]string{"gash/v1": f.Fingerprint}
+		res.Properties = map[string]string{"evidenceType": f.EvidenceType, "confidence": f.Confidence}
 		results = append(results, res)
 	}
 	if results == nil {

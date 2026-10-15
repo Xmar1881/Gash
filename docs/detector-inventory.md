@@ -20,14 +20,14 @@ for a controlled headless browser result.
 
 | Oracle | Plugin(s) Using | Tier | Confidence Ladder | Requires Control | Active Probing | OOB | Notes |
 |--------|-----------------|------|-------------------|------------------|----------------|-----|-------|
-| `reflection` | XSS plugins | 1/2/3 | tentative → firm → confirmed | Yes (for confirmed) | Yes (canary injection) | No | HTML tokenizer + context analysis; GASH-001/002/007/009/011/014/017 |
-| `header` | `missing-security-headers`, `crlf-header-injection`, `jwt-token-exposure` | 1 | confirmed only (no tentative) | No (deterministic) | No (passive) | No | GASH-019: logic-based header absence/weakness; P1.4: CRLF/JWT modes |
+| `reflection` | XSS plugins, `xss-stored-basic`, `xxe-reflected-basic`, `rfi-remote-include`, `xss-stored-two-step` | 1/2/3 | tentative → firm → confirmed | Yes (for confirmed) | Yes (canary injection) | No | HTML tokenizer + context analysis; GASH-001/002/007/009/011/014/017; deep-research: stored-XSS sync-render (static-execution-evidence max) + in-band XXE canary-entity (firm, file:// YOK); RFI loopback-canary reflection (tentative max, dis fetch YOK) + stored two-step store+render (static-execution-evidence max) |
+| `header` | `missing-security-headers`, `crlf-header-injection`, `jwt-token-exposure`, `csrf-token-absence`, `clickjacking-frameable` | 1 | confirmed only (no tentative) | No (deterministic) | No (passive) | No | GASH-019: logic-based header absence/weakness; P1.4: CRLF/JWT modes; deep-research: csrf (GASH-020 POST-form token screen) + frame (GASH-019 clickjacking) modes |
 | `redirect` | `open-redirect-param` | 1 | firm → confirmed | Yes | Yes (payload) | No | GASH-016: Location parse + host compare + DNS double-check |
 | `error` | SQLi plugins, `path-traversal-error`, `error-message-disclosure`, `command-injection-error` | 1/2 | firm → confirmed | Yes | Yes (payload) | No | GASH-004: DB signature library + control absence; P1.4: path_traversal/generic_error modes |
-| `differential` | Boolean/blind SQLi, `idor-differential`, `ldap-injection-differential` | 1/2 | confirmed only (N=3) | Yes | Yes (true/false) | No | GASH-005: 3/3 masked stability + divergence; P1.4: IDOR/LDAP modes |
-| `timing` | Time-based SQLi, `sqli-time-based` | 1/2 | firm max (no confirmed) | Yes | Yes (delay payloads) | No | GASH-006/010: statistical Mann-Whitney U + baseline stddev; P1.4: timing mode; Tier 2 `host.oracles.timing` (rttMs) |
+| `differential` | Boolean/blind SQLi, `idor-differential`, `ldap-injection-differential`, `hpp-parameter-pollution`, `hpp-duplicate-emission` | 1/2 | confirmed only (N=3) | Yes | Yes (true/false) | No | GASH-005: 3/3 masked stability + divergence; P1.4: IDOR/LDAP modes; deep-research: HPP polluted-vs-single divergence; Tier 2 HPP native duplicate-key (`id=1&id=2`) emission |
+| `timing` | Time-based SQLi, `sqli-time-based`, `command-injection-timing` | 1/2 | firm max (no confirmed) | Yes | Yes (delay payloads) | No | GASH-006/010: statistical Mann-Whitney U + baseline stddev; P1.4: timing mode; Tier 2 `host.oracles.timing` (rttMs); deep-research: blind OS-command timing with harmless sleep canary (firm ceiling, confirmed YOK) |
 | `execution` | DOM XSS `dom-sink-basic` (static) | 2 | tentative → firm (headless `confirmed` BLOCKED) | No | No (passive body scan) | No | GASH-003 static sink/source; `host.oracles.execution`; browser path needs headless build |
-| `version` | Version disclosure, `graphql-endpoint-discovery`, `server-version-disclosure` | 1 | tentative → firm | No | No (passive banner) | No | GASH-021: banner + optional behavior verified; P1.4: graphql mode |
+| `version` | Version disclosure, `graphql-endpoint-discovery`, `server-version-disclosure`, `cve-dependency-scan` | 1 | tentative → firm | No | No (passive banner) | No | GASH-021: banner + optional behavior verified; P1.4: graphql mode; deep-research: vulnerable-dependency screen (banner-only tentative, confirmed YOK) |
 | `cookie` | `cookie-flags` | 1 | firm → confirmed | No (deterministic) | No (passive) | No | GASH-022: Secure/HttpOnly/SameSite logic grading |
 | `cors` | `cors-misconfig` | 1 | firm → confirmed | No (deterministic) | No (passive) | No | GASH-023: ACAO wildcard/reflection + credentials |
 | `error` | `file-upload-unrestricted` | 1 | firm → confirmed | Yes | Yes (payload) | No | P1.4: generic_error mode |
@@ -50,6 +50,8 @@ for a controlled headless browser result.
 | `sqli-boolean-differential` | differential | probe | true | false | false | high | sqli, injection | `tests/fixtures/sqli-boolean-differential/` |
 | `ssrf-blind-oob` | oob | probe | false | true | false | critical | ssrf, blind, oob | `tests/fixtures/ssrf-blind-oob/` |
 | `dom-sink-basic` | execution | probe | true | false | false | medium | xss, dom, client | `tests/fixtures/dom-sink-basic/` |
+| `hpp-duplicate-emission` | differential | probe | false | true | false | medium | hpp, parameter-pollution, injection, differential | `tests/fixtures/hpp-duplicate-emission/` |
+| `xss-stored-two-step` | reflection | probe | false | true | false | high | xss, stored-xss, injection, reflection | `tests/fixtures/xss-stored-two-step/` |
 
 ## Reference Plugins (Tier 1 YAML)
 
@@ -74,6 +76,14 @@ for a controlled headless browser result.
 | `server-version-disclosure` | version | probe | true | false | false | low | version, information-disclosure, reconnaissance, banner | `tests/fixtures/server-version-disclosure/` |
 | `blind-sqli-oob` | oob | probe | false | true | false | critical | sqli, blind, oob, injection, data-exfiltration | `tests/fixtures/blind-sqli-oob/` |
 | `ldap-injection-differential` | differential | probe | false | true | false | high | ldap, injection, differential, boolean, authorization | `tests/fixtures/ldap-injection-differential/` |
+| `command-injection-timing` | timing | probe | false | true | false | high | command-injection, injection, blind, timing | `tests/fixtures/command-injection-timing/` |
+| `xss-stored-basic` | reflection | probe | false | true | false | high | xss, stored-xss, injection, reflection | `tests/fixtures/xss-stored-basic/` |
+| `xxe-reflected-basic` | reflection | probe | false | true | false | high | xxe, xml, injection, reflection | `tests/fixtures/xxe-reflected-basic/` |
+| `csrf-token-absence` | header | probe | true | false | false | medium | csrf, authentication, misconfig | `tests/fixtures/csrf-token-absence/` |
+| `clickjacking-frameable` | header | probe | true | false | false | low | clickjacking, headers, misconfig | `tests/fixtures/clickjacking-frameable/` |
+| `hpp-parameter-pollution` | differential | probe | false | true | false | medium | hpp, parameter-pollution, injection, differential | `tests/fixtures/hpp-parameter-pollution/` |
+| `cve-dependency-scan` | version | probe | true | false | false | medium | cve, dependencies, version, supply-chain | `tests/fixtures/cve-dependency-scan/` |
+| `rfi-remote-include` | reflection | probe | false | true | false | high | rfi, file-include, lfi, injection, reflection, ssrf | `tests/fixtures/rfi-remote-include/` |
 
 ## Reference Plugins (Tier 3 Native)
 
@@ -113,9 +123,9 @@ or external lab bypass rate is measured in this repository; such results stay
 
 | Profile | Active Detectors | Request Types | Budget |
 |---------|------------------|---------------|--------|
-| Safe | header, redirect, cors, cookie, version, tls, dns, crlf-header-injection, error-message-disclosure, jwt-token-exposure, graphql-endpoint-discovery, jwt-alg-confusion | GET/HEAD/OPTIONS only | Low (100 req/target) |
-| Standard | Safe + tcp, reflection, error, differential, path-traversal-error, file-upload-unrestricted, template-injection-reflection, idor-differential | GET/POST + params | Medium (500 req/target) |
-| Deep | Standard + execution (headless), timing, oob, xxe-oob | All + browser | High (2000 req/target) |
+| Safe | header, redirect, cors, cookie, version, tls, dns, crlf-header-injection, error-message-disclosure, jwt-token-exposure, graphql-endpoint-discovery, jwt-alg-confusion, csrf-token-absence, clickjacking-frameable, cve-dependency-scan | GET/HEAD/OPTIONS only | Low (100 req/target) |
+| Standard | Safe + tcp, reflection, error, differential, path-traversal-error, file-upload-unrestricted, template-injection-reflection, idor-differential, xss-stored-basic, xxe-reflected-basic, hpp-parameter-pollution | GET/POST + params | Medium (500 req/target) |
+| Deep | Standard + execution (headless), timing, oob, xxe-oob, command-injection-timing | All + browser | High (2000 req/target) |
 
 ## P2 Capabilities (engine-owned, no plugin file)
 

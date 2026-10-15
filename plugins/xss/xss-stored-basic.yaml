@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/xss/xss-stored-basic.yaml
+# What: Tier 1 stored XSS plugin backed by ReflectionOracle (GASH-002, CWE-79).
+# Why: Persisted input rendered later in executable context is stored XSS;
+#   parser-recognized execution payload plus clean control gives
+#   static-execution-evidence (browser-confirmed needs controlled headless run).
+# Note: Tier 1 evaluates the synchronous render body offline; the two-request
+#   store+render flow is a lab procedure (see metrics report).
+
+id: xss-stored-basic
+name: Stored XSS (Synchronous Render)
+description: Detects stored XSS via executable payload reflection in rendered content with clean control comparison.
+author: GASH contributors
+severity: high
+tags: [xss, stored-xss, injection, reflection]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 100
+phase: probe
+order: 43
+api_version: "1.0"
+tests: tests/fixtures/xss-stored-basic/
+request:
+  method: GET
+  param_names: [comment, message, body, input, name, title, content]
+  payload: '<img src=x onerror=alert(1)>'
+oracle:
+  name: reflection
+  params:
+    canary: "alert(1)"
+    contexts: [attr-executable]
+    require_executable_context: true

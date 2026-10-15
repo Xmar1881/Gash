@@ -54,20 +54,37 @@ offers no generic DNS query type, and no extra dependency is pulled in for
 v1. SPF/DMARC plus resolution is the honest scope. See
 `internal/proto/proto.go` and `docs/proto-checks.md`.
 
-## Headless DOM confirmation: BLOCKED (no browser dep)
+## Headless DOM confirmation: decided (chromedp, `-tags deep`)
 
 Static DOM sink/source analysis (`host.oracles.execution`, plugin
-`dom-sink-basic`, oracle `execution`) caps at `firm`. The `confirmed` path
-(`Triggered` plus `ControlClean` via a headless browser) needs a browser
-dependency that is not vendored and has no pin in this build. No
-browser-executed DOM claim is made. See `docs/metrics/dom-sink-basic.md`.
+`dom-sink-basic`, oracle `execution`) caps at `firm` in the default build.
+The `confirmed` path (`Triggered` plus `ControlClean` via a headless browser)
+is implemented in `internal/headless` with `chromedp v0.21.0` pinned in
+`go.mod`, compiled only with `-tags deep` so the default binary stays light
+(no browser linked). `ExecutionParams` is frozen (2026-10-15); default-build
+`VerifyDOM` always errors and never fabricates `browser-confirmed`. See
+`docs/metrics/dom-sink-basic.md`.
+
+2026-10-15: decision implemented — chromedp v0.21.0 + build tag `deep` +
+`internal/headless` (stub `!deep`, driver `deep`). Verified with real Chrome
+155.0.8059.41 headless (`--dump-dom` + `TestDeepVerifiesDOMExecution`:
+httptest payload triggers, control clean, oracle `confirmed`; negative
+control rejects). Default `go test ./...` runs the stub contract
+(`TestStubNeverConfirms`); `go test -tags deep ./...` runs the real browser
+proof (skips only when no Chrome binary is found). Reflected-XSS `confirmed`
+likewise requires supplied
+`BrowserVerified`/`BrowserTriggered`/`BrowserControlClean` evidence; static
+findings stay `static-execution-evidence` and never claim `browser-confirmed`.
 
 ## Compose-lab recall: BLOCKED where docker is absent
 
 DVWA/Juice Shop/WebGoat recall (`docker-compose.lab.yml`) runs only where a
 docker runtime exists. Without docker the status is BLOCKED with a filed
 procedure, never a number. See
-`docs/metrics/lab-compose-dvwa-juiceshop-2026-10-14.md`.
+`docs/metrics/lab-compose-dvwa-juiceshop-2026-10-14.md` and
+`docs/metrics/lab-compose-2026-10-15.md` (2026-10-15: docker absent,
+procedure updated for DVWA 2.0 / Juice Shop 17.1.0 / WebGoat 2023.8 with
+`--aggressive --scope 127.0.0.1`, no fake result).
 
 ## Nuclei benchmark: not compared (no harness)
 

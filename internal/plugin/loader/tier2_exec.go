@@ -122,6 +122,15 @@ func oracleRefName(ref string) string {
 	}
 }
 
+// DefaultJSPluginBudget caps one Tier2 execution when the caller passes no
+// explicit timeout. Live scans pass a per-plugin budget from the engine config
+// (PluginTimeoutMs); this default only guards library/fixture callers.
+const DefaultJSPluginBudget = 10 * time.Second
+
+// jsInterruptGrace bounds how long ExecuteJS waits for an interrupted VM to
+// abort before returning the timeout to the caller.
+const jsInterruptGrace = 2 * time.Second
+
 // ExecuteJS runs a Tier 2 source with the given environment and timeout.
 // What: Full goja execution returning candidates plus evidence.
 // Why: Single entry point for live scans and offline fixture evaluation.
@@ -133,7 +142,7 @@ func ExecuteJS(ctx context.Context, spec *plugin.PluginSpec, source string, env 
 		return nil, fmt.Errorf("js execute: nil env: %w", plugin.ErrValidation)
 	}
 	if timeout <= 0 {
-		timeout = 30 * time.Second
+		timeout = DefaultJSPluginBudget
 	}
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -143,21 +152,42 @@ func ExecuteJS(ctx context.Context, spec *plugin.PluginSpec, source string, env 
 		err   error
 	}
 	ch := make(chan outcome, 1)
+	vmCh := make(chan *goja.Runtime, 1)
 	go func() {
-		cands, err := executeJSOnce(spec, source, env)
+		cands, err := executeJSOnce(spec, source, env, vmCh)
 		ch <- outcome{cands: cands, err: err}
 	}()
 
 	select {
 	case <-runCtx.Done():
+		// Best-effort hard abort: interrupt the VM so an infinite loop cannot
+		// outlive the timeout (leaked goroutine YOK). The outcome channel is
+		// buffered, so the worker never blocks after we return.
+		select {
+		case vm := <-vmCh:
+			vm.Interrupt("plugin timeout")
+			select {
+			case <-ch:
+			case <-time.After(jsInterruptGrace):
+			}
+		case o := <-ch:
+			_ = o
+		case <-time.After(jsInterruptGrace):
+		}
 		return nil, fmt.Errorf("js execute %s: %w", spec.ID, plugin.ErrTimeout)
 	case o := <-ch:
 		return o.cands, o.err
 	}
 }
 
-func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv) ([]JSCandidate, error) {
+func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady chan<- *goja.Runtime) ([]JSCandidate, error) {
 	vm := goja.New()
+	if vmReady != nil {
+		select {
+		case vmReady <- vm:
+		default:
+		}
+	}
 	vm.SetMaxCallStackSize(512)
 	_ = vm.Set("eval", goja.Undefined())
 	_ = vm.Set("Function", goja.Undefined())
@@ -414,7 +444,7 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv) ([]JSCand
 		resp := respFromValue(call.Arguments[0])
 		cls := baseline.ClassifyStatic(resp.Status, toHTTPHeader(resp.Headers), []byte(resp.Body))
 		var o oracle.HeaderOracle
-		ev, err := o.Verify(context.Background(), cls, false, oracle.HeaderParams{Headers: toHTTPHeader(resp.Headers)})
+		ev, err := o.Verify(context.Background(), cls, false, oracle.HeaderParams{Headers: toHTTPHeader(resp.Headers), Body: resp.Body})
 		if err != nil {
 			panic(err.Error())
 		}

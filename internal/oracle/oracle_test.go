@@ -339,3 +339,69 @@ func TestOOBSkippedWhenDisabled(t *testing.T) {
 		t.Fatalf("skipped bekleniyordu: %+v", ev)
 	}
 }
+
+func TestHeaderCSRFConfirmed(t *testing.T) {
+	var o HeaderOracle
+	body := `<html><body><form action="/transfer" method="POST"><input name="amount"></form></body></html>`
+	ev, err := o.Verify(context.Background(), cls(), false, HeaderParams{Headers: http.Header{}, Mode: "csrf", Body: body})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Verdict != VerdictAccept || ev.ConfidenceContribution != "confirmed" {
+		t.Fatalf("POST formda token yok confirmed olmalı: %+v", ev)
+	}
+}
+
+func TestHeaderCSRFRejects(t *testing.T) {
+	var o HeaderOracle
+	// Token'lı form korumalıdır.
+	body := `<html><body><form action="/transfer" method="POST"><input type="hidden" name="csrf_token" value="abc"></form></body></html>`
+	ev, _ := o.Verify(context.Background(), cls(), false, HeaderParams{Headers: http.Header{}, Mode: "csrf", Body: body})
+	if ev.Verdict != VerdictReject {
+		t.Fatalf("token'lı form reject olmalı: %+v", ev)
+	}
+	// GET formu bu kuralda rejecttir.
+	ev, _ = o.Verify(context.Background(), cls(), false, HeaderParams{Headers: http.Header{}, Mode: "csrf", Body: `<form action="/s" method="GET"><input name="q"></form>`})
+	if ev.Verdict != VerdictReject {
+		t.Fatalf("GET form reject olmalı: %+v", ev)
+	}
+	// Form yoksa rejecttir.
+	ev, _ = o.Verify(context.Background(), cls(), false, HeaderParams{Headers: http.Header{}, Mode: "csrf", Body: `<p>hello</p>`})
+	if ev.Verdict != VerdictReject {
+		t.Fatalf("formsuz sayfa reject olmalı: %+v", ev)
+	}
+	// SameSite=Strict varsa firm'a düşer.
+	h := http.Header{}
+	h.Set("Set-Cookie", "sess=abc; Path=/; SameSite=Strict")
+	ev, _ = o.Verify(context.Background(), cls(), false, HeaderParams{Headers: h, Mode: "csrf", Body: `<form action="/t" method="POST"><input name="a"></form>`})
+	if ev.Verdict != VerdictAccept || ev.ConfidenceContribution != "firm" {
+		t.Fatalf("Strict çerezli tokensiz form firm olmalı: %+v", ev)
+	}
+}
+
+func TestHeaderFrameConfirmed(t *testing.T) {
+	var o HeaderOracle
+	// Çerçeve koruması yok → confirmed.
+	ev, _ := o.Verify(context.Background(), cls(), false, HeaderParams{Headers: http.Header{"Content-Type": {"text/html"}}, Mode: "frame"})
+	if ev.Verdict != VerdictAccept || ev.ConfidenceContribution != "confirmed" {
+		t.Fatalf("korumasız sayfa confirmed olmalı: %+v", ev)
+	}
+	// X-Frame-Options DENY → reject.
+	h := http.Header{"X-Frame-Options": {"DENY"}}
+	ev, _ = o.Verify(context.Background(), cls(), false, HeaderParams{Headers: h, Mode: "frame"})
+	if ev.Verdict != VerdictReject {
+		t.Fatalf("DENY reject olmalı: %+v", ev)
+	}
+	// CSP frame-ancestors 'self' → reject.
+	h2 := http.Header{"Content-Security-Policy": {"frame-ancestors 'self'"}}
+	ev, _ = o.Verify(context.Background(), cls(), false, HeaderParams{Headers: h2, Mode: "frame"})
+	if ev.Verdict != VerdictReject {
+		t.Fatalf("frame-ancestors self reject olmalı: %+v", ev)
+	}
+	// CSP frame-ancestors wildcard → confirmed.
+	h3 := http.Header{"Content-Security-Policy": {"frame-ancestors * "}}
+	ev, _ = o.Verify(context.Background(), cls(), false, HeaderParams{Headers: h3, Mode: "frame"})
+	if ev.Verdict != VerdictAccept || ev.ConfidenceContribution != "confirmed" {
+		t.Fatalf("wildcard confirmed olmalı: %+v", ev)
+	}
+}

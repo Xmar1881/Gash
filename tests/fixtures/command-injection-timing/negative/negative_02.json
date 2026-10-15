@@ -1,0 +1,1 @@
+{"body": "<html><body>Welcome user</body></html>", "delay_samples": [1200, 1150, 1250], "control_samples": [100, 95, 110], "baseline_stddev": 10, "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "edge: small delay below threshold is cache jitter not injection", "status": 200, "target": "http://example.com/ping?ip=127.0.0.1"}

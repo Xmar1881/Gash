@@ -12,9 +12,10 @@ import (
 )
 
 // ExecutionParams DOM/XSS headless yürütme kanıtıdır (GASH-003).
-// Faz 2'de chromedp bağımlılığı YOKTUR (pin Faz 3'te; Q4). Bu dosya stub + arayüzü dondurur:
-//   - headless yoksa DOM XSS tavanı firm'dır (statik sink/source).
-//   - --deep + dom-xss + headless build'te confirmed yolu Faz 3'te açılır (build-tag `deep`).
+// Arayüz KİLİTLİ (2026-10-15): alan ekleme/çıkarma YOK; confirmed yolu yalnızca
+// internal/headless VerifyDOM üretimi Triggered+ControlClean ile açılır.
+// Karar: chromedp v0.21.0 pinli, `-tags deep` arkasında (default build
+// browser linklemez, tavan firm). Ayrıntı: docs/known-limits.md.
 type ExecutionParams struct {
 	Sink            string
 	Source          string

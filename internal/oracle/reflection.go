@@ -6,6 +6,7 @@ package oracle
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -184,6 +185,30 @@ func inspectReflection(body, canary string) []reflectionMatch {
 	}
 }
 
+// isJSONBlock reports whether the response is a JSON data block rather than
+// executable HTML/JS. Static JSON (JSON Content-Type, a JSON document body,
+// or an explicit <script type="application/json"> payload) is never XSS
+// proof (§5b): it is inert data, not browser-executable script.
+func isJSONBlock(body string, headers http.Header) bool {
+	if headers != nil {
+		if ct := strings.ToLower(headers.Get("Content-Type")); strings.Contains(ct, "json") {
+			return true
+		}
+	}
+	lower := strings.ToLower(body)
+	if strings.Contains(lower, "application/json") && strings.Contains(lower, "<script") {
+		return true
+	}
+	trimmed := strings.TrimSpace(body)
+	if trimmed == "" {
+		return false
+	}
+	if trimmed[0] != '{' && trimmed[0] != '[' {
+		return false
+	}
+	return json.Valid([]byte(trimmed))
+}
+
 func isURLAttribute(name string) bool {
 	switch name {
 	case "href", "src", "action", "formaction", "xlink:href":
@@ -332,6 +357,19 @@ func (ReflectionOracle) Verify(ctx context.Context, body string, headers http.He
 	if p.Canary == "" {
 		return &Evidence{Verdict: VerdictReject, Note: "empty canary"}, nil
 	}
+	// §5b: static JSON/script data blocks are never XSS proof. This check
+	// runs before tokenization so a raw JSON document (Content-Type or shape)
+	// cannot be relabeled as html-text/script execution evidence.
+	if isJSONBlock(body, headers) {
+		return &Evidence{
+			Verdict: VerdictReject,
+			Artifacts: map[string]string{
+				"context": "json",
+				"canary":  p.Canary,
+			},
+			Note: "JSON data block is not XSS proof",
+		}, nil
+	}
 	matches := inspectReflection(body, p.Canary)
 	if len(matches) == 0 {
 		if likelyEncoded(body, p.Canary) {
@@ -342,6 +380,8 @@ func (ReflectionOracle) Verify(ctx context.Context, body string, headers http.He
 
 	selected, proof := selectReflectionMatch(matches, p)
 	if selected == nil {
+		// §5a/§5c: allowlist-dışı bağlam tentative/static tavanını bile
+		// aşamaz; burada reject dönülür (tentative'e düşürmekten güvenli).
 		return &Evidence{Verdict: VerdictReject, Note: "reflection context is not allowed"}, nil
 	}
 	art := map[string]string{"context": selected.Context, "canary": p.Canary}

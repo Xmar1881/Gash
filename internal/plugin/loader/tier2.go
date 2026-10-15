@@ -77,11 +77,27 @@ func NewJSPlugin(spec plugin.PluginSpec, path, source string) *JSPlugin {
 // EnsureLoaded VM'i bir kez başlatır + script'i evaluate eder + run()'ı bağlar.
 // Host yalnızca probe/ctx/host.oracles/host.candidate binding'lerini enjekte eder;
 // require/dosya I/O/ham soket YOKTUR. eval/Function devre dışıdır.
+//
+// Top-level RunString de DefaultJSPluginBudget ile sınırlıdır: sonsuz döngü
+// içeren script yükleme anında takılamaz; ayrı goroutine + timeout +
+// vm.Interrupt disiplini (ExecuteJS ile aynı).
 func (j *JSPlugin) EnsureLoaded() error {
+	return j.EnsureLoadedWithTimeout(DefaultJSPluginBudget)
+}
+
+// EnsureLoadedWithTimeout yükleme bütçesini çağıranın seçmesine izin verir.
+// What: Evaluate aşamasına süre sınırı koyan yükleme yolu.
+// Why: Top-level `while(true)` gibi scriptler RunString içinde takılabilir;
+// timeout + Interrupt olmadan EnsureLoaded sonsuza kadar bloklanır.
+func (j *JSPlugin) EnsureLoadedWithTimeout(timeout time.Duration) error {
 	j.mu.Lock()
-	defer j.mu.Unlock()
 	if j.vm != nil {
+		j.mu.Unlock()
 		return nil
+	}
+	j.mu.Unlock()
+	if timeout <= 0 {
+		timeout = DefaultJSPluginBudget
 	}
 	vm := goja.New()
 	// CPU guard: call-stack limiti.
@@ -106,20 +122,57 @@ func (j *JSPlugin) EnsureLoaded() error {
 	_ = vm.Set("probe", vm.NewObject())
 	_ = vm.Set("ctx", vm.NewObject())
 
-	if _, err := vm.RunString(j.Source); err != nil {
-		return fmt.Errorf("js evaluate %s: %w", j.Path, err)
+	type loadOutcome struct {
+		fn  goja.Callable
+		err error
 	}
-	v := vm.Get("run")
-	if v == nil || goja.IsUndefined(v) {
-		return fmt.Errorf("js %s: run() bulunamadı: %w", j.Path, plugin.ErrValidation)
+	ch := make(chan loadOutcome, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				ch <- loadOutcome{err: fmt.Errorf("js evaluate %s panic: %v: %w", j.Path, r, plugin.ErrPanic)}
+			}
+		}()
+		if _, err := vm.RunString(j.Source); err != nil {
+			ch <- loadOutcome{err: err}
+			return
+		}
+		v := vm.Get("run")
+		if v == nil || goja.IsUndefined(v) {
+			ch <- loadOutcome{err: fmt.Errorf("js %s: run() bulunamadı: %w", j.Path, plugin.ErrValidation)}
+			return
+		}
+		fn, ok := goja.AssertFunction(v)
+		if !ok {
+			ch <- loadOutcome{err: fmt.Errorf("js %s: run fonksiyon değil: %w", j.Path, plugin.ErrInvalidReturn)}
+			return
+		}
+		ch <- loadOutcome{fn: fn}
+	}()
+
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			return fmt.Errorf("js evaluate %s: %w", j.Path, r.err)
+		}
+		j.mu.Lock()
+		defer j.mu.Unlock()
+		if j.vm != nil {
+			return nil
+		}
+		j.vm = vm
+		j.run = r.fn
+		return nil
+	case <-time.After(timeout):
+		// Best-effort hard abort: top-level sonsuz döngüyü kes.
+		vm.Interrupt("plugin timeout")
+		select {
+		case <-ch:
+			return fmt.Errorf("js evaluate %s: %w", j.Path, plugin.ErrTimeout)
+		case <-time.After(jsInterruptGrace):
+			return fmt.Errorf("js evaluate %s: %w", j.Path, plugin.ErrTimeout)
+		}
 	}
-	fn, ok := goja.AssertFunction(v)
-	if !ok {
-		return fmt.Errorf("js %s: run fonksiyon değil: %w", j.Path, plugin.ErrInvalidReturn)
-	}
-	j.vm = vm
-	j.run = fn
-	return nil
 }
 
 // RunTimeout script'i timeout ile çalıştırır; ctx iptalinde vm.Interrupt gerçek kesmedir (D3).
