@@ -96,7 +96,7 @@ func BuildWithMeta(spec plugin.PluginSpec, cand plugin.Candidate, ev *oracle.Evi
 		conf = plugin.ConfidenceTentative // kanıtsız ≤ tentative (B3)
 	}
 	// Fixture'sız tavan (P6/R-06).
-	if spec.Tests == "" && (conf == plugin.ConfidenceFirm || conf == plugin.ConfidenceConfirmed) {
+	if spec.Tests == "" && (conf == plugin.ConfidenceStaticExecution || conf == plugin.ConfidenceFirm || conf == plugin.ConfidenceConfirmed) {
 		conf = plugin.ConfidenceTentative
 	}
 	sev := spec.Severity
@@ -187,8 +187,10 @@ func itoa(i int) string { return fmt.Sprintf("%d", i) }
 func confidenceRank(c plugin.Confidence) int {
 	switch c {
 	case plugin.ConfidenceConfirmed:
-		return 2
+		return 3
 	case plugin.ConfidenceFirm:
+		return 2
+	case plugin.ConfidenceStaticExecution:
 		return 1
 	default:
 		return 0

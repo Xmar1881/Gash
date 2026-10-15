@@ -78,9 +78,10 @@ const (
 type Confidence string
 
 const (
-	ConfidenceTentative Confidence = "tentative"
-	ConfidenceFirm      Confidence = "firm"
-	ConfidenceConfirmed Confidence = "confirmed"
+	ConfidenceTentative       Confidence = "tentative"
+	ConfidenceStaticExecution Confidence = "static-execution-evidence"
+	ConfidenceFirm            Confidence = "firm"
+	ConfidenceConfirmed       Confidence = "confirmed"
 )
 
 // PluginSpec iç temsil (IR). Tüm tier'lar buna derlenir.

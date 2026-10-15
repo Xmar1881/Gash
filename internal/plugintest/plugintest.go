@@ -397,7 +397,7 @@ func CheckPositive(ev *oracle.Evidence, f Fixture) (bool, string) {
 	return true, ""
 }
 
-// CheckNegative asserts a negative fixture never reaches firm or confirmed.
+// CheckNegative asserts a negative fixture never reaches static evidence or above.
 // What: Negative-case assertion enforcing the zero-FP corpus discipline.
 // Why: Tentative is tolerable noise; firm-plus is a gate failure.
 func CheckNegative(ev *oracle.Evidence) (bool, string) {
@@ -408,7 +408,7 @@ func CheckNegative(ev *oracle.Evidence) (bool, string) {
 		return true, ""
 	}
 	switch ev.ConfidenceContribution {
-	case plugin.ConfidenceFirm, plugin.ConfidenceConfirmed:
+	case plugin.ConfidenceStaticExecution, plugin.ConfidenceFirm, plugin.ConfidenceConfirmed:
 		return false, fmt.Sprintf("false positive: %s (%s)", ev.ConfidenceContribution, ev.Note)
 	default:
 		return true, ""

@@ -63,3 +63,22 @@ func TestTentativeHiddenByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestStaticExecutionEvidenceIsVisibleAndNotSARIFError(t *testing.T) {
+	f := &finding.Finding{ID: "finding_static", RuleID: "GASH-001", Title: "xss", Severity: plugin.SeverityHigh, Confidence: plugin.ConfidenceStaticExecution, Target: "http://example.com/", Fingerprint: "fp-static"}
+	rep := &engine.Report{Target: "http://example.com/", Findings: []*finding.Finding{f}}
+	var jsonBuf bytes.Buffer
+	if err := WriteJSON(&jsonBuf, rep, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(jsonBuf.Bytes(), []byte(`"static-execution-evidence"`)) {
+		t.Fatalf("static execution evidence reportta görünmeli: %s", jsonBuf.String())
+	}
+	var sarifBuf bytes.Buffer
+	if err := WriteSARIF(&sarifBuf, rep, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(sarifBuf.Bytes(), []byte(`"level": "note"`)) {
+		t.Fatalf("static execution evidence SARIF note olmali: %s", sarifBuf.String())
+	}
+}

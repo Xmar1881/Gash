@@ -8,10 +8,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 
 	"github.com/Xmar1881/Gash/internal/baseline"
 	"github.com/Xmar1881/Gash/internal/plugin"
+	"github.com/dop251/goja/ast"
+	"github.com/dop251/goja/parser"
 	nethtml "golang.org/x/net/html"
 )
 
@@ -23,10 +26,14 @@ type ReflectionParams struct {
 	Contexts                 []string // html, attr, attr-executable, script, url
 	RequireExecutableContext bool
 	ControlBody              string // clean control; required for confirmed
+	BrowserVerified          bool   // controlled headless run was performed
+	BrowserTriggered         bool   // the canary executed in that run
+	BrowserControlClean      bool   // neutral control did not execute
 }
 
-// ReflectionOracle performs a tokenizer pass and a small JavaScript lexical
-// pass. It does not render a browser, so browser execution is never claimed.
+// ReflectionOracle performs HTML tokenization plus parser-backed JavaScript
+// call analysis. It does not render a browser; static evidence and browser
+// confirmation are separate outcomes.
 type ReflectionOracle struct{}
 
 func (ReflectionOracle) Name() string { return "reflection" }
@@ -311,9 +318,10 @@ func likelyEncoded(body, canary string) bool {
 	}
 }
 
-// Verify applies baseline, allowed-context, lexical and control checks. A
-// canary alone can at most produce tentative reflection; confirmed requires a
-// recognizable execution payload plus a clean control.
+// Verify applies baseline, allowed-context, parser and control checks. A
+// canary alone can at most produce tentative reflection; static execution
+// evidence requires a recognizable call plus a clean control. Confirmed is
+// reserved for a supplied controlled headless result.
 func (ReflectionOracle) Verify(ctx context.Context, body string, headers http.Header, cls baseline.Classification, tainted bool, p ReflectionParams) (*Evidence, error) {
 	if err := checkCtx(ctx); err != nil {
 		return nil, err
@@ -425,100 +433,95 @@ func executableProof(ctx, source, canary string) bool {
 	if ctx != "script" && ctx != "attr-executable" && ctx != "url-executable" {
 		return false
 	}
-	masked := maskJSLiterals(source)
-	if !strings.Contains(masked, canary) && !strings.Contains(strings.ToLower(masked), strings.ToLower(canary)) {
+	if ctx == "url-executable" {
+		lower := strings.ToLower(strings.TrimSpace(source))
+		if !strings.HasPrefix(lower, "javascript:") {
+			return false
+		}
+		source = strings.TrimSpace(source[len("javascript:"):])
+	}
+	program, err := parser.ParseFile(nil, "reflection.js", source, 0)
+	if err != nil {
 		return false
 	}
-	lower := strings.ToLower(masked)
-	markers := []string{"alert", "confirm", "prompt", "eval", "fetch", "settimeout", "setinterval", "document.write", "document.writeln", "window.open", "javascript:"}
-	for _, marker := range markers {
-		for start := 0; ; {
-			i := strings.Index(lower[start:], marker)
-			if i < 0 {
-				break
-			}
-			i += start
-			end := min(len(masked), i+256)
-			if strings.Contains(strings.ToLower(masked[i:end]), strings.ToLower(canary)) {
-				return true
-			}
-			start = i + len(marker)
-			if start >= len(lower) {
-				break
-			}
-		}
-	}
-	return false
+	return astHasExecution(program, source, canary)
 }
 
-// maskJSLiterals leaves code and punctuation intact while hiding strings and
-// comments. This prevents a literal "alert(gash_...)" from being treated as
-// an execution payload.
-func maskJSLiterals(source string) string {
-	b := []byte(source)
-	const (
-		code = iota
-		single
-		double
-		template
-		lineComment
-		blockComment
-	)
-	state := code
-	for i := 0; i < len(b); {
-		switch state {
-		case code:
-			switch {
-			case b[i] == '/' && i+1 < len(b) && b[i+1] == '/':
-				b[i], b[i+1], state = ' ', ' ', lineComment
-				i += 2
-			case b[i] == '/' && i+1 < len(b) && b[i+1] == '*':
-				b[i], b[i+1], state = ' ', ' ', blockComment
-				i += 2
-			case b[i] == '\\' && i+1 < len(b):
-				i += 2
-			case b[i] == '\'':
-				b[i], state, i = ' ', single, i+1
-			case b[i] == '"':
-				b[i], state, i = ' ', double, i+1
-			case b[i] == '`':
-				b[i], state, i = ' ', template, i+1
-			default:
-				i++
+// astHasExecution requires a parsed call expression whose source range also
+// contains the canary. This avoids treating comments or unrelated literals as
+// execution proof while keeping event-handler snippets supported.
+func astHasExecution(program *ast.Program, source, canary string) bool {
+	markers := map[string]bool{
+		"alert": true, "confirm": true, "prompt": true, "eval": true,
+		"fetch": true, "settimeout": true, "setinterval": true,
+		"write": true, "writeln": true, "open": true,
+	}
+	found := false
+	var walk func(reflect.Value)
+	walk = func(v reflect.Value) {
+		if found || !v.IsValid() {
+			return
+		}
+		switch v.Kind() {
+		case reflect.Interface:
+			if !v.IsNil() {
+				walk(v.Elem())
 			}
-		case single, double, template:
-			if b[i] == '\\' && i+1 < len(b) {
-				b[i], b[i+1], i = ' ', ' ', i+2
-			} else {
-				closing := (state == single && b[i] == '\'') || (state == double && b[i] == '"') || (state == template && b[i] == '`')
-				b[i] = ' '
-				i++
-				if closing {
-					state = code
+		case reflect.Pointer:
+			if v.IsNil() {
+				return
+			}
+			if call, ok := v.Interface().(*ast.CallExpression); ok {
+				if markers[astCalleeName(call.Callee)] && nodeContainsCanary(call, source, canary) {
+					found = true
+					return
 				}
 			}
-		case lineComment:
-			if b[i] == '\n' || b[i] == '\r' {
-				state = code
-			} else {
-				b[i] = ' '
+			walk(v.Elem())
+		case reflect.Struct:
+			for i := 0; i < v.NumField(); i++ {
+				if v.Field(i).CanInterface() {
+					walk(v.Field(i))
+				}
 			}
-			i++
-		case blockComment:
-			if b[i] == '*' && i+1 < len(b) && b[i+1] == '/' {
-				b[i], b[i+1], state = ' ', ' ', code
-				i += 2
-			} else {
-				b[i] = ' '
-				i++
+		case reflect.Slice, reflect.Array:
+			for i := 0; i < v.Len(); i++ {
+				walk(v.Index(i))
 			}
 		}
 	}
-	return string(b)
+	walk(reflect.ValueOf(program))
+	return found
+}
+
+func astCalleeName(expr ast.Expression) string {
+	switch e := expr.(type) {
+	case *ast.Identifier:
+		return strings.ToLower(e.Name.String())
+	case *ast.DotExpression:
+		return strings.ToLower(e.Identifier.Name.String())
+	default:
+		return ""
+	}
+}
+
+func nodeContainsCanary(node ast.Node, source, canary string) bool {
+	start, end := int(node.Idx0())-1, int(node.Idx1())-1
+	if start < 0 || end < start || start > len(source) {
+		return false
+	}
+	if end > len(source) {
+		end = len(source)
+	}
+	return strings.Contains(strings.ToLower(source[start:end]), strings.ToLower(canary))
 }
 
 func controlEvidence(p ReflectionParams, art map[string]string, ctx string, proof bool) (*Evidence, error) {
 	if p.ControlBody == "" {
+		if proof {
+			art["execution"] = "static"
+			return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceStaticExecution, Artifacts: art, Note: "static execution payload; clean control unavailable; browser not executed"}, nil
+		}
 		return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceFirm, Artifacts: art, Note: "executable reflection without control"}, nil
 	}
 	if strings.Contains(p.ControlBody, p.Canary) {
@@ -529,7 +532,15 @@ func controlEvidence(p ReflectionParams, art map[string]string, ctx string, proo
 		return &Evidence{Verdict: VerdictReject, Note: "control contains the canary"}, nil
 	}
 	if proof {
-		return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceConfirmed, Artifacts: art, Repeats: 1, ControlResult: "clean", Note: "execution payload plus clean control"}, nil
+		if p.BrowserVerified {
+			if p.BrowserTriggered && p.BrowserControlClean {
+				art["execution"] = "browser-confirmed"
+				return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceConfirmed, Artifacts: art, Repeats: 1, ControlResult: "clean", Note: "browser execution plus clean control"}, nil
+			}
+			return &Evidence{Verdict: VerdictReject, Artifacts: art, Note: "headless browser did not execute the canary"}, nil
+		}
+		art["execution"] = "static"
+		return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceStaticExecution, Artifacts: art, Repeats: 1, ControlResult: "clean", Note: "static execution payload plus clean control; browser not executed"}, nil
 	}
 	return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceFirm, Artifacts: art, ControlResult: "clean", Note: "executable context without payload proof"}, nil
 }

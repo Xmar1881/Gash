@@ -80,17 +80,19 @@ oob required yalnizca GASH-008/010/012/013'tedir (+ GASH-005/006/015'te optional
 
 Implementation note: a random canary reflection is not an execution proof.
 The current oracle requires the requested context to be allowed, separates
-JavaScript code from strings/comments and inert JSON script blocks, and only
-confirms a recognizable execution payload plus a clean control and no
-blocking inline CSP. A bare `<script>gash_canary</script>` is at most
-`tentative`.
+JavaScript code from strings/comments and inert JSON script blocks, and emits
+`static-execution-evidence` for a recognizable execution payload plus a clean
+control and no blocking inline CSP. This is not browser execution. Only a
+controlled headless run with a triggered canary and clean control may emit
+`confirmed`. A bare `<script>gash_canary</script>` is at most `tentative`.
 
 - Oracle: ReflectionOracle(canary=gash_hex8, contexts=[html,attr,script], require_executable_context=true).
-- confirmed kabul: canary script veya event-handler veya executable attr baglaminda yansiyor + kontrol payload'i ayni baglamda yurutulebilir degil + Untrusted yok + taint yok.
+- static-execution-evidence: canary script veya event-handler veya executable attr baglaminda yansiyor + parser tarafindan taninan execution call + kontrol payload'i ayni baglamda yurutulebilir degil + Untrusted yok + taint yok.
+- confirmed kabul: yukaridaki kanita ek olarak kontrollu headless tarayicida canary tetiklenir ve temiz kontrolde tetiklenmez.
 - firm: yansima var ama baglam HTML-text (yurutulebilir degil) -> en fazla firm degil, tentative. Kural: text-baglam tek basina firm vermez.
 - tentative: encode'lu yansima (HTML-entity) -> tentative.
 - ret: yansima yok, veya WAF blok sayfasi icinde yansima, veya kontrol de ayni baglamda yurutulebilir (uygulama her girdiyi script'e yaziyor -> baglam ayirt edici degil).
-- Ornek (+): GET /search?q=gash_a1b2c3d4 yaniti <script>gash_a1b2c3d4</script> iceriyor, kontrol q=zzz zararsizken script bos -> confirmed.
+- Ornek (+): GET /search?q=alert(gash_a1b2c3d4) yaniti <script>alert(gash_a1b2c3d4)</script> iceriyor, kontrol q=zzz zararsizken script bos -> static-execution-evidence; headless tetiklenirse confirmed.
 - Ornek (-): yanit <p>gash_a1b2c3d4</p> (text) -> tentative; yanit &lt;script&gt; (encode) -> tentative; Cloudflare blok sayfasinda canary -> reject.
 - OOB: gecersiz. oob=required verilirse validate hatasi. Motor zorlamasi: R-OOB validasyonu.
 

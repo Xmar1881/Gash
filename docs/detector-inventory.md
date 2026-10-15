@@ -7,10 +7,16 @@ This document catalogs all detectors (oracles + plugins) in GASH, their test cov
 `reflection` now enforces the requested context set. It distinguishes HTML
 text, ordinary attributes, URL attributes, event-handler attributes,
 executable JavaScript, JavaScript strings/comments, and inert JSON script
-blocks. A random canary is not execution proof; confirmed XSS requires an
-execution payload, a clean control, and no blocking inline CSP. Browser DOM
+blocks. A random canary is not execution proof; static XSS evidence requires a
+parser-recognized execution payload, a clean control, and no blocking inline CSP.
+Browser-confirmed XSS additionally requires controlled headless execution.
 execution, Stored XSS write/render flows, and real-target recall remain
 unmeasured or blocked as noted below.
+
+For the `reflection` oracle, the ladder is `tentative` ->
+`static-execution-evidence` -> `confirmed`. The middle state requires a
+parser-recognized execution call and clean control; `confirmed` is reserved
+for a controlled headless browser result.
 
 | Oracle | Plugin(s) Using | Tier | Confidence Ladder | Requires Control | Active Probing | OOB | Notes |
 |--------|-----------------|------|-------------------|------------------|----------------|-----|-------|
@@ -80,15 +86,16 @@ unmeasured or blocked as noted below.
 | Confidence | Meaning | Oracle Sources |
 |------------|---------|----------------|
 | `tentative` | Signal present but weak/unverified | reflection (encoded), version (banner-only), execution (static only) |
+| `static-execution-evidence` | Parser-recognized client execution shape with clean control; browser not run | reflection (executable payload + control) |
 | `firm` | Strong signal, single-channel, reproducible | reflection (text), redirect (no control), differential (partial), timing, cookie (Secure on http), cors (wildcard no creds), header (CSP unsafe-inline), error (path_traversal/generic_error no control), version (graphql path) |
-| `confirmed` | Multi-channel verified, control pass, reproducible | reflection (executable+control), header (missing, crlf, jwt), redirect (control), error (control), differential (3/3), cookie (HttpOnly/Secure on https), cors (wildcard+creds/reflection+creds), oob (callback), execution (headless+control), version (graphql body) |
+| `confirmed` | Multi-channel verified, control pass, reproducible | reflection (headless execution + control), header (missing, crlf, jwt), redirect (control), error (control), differential (3/3), cookie (HttpOnly/Secure on https), cors (wildcard+creds/reflection+creds), oob (callback), execution (headless+control), version (graphql body) |
 
 ## Fixture Coverage
 
 Each oracle has positive/negative fixture sets under `tests/fixtures/<plugin-id>/positive/` and `negative/`. The `plugintest.Run` evaluates precision/recall against these.
 
-The reflected-XSS fixture set currently measures TP=2, FP=0, TN=8, FN=0
-(dataset hash `c928c76632bff8dc2ffd84050584e72a407977635eb209ad1f41c6e212c574bd`).
+The reflected-XSS fixture set currently measures TP=2, FP=0, TN=8, FN=0 at
+`static-execution-evidence` (dataset hash `27bba26a7f282df1de7486a433f53ce926eb74fe2a5c765cac163cae49fbd0c5`).
 The set includes executable payloads, text/encoded/comment/style reflections,
 JavaScript strings, and `application/json` script data. This is a fixture
 measurement, not browser execution or real-target recall.

@@ -59,7 +59,8 @@ plugin can suggest a lead; it cannot mint proof.
 - **Accuracy independent of authorship:** every tier compiles to the same
   `PluginSpec` IR and flows through the same Candidate to Verify to Finding
   pipeline. Plugins return candidates only; engine-owned oracles verify; the
-  engine builds findings with `confirmed`, `firm`, or `tentative` confidence.
+  engine builds findings with `confirmed`, `firm`, `static-execution-evidence`,
+  or `tentative` confidence.
 - **Three-tier hybrid:** Tier 1 declarative YAML (no code), Tier 2 sandboxed
   JS via goja (no I/O, no `require`, timeouts), Tier 3 native gRPC process
   (explicit `trust` plus sha256 pin, never auto-executed).
@@ -78,8 +79,9 @@ plugin can suggest a lead; it cannot mint proof.
   (header/HPP/encode/comment/case); block pages never count as evidence.
   Bypass is reported only after a stable, clean application response.
 - **Reflection-aware XSS checks:** HTML, attribute, executable URL, JavaScript,
-  inert script, JSON, comment, and CSP contexts are separated. A reflected
-  canary alone is not a confirmed execution finding.
+  inert script, JSON, comment, and CSP contexts are separated. A goja-parser
+  recognized call plus clean control is `static-execution-evidence`; only a
+  controlled headless run can produce browser `confirmed`.
 - **Protocol recon:** TLS observation (`confirmed`), SPF/DMARC reads
   (`firm`), explicit TCP banners (`tentative`, `--active` only), all
   scope-checked. CAA and chunked-TE are documented gaps, not silent.
@@ -100,8 +102,9 @@ plugin can suggest a lead; it cannot mint proof.
 ## Reality Check
 
 The current fixture corpus is measured and reproducible: the reflected XSS
-dataset reports `TP=2 FP=0 TN=8 FN=0`. That is a corpus result, not a claim of
-real-world recall across every framework, browser, WAF, or application shape.
+dataset reports `TP=2 FP=0 TN=8 FN=0` at `static-execution-evidence`. That is a
+corpus result, not a claim of real-world recall across every framework,
+browser, WAF, or application shape.
 Real headless execution, a compose lab, and a Nuclei comparison remain tracked
 work in [`docs/known-limits.md`](docs/known-limits.md).
 

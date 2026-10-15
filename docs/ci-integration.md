@@ -20,6 +20,10 @@ Why: Automation needs a stable machine contract, not terminal text.
 
 `--fail-on` maps to confidence, not severity:
 
+`static-execution-evidence` is intentionally below `firm`: it is reportable
+static evidence, but it does not trigger either CI threshold until a stronger
+verification path exists.
+
 | `--fail-on` | Triggers on |
 |---|---|
 | `firm` | Any `firm` **or** `confirmed` finding. |

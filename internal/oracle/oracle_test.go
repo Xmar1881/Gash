@@ -14,7 +14,7 @@ import (
 
 func cls() baseline.Classification { return baseline.Classification{Note: "normal"} }
 
-func TestReflectionConfirmed(t *testing.T) {
+func TestReflectionStaticExecutionEvidence(t *testing.T) {
 	var o ReflectionOracle
 	ev, err := o.Verify(context.Background(), `<script>alert(gash_abc123)</script>`, nil, cls(), false, ReflectionParams{
 		Canary: "gash_abc123", RequireExecutableContext: true, ControlBody: `<p>zzz</p>`,
@@ -22,8 +22,49 @@ func TestReflectionConfirmed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ev.Verdict != VerdictAccept || ev.ConfidenceContribution != "confirmed" {
-		t.Fatalf("confirmed bekleniyordu: %+v", ev)
+	if ev.Verdict != VerdictAccept || ev.ConfidenceContribution != "static-execution-evidence" {
+		t.Fatalf("static execution evidence bekleniyordu: %+v", ev)
+	}
+	if ev.Artifacts["execution"] != "static" {
+		t.Fatalf("browser calistirilmadigi acikca isaretlenmeli: %+v", ev)
+	}
+}
+
+func TestReflectionBrowserConfirmedRequiresHeadlessExecution(t *testing.T) {
+	var o ReflectionOracle
+	params := ReflectionParams{
+		Canary: "gash_abc123", RequireExecutableContext: true,
+		ControlBody: `<p>clean</p>`, BrowserVerified: true,
+	}
+	ev, err := o.Verify(context.Background(), `<script>alert(gash_abc123)</script>`, nil, cls(), false, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Verdict != VerdictReject {
+		t.Fatalf("headless calistirilmadiysa kabul edilmemeli: %+v", ev)
+	}
+
+	params.BrowserTriggered = true
+	params.BrowserControlClean = true
+	ev, err = o.Verify(context.Background(), `<script>alert(gash_abc123)</script>`, nil, cls(), false, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Verdict != VerdictAccept || ev.ConfidenceContribution != "confirmed" || ev.Artifacts["execution"] != "browser-confirmed" {
+		t.Fatalf("browser confirmed bekleniyordu: %+v", ev)
+	}
+}
+
+func TestReflectionStaticEvidenceWithoutControlNeverBecomesConfirmed(t *testing.T) {
+	var o ReflectionOracle
+	ev, err := o.Verify(context.Background(), `<script>alert(gash_abc123)</script>`, nil, cls(), false, ReflectionParams{
+		Canary: "gash_abc123", Contexts: []string{"script"}, RequireExecutableContext: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Verdict != VerdictAccept || ev.ConfidenceContribution != "static-execution-evidence" || ev.Artifacts["execution"] != "static" {
+		t.Fatalf("control olmadan browser confirmed veya firm donmemeli: %+v", ev)
 	}
 }
 
@@ -108,7 +149,7 @@ alert(1)</script>`},
 			if err != nil {
 				t.Fatal(err)
 			}
-			if ev.Verdict != VerdictReject || ev.ConfidenceContribution == "confirmed" {
+			if ev.Verdict != VerdictReject || ev.ConfidenceContribution == "confirmed" || ev.ConfidenceContribution == "static-execution-evidence" {
 				t.Fatalf("non-executable script must reject: %+v", ev)
 			}
 		})

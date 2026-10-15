@@ -37,7 +37,7 @@ used bounded budgets and dual-user flags.
 |---|---|---|---|---|
 | 1 | SQLi error-based | `/sqli?id=1` | `sqli-error-based` confirmed (GASH-004) | TP |
 | 2 | SQLi login auth-bypass | `/login?username=t` | `sqli-auth-bypass` confirmed ×5 params (GASH-004) | TP |
-| 3 | XSS attribute breakout | `/xss?q=hello` | `xss-attribute-injection` confirmed + `xss-reflected-basic` tentative (GASH-001) | TP |
+| 3 | XSS attribute breakout | `/xss?q=hello` | `xss-attribute-injection` static-execution-evidence + `xss-reflected-basic` tentative (GASH-001) | TP |
 | 4 | SSRF cloud metadata | `/fetch?url=x` | `ssrf-cloud-metadata` firm, labeled GASH-008/CWE-918 (GASH-008) | TP |
 | 5 | BOLA/IDOR cross-user | `/obj?id=1` | `idor-bola-matrix` tentative (GASH-005) | TP |
 | 6 | WAF bypass behavior | `/waf?x=1` | 275/275 blocked requests bypassed; block page never evidence; clean page yields true headers finding | TP (behavior) |
