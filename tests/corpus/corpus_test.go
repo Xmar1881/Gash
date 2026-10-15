@@ -60,6 +60,20 @@ func TestNoFalsePositives(t *testing.T) {
 			if ev2.Verdict == oracle.VerdictAccept && ev2.ConfidenceContribution == plugin.ConfidenceConfirmed {
 				t.Fatalf("temiz sayfada confirmed yasak (%s)", tc.name)
 			}
+			// CSRF ekranı: korpusta POST form yok → reject olmalı (firm+ YOK).
+			// dynamic gövdesindeki csrf_token girdisi form değildir, bulgu üretmemeli.
+			var ho oracle.HeaderOracle
+			ev3, _ := ho.Verify(ctx, cls, false, oracle.HeaderParams{Headers: http.Header{}, Mode: "csrf", Body: tc.body})
+			if ev3.Verdict == oracle.VerdictAccept && ev3.ConfidenceContribution != plugin.ConfidenceTentative {
+				t.Fatalf("korpusta csrf firm+ yasak (%s): %+v", tc.name, ev3)
+			}
+			// Frame ekranı: korpus sayfaları korumasızdır (bilinen true-positive);
+			// korumalı başlık seti her gövdede reject vermelidir (regresyon).
+			guarded := http.Header{"X-Frame-Options": {"DENY"}}
+			ev4, _ := ho.Verify(ctx, cls, false, oracle.HeaderParams{Headers: guarded, Mode: "frame"})
+			if tc.name != "waf-block" && ev4.Verdict != oracle.VerdictReject {
+				t.Fatalf("DENY başlığı frame bulgusunu kapatmalı (%s): %+v", tc.name, ev4)
+			}
 		})
 	}
 }

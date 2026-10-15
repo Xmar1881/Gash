@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/rfi/rfi-remote-include.yaml
+# What: Tier 1 remote file include screen via ReflectionOracle (GASH-008 family, CWE-98).
+# Why: LFI is covered by path-traversal-error (error oracle); remote-content
+#   inclusion has no detector. A loopback URL canary reflected in the response
+#   proves server-side reflection of the include parameter (tentative max, no
+#   execution claim). No external fetch is ever performed: the oracle only
+#   matches the canary string. Live use is lab/loopback + scope-gated only.
+
+id: rfi-remote-include
+name: Remote File Include (Reflection)
+description: Detects remote file include via loopback URL canary reflection in responses with clean control comparison.
+author: GASH contributors
+severity: high
+tags: [rfi, file-include, lfi, injection, reflection, ssrf]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 100
+phase: probe
+order: 31
+api_version: "1.0"
+tests: tests/fixtures/rfi-remote-include/
+request:
+  method: GET
+  param_names: [file, page, include, template, path, language, view]
+  payload: "http://127.0.0.1:9/gash-rfi-canary.txt"
+oracle:
+  name: reflection
+  params:
+    canary: "http://127.0.0.1:9/gash-rfi-canary.txt"
+    contexts: [html, attr, url]

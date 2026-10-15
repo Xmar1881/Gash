@@ -804,7 +804,7 @@ func runPluginsTest(cmd *cobra.Command, args []string) error {
 		if oracleName == "" {
 			return fmt.Errorf("test %s: no host.oracles.<name> call found", path)
 		}
-		return runFixtureSuite(cmd, ctx, spec, oracleName, path)
+		return runFixtureSuite(cmd, ctx, spec, oracleName, path, nil)
 	case "tier3":
 		spec, manifest, err := loader.LoadTier3Manifest(path)
 		if err != nil {
@@ -817,20 +817,20 @@ func runPluginsTest(cmd *cobra.Command, args []string) error {
 		if oracleName == "" {
 			oracleName = "header"
 		}
-		return runFixtureSuite(cmd, ctx, spec, oracleName, path)
+		return runFixtureSuite(cmd, ctx, spec, oracleName, path, nil)
 	default:
 		spec, file, err := loader.LoadTier1File(path)
 		if err != nil {
 			return err
 		}
-		return runFixtureSuite(cmd, ctx, spec, file.Oracle.Name, path)
+		return runFixtureSuite(cmd, ctx, spec, file.Oracle.Name, path, file.Oracle.Params)
 	}
 }
 
 // runFixtureSuite resolves fixtures, runs them, and enforces the metric gate.
 // What: Single fixture pipeline for every tier.
 // Why: Tier-independent gating proves accuracy never depends on plugin format.
-func runFixtureSuite(cmd *cobra.Command, ctx context.Context, spec *plugin.PluginSpec, oracleName, path string) error {
+func runFixtureSuite(cmd *cobra.Command, ctx context.Context, spec *plugin.PluginSpec, oracleName, path string, oracleParams map[string]any) error {
 	if spec.Tests == "" {
 		return fmt.Errorf("test %s: no `tests` field — add positive/negative fixtures first (`gash plugins new` generates them)", spec.ID)
 	}
@@ -838,7 +838,7 @@ func runFixtureSuite(cmd *cobra.Command, ctx context.Context, spec *plugin.Plugi
 	if st, err := os.Stat(root); err != nil || !st.IsDir() {
 		return fmt.Errorf("test %s: fixture root %q not found: %w", spec.ID, spec.Tests, errFixtureRoot(root))
 	}
-	sum, err := plugintest.Run(ctx, spec.ID, oracleName, root, true, nil)
+	sum, err := plugintest.Run(ctx, spec.ID, oracleName, root, true, oracleParams)
 	if err != nil {
 		return err
 	}

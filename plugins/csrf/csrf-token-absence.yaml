@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/csrf/csrf-token-absence.yaml
+# What: Tier 1 passive CSRF screen backed by HeaderOracle csrf mode (GASH-020, CWE-352).
+# Why: A POST form without anti-CSRF token and without SameSite=Strict is a
+#   deterministic logic finding; no state-changing request is ever sent.
+
+id: csrf-token-absence
+name: CSRF Token Absence (Passive Form Screen)
+description: Detects missing anti-CSRF tokens in state-changing POST forms via passive response analysis.
+author: GASH contributors
+severity: medium
+tags: [csrf, authentication, misconfig]
+safe: true
+deep: false
+active: false
+requires_auth: false
+phase: probe
+order: 21
+api_version: "1.0"
+tests: tests/fixtures/csrf-token-absence/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: csrf

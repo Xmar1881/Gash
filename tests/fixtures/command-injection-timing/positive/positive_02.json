@@ -1,0 +1,1 @@
+{"body": "<html><body>Welcome user</body></html>", "delay_samples": [5050, 5300, 5180], "control_samples": [60, 55, 70], "baseline_stddev": 15, "expected_confidence": "firm", "expected_verdict": "accept", "headers": {"Content-Type": "text/html"}, "name": "sleep delay stable across repeats with low jitter", "status": 200, "target": "http://example.com/ping?host=localhost"}

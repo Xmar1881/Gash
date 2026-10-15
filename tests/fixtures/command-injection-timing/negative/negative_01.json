@@ -1,0 +1,1 @@
+{"body": "<html><body>Welcome user</body></html>", "delay_samples": [100, 120, 90], "control_samples": [95, 110, 105], "baseline_stddev": 10, "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "no delay - arithmetic canary not executed", "status": 200, "target": "http://example.com/ping?ip=127.0.0.1"}

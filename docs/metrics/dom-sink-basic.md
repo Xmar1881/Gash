@@ -44,8 +44,11 @@ reject as untrusted before sink analysis.
 
 Synthetic localhost lab does not render JavaScript, so DOM execution is not
 lab-measured. Browser confirmation (headless `Triggered` plus `ControlClean`)
-is BLOCKED in this environment: no headless dependency is vendored, and no
-`chromedp` pin exists. The static `firm` ceiling is the honest lab claim.
+is implemented in `internal/headless` with `chromedp v0.21.0` behind `-tags
+deep` (default build still links no browser); the unit proof
+`TestDeepVerifiesDOMExecution` (real Chrome 155 headless, httptest payload +
+clean control → oracle `confirmed`) is the only browser evidence. Fixture and
+corpus claims stay at the static `firm` ceiling.
 
 ## Precision
 

@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/clickjacking/clickjacking-frameable.yaml
+# What: Tier 1 passive clickjacking screen backed by HeaderOracle frame mode (GASH-019, CWE-1021).
+# Why: Missing X-Frame-Options plus missing CSP frame-ancestors is deterministic
+#   framing proof; the general missing-security-headers plugin covers all headers,
+#   this one isolates the framing decision.
+
+id: clickjacking-frameable
+name: Clickjacking Frameable Page
+description: Detects clickjacking exposure via missing X-Frame-Options and CSP frame-ancestors analysis.
+author: GASH contributors
+severity: low
+tags: [clickjacking, headers, misconfig]
+safe: true
+deep: false
+active: false
+requires_auth: false
+phase: probe
+order: 11
+api_version: "1.0"
+tests: tests/fixtures/clickjacking-frameable/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: frame

@@ -198,6 +198,7 @@ func Evaluate(ctx context.Context, oracleName string, f Fixture, oobEnabled bool
 			Headers:        toHeader(f.Headers),
 			Mode:           mode,
 			RequestHeaders: reqHeaders,
+			Body:           f.Body,
 		})
 	case "redirect":
 		var o oracle.RedirectOracle

@@ -10,94 +10,78 @@ Why: One page for purpose, model, quickstart, docs, metrics, and license.
 
 # Gash
 
+```text
+  ____           _
+ / ___|__ _ ___| |__
+| |  _ / _` / __| '_ \
+| |_| | (_| \__ \ | | |
+ \____|\__,_|___/_| |_|
+```
+
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![Go](https://img.shields.io/badge/Go-1.26.8-00ADD8?logo=go)](go.mod)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go)](go.mod)
+[![Toolchain](https://img.shields.io/badge/toolchain-go1.27.2-00ADD8)](go.mod)
 [![CI](https://github.com/Xmar1881/Gash/actions/workflows/plugin-ci.yml/badge.svg)](https://github.com/Xmar1881/Gash/actions/workflows/plugin-ci.yml)
-[![Release](https://img.shields.io/badge/release-v0.1.0--dev-orange)](CHANGELOG.md)
 
 > Evidence first. Plugins everywhere. Findings you can defend.
 
 Gash is a Go-native, plugin-driven web security scanner for teams that care
-about signal, explainability, and controlled execution. It is not a regex bag
-with a logo: plugins propose candidates, engine-owned oracles decide whether
-those candidates deserve to become findings.
+about signal, explainability, and controlled execution. Plugins propose
+candidates; engine-owned oracles decide whether those candidates deserve to
+become findings.
 
-## At A Glance
-
-| Core | Plugins | Proof | Output |
-|---|---|---|---|
-| Go 1.26.8 | YAML, sandboxed JS, trusted native gRPC | Control, repeat, baseline, context | SARIF, JSON, text, HTML, JUnit |
-
-`safe` is the default. `deep`, `active`, `aggressive`, and OOB behavior are
-explicit opt-ins. Scan only systems you own or have written permission to test.
-
-## What Gash Is
-
-Gash is a Go-core, hybrid-plugin security scanner engine. Community plugins
-drop in as single files; engine-owned oracles decide what becomes a finding.
-The scanner runs with zero plugins and still emits a valid empty report.
-
-Module `github.com/Xmar1881/Gash`, toolchain `go1.26.8`, license
+Module `github.com/Xmar1881/Gash`, toolchain `go1.27.2`, license
 `AGPL-3.0-only`. Scan only targets you own or have explicit written
 permission to test; `--scope` keeps the allowlist tight.
 
-### The Evidence Pipeline
+## Why Gash
 
-```text
-Target -> PolicySession -> Plugin -> Candidate -> Oracle -> Evidence -> Finding
-```
-
-Every tier compiles to the same internal model. The engine owns scope,
-budgets, rate limits, verification, confidence, and report generation. A
-plugin can suggest a lead; it cannot mint proof.
-
-## Key Features
-
-- **Frictionless drop-in plugins:** drop one `.yaml` or `.js` file under
+- **Engine-owned oracles decide.** Every plugin compiles to the same
+  `PluginSpec` IR and flows through `Candidate -> Oracle -> Evidence ->
+  Finding`. A plugin can suggest a lead; it cannot mint proof.
+- **Drop-in plugins.** Drop one `.yaml` or `.js` file under
   `~/.gash/plugins/` (or `GASH_PLUGIN_PATH`) and it is discovered
   automatically. No `--load-plugin` or `--enable` flags exist.
-- **Accuracy independent of authorship:** every tier compiles to the same
-  `PluginSpec` IR and flows through the same Candidate to Verify to Finding
-  pipeline. Plugins return candidates only; engine-owned oracles verify; the
-  engine builds findings with `confirmed`, `firm`, `static-execution-evidence`,
-  or `tentative` confidence.
-- **Three-tier hybrid:** Tier 1 declarative YAML (no code), Tier 2 sandboxed
-  JS via goja (no I/O, no `require`, timeouts), Tier 3 native gRPC process
-  (explicit `trust` plus sha256 pin, never auto-executed).
-- **Tier 2 timing and DOM bindings:** `host.oracles.timing` verifies
-  Go-measured `rttMs` series (ceiling `firm`, no new network primitive);
-  `host.oracles.execution` reports static DOM sinks with URL-controlled
-  sources (ceiling `firm`; browser `confirmed` needs the headless build).
-- **Runtime tech fingerprint:** passive header, cookie-name, body-marker,
-  and favicon signals feed the `requires_tech` and capability chain
-  (`login-form`, `graphql-endpoint`, ...) without extra probing.
-- **Scan profiles:** `safe` (passive, low budget), `standard` (controlled
-  active), `deep` (browser/OOB, explicit opt-in), `aggressive` (full
-  offensive: all detectors, all methods, 50k req/target, 100 req/s).
-- **WAF-aware, not stealthy:** WAF blocks become `WAFDetected` stats, never
+- **Safe by default.** Default scans stay `safe` (GET/HEAD/OPTIONS only).
+  `deep`, `active`, `aggressive`, and OOB behavior are explicit opt-ins;
+  `PolicySession` enforces methods, budgets, scope, and rate limits.
+- **Evidence levels you can audit.** Findings carry `tentative`, `firm`,
+  `static-execution-evidence`, or `confirmed` confidence with control plus
+  repeat rules, baseline gating (soft-404, WAF, dynamic masking), and a
+  per-plugin fixture report under `docs/metrics/`.
+
+## What's New / Highlights
+
+- **39 detectors** — verify with `go run ./cmd/gash plugins list`
+  (31 YAML, 7 sandboxed JS, 1 native PoC; see Detector Summary below).
+- **Aggressive profile** — full offensive opt-in: all detectors, all
+  methods, 50k req/target, 100 req/s. Lab-only unless you hold written
+  authorization.
+- **WAF-aware, not stealthy** — WAF blocks become `WAFDetected` stats, never
   silent drops. Aggressive mode retries at most 5 scoped variants
   (header/HPP/encode/comment/case); block pages never count as evidence.
-  Bypass is reported only after a stable, clean application response.
-- **Reflection-aware XSS checks:** HTML, attribute, executable URL, JavaScript,
-  inert script, JSON, comment, and CSP contexts are separated. A goja-parser
-  recognized call plus clean control is `static-execution-evidence`; only a
-  controlled headless run can produce browser `confirmed`.
-- **Protocol recon:** TLS observation (`confirmed`), SPF/DMARC reads
-  (`firm`), explicit TCP banners (`tentative`, `--active` only), all
-  scope-checked. CAA and chunked-TE are documented gaps, not silent.
-- **OOB opt-in:** out-of-band verification stays disabled unless
+- **Fuzzing support** — `internal/fuzz` mutation helpers plus corpus-driven
+  tests feed injection points without changing the evidence pipeline.
+- **OOB, honestly gated** — out-of-band verification stays disabled unless
   `--oob-server` points at a self-hosted interaction server you control.
-  `oob: required` plugins skip honestly (`oob-not-configured`) instead of
-  emitting fake low-confidence findings.
-- **Safe-by-default:** default scans stay `safe` (GET/HEAD/OPTIONS only).
-  `--deep` and `--active` are explicit opt-ins; `PolicySession` enforces
-  methods, budgets, scope allowlist, and rate limits at the proxy layer.
-- **Evidence standard:** reflection, differential, timing, error-signature,
-  OOB, header, redirect, version, cookie, CORS, and execution oracles with
-  baseline gating (soft-404, WAF, dynamic masking) and control plus repeat
-  rules.
-- **Machine reports:** SARIF 2.1.0 primary (CI code scanning), plus JSON,
+  `oob: required` plugins skip honestly (`oob-not-configured`).
+- **Headless-deep path** — static DOM sinks report up to `firm` today;
+  browser `confirmed` requires the headless build (`internal/headless`,
+  `deep` build path) plus a clean control.
+- **JUnit + SARIF** — SARIF 2.1.0 primary for CI code scanning, plus JSON,
   text, HTML, and JUnit. Tentative stays hidden unless `--show-tentative`.
+- **Supply-chain + static gates in CI** — `govulncheck` dependency CVE scan
+  and pinned `gosec` static scan run on every PR, alongside `go vet`,
+  corpus, metric, contract, and bench gates.
+
+## At a Glance
+
+| Core | Plugins | Proof | Output |
+|---|---|---|---|
+| Go 1.26, toolchain go1.27.2 | YAML, sandboxed JS, trusted native gRPC | Control, repeat, baseline, context | SARIF, JSON, text, HTML, JUnit |
+
+`safe` is the default. `deep`, `active`, `aggressive`, and OOB behavior are
+explicit opt-ins. Scan only systems you own or have written permission to test.
 
 ## Reality Check
 
@@ -110,9 +94,9 @@ work in [`docs/known-limits.md`](docs/known-limits.md).
 
 ## How It Differs
 
-Honest comparison — Gash is experimental (`v0.1.0-dev`, 29 reference
+Honest comparison — Gash is experimental (`v0.1.0-dev`, 39 reference
 plugins) and competes on verification discipline, not on maturity or library
-size. No Gash-versus-Nuclei benchmark has been run; see
+size. No Gash-versus-Nuclei benchmark has been run (not compared); see
 `docs/metrics/nuclei-comparison-2026-10-14.md`.
 
 | Capability | Gash | Nuclei | OWASP ZAP | Burp Suite |
@@ -129,10 +113,11 @@ Use Nuclei for template breadth, ZAP for proxy/crawl coverage, Burp for
 manual depth. Use Gash when you want a small, auditable core where no plugin
 — however sloppy — can mint a finding without engine-grade evidence.
 
-## Try It In 60 Seconds
+## Try It in 60 Seconds
 
-Prerequisite: Go 1.26.8+ on `PATH`. All commands run from the repo root.
-Scan only targets you own or have explicit written permission to test.
+Prerequisite: Go 1.26+ (toolchain go1.27.2) on `PATH`. All commands run from
+the repo root. Scan only targets you own or have explicit written permission
+to test.
 
 ```sh
 go run ./cmd/gash plugins list
@@ -146,7 +131,7 @@ target you are authorized to test.
 
 ## Quickstart
 
-Linux / macOS (`sh`) — 4 commands:
+Linux / macOS (`sh`) — copy-paste:
 
 ```sh
 go run ./cmd/gash plugins list
@@ -155,7 +140,7 @@ go run ./cmd/gash plugins test plugins/headers/missing-security-headers.yaml
 go run ./cmd/gash scan --target http://localhost:8080 --scope localhost
 ```
 
-Windows (`PowerShell`) — same 4 commands:
+Windows (`PowerShell`) — copy-paste:
 
 ```powershell
 go run ./cmd/gash plugins list
@@ -202,25 +187,6 @@ oracle:
     mode: absent
 ```
 
-Tier 2 timing example (Go-measured RTT, ceiling `firm`):
-
-```js
-function run(probe, ctx) {
-  const points = ctx.injectionPoints();
-  const out = [];
-  for (const point of points) {
-    const delay = [], control = [];
-    for (let i = 0; i < 3; i++) {
-      delay.push(probe.send(point.withValue("1'; WAITFOR DELAY '0:0:5'--")));
-      control.push(probe.send(point.withValue("1")));
-    }
-    const ev = host.oracles.timing(delay, control, {min_delay_ms: 5000});
-    if (ev) out.push(host.candidate(point, "timing", ev));
-  }
-  return out;
-}
-```
-
 Static builds only (`CGO_ENABLED=0`); artifacts land under `dist/` and are
 never committed:
 
@@ -239,6 +205,31 @@ only shows help and waits for `Enter`; run it from a terminal instead:
 .\dist\gash-v0.1.0-dev-windows-amd64.exe scan --help
 .\dist\gash-v0.1.0-dev-windows-amd64.exe plugins list
 ```
+
+## Detector Summary
+
+39 detectors via `go run ./cmd/gash plugins list`
+(31 Tier 1 YAML, 7 Tier 2 sandboxed JS, 1 Tier 3 native PoC).
+Full oracle/plugin catalog: `docs/detector-inventory.md`.
+
+| Class | Count | Examples |
+|---|---:|---|
+| Cross-site scripting (reflected, stored, DOM) | 5 | `xss-reflected-basic`, `xss-attribute-injection`, `xss-stored-basic`, `xss-stored-two-step`, `dom-sink-basic` |
+| SQL injection (error, boolean, time, stacked, auth-bypass, OOB) | 6 | `sqli-error-based`, `sqli-boolean-differential`, `sqli-time-based`, `sqli-stacked-time`, `sqli-auth-bypass`, `blind-sqli-oob` |
+| Command injection (error, timing) | 2 | `command-injection-error`, `command-injection-timing` |
+| SSRF (blind OOB, cloud metadata) | 2 | `ssrf-blind-oob`, `ssrf-cloud-metadata` |
+| XXE (OOB, reflected) | 2 | `xxe-oob`, `xxe-reflected-basic` |
+| Template injection (SSTI) | 1 | `template-injection-reflection` |
+| File / path (RFI, traversal, upload) | 3 | `rfi-remote-include`, `path-traversal-error`, `file-upload-unrestricted` |
+| Access control and logic (IDOR, LDAP, HPP x2) | 4 | `idor-differential`, `ldap-injection-differential`, `hpp-parameter-pollution`, `hpp-duplicate-emission` |
+| Misconfig and headers (security headers, cookie, CORS, CRLF, CSRF, clickjacking, JWT x2, version, GraphQL, error disclosure, redirect, CVE) | 13 | `missing-security-headers`, `cookie-flags`, `cors-misconfig`, `crlf-header-injection`, `csrf-token-absence`, `clickjacking-frameable`, `jwt-token-exposure`, `jwt-alg-confusion`, `server-version-disclosure`, `graphql-endpoint-discovery`, `error-message-disclosure`, `open-redirect-param`, `cve-dependency-scan` |
+| Native PoC (Tier 3, explicit trust) | 1 | `poc-native-header-check` |
+| **Total** | **39** | `go run ./cmd/gash plugins list` |
+
+Evidence ladder: `tentative` -> `firm` / `static-execution-evidence` ->
+`confirmed`. Timing caps at `firm`; browser `confirmed` needs the headless
+build plus a clean control. OOB findings require a self-hosted callback
+match. Counts above are plugin inventory, not real-target recall.
 
 ## Docs Index
 
@@ -298,6 +289,15 @@ or OOB payloads at third-party systems. Aggressive mode is lab-only unless
 you hold written authorization. See `docs/SECURITY.md` for the full
 policy (authorized target, scope allowlist, OOB opt-in, safe default);
 review rejects any change that encourages unauthorized scanning.
+
+## Credits
+
+Developed by [@Xmar1881](https://github.com/Xmar1881).
+
+Contributors: see the
+[contributors page](https://github.com/Xmar1881/Gash/graphs/contributors) —
+names are added here only with the contributor's consent (open a PR to add
+yourself). No automated or placeholder names are listed.
 
 ## License
 

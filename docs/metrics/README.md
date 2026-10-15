@@ -34,6 +34,16 @@ The gate is enforced by `TestMetricGate` in `tests/plugins`, not by review conve
 | ssrf-cloud-metadata | [ssrf-cloud-metadata.md](ssrf-cloud-metadata.md) |
 | xss-attribute-injection | [xss-attribute-injection.md](xss-attribute-injection.md) |
 | dom-sink-basic | [dom-sink-basic.md](dom-sink-basic.md) |
+| command-injection-timing | [command-injection-timing.md](command-injection-timing.md) |
+| xss-stored-basic | [xss-stored-basic.md](xss-stored-basic.md) |
+| xxe-reflected-basic | [xxe-reflected-basic.md](xxe-reflected-basic.md) |
+| csrf-token-absence | [csrf-token-absence.md](csrf-token-absence.md) |
+| clickjacking-frameable | [clickjacking-frameable.md](clickjacking-frameable.md) |
+| hpp-parameter-pollution | [hpp-parameter-pollution.md](hpp-parameter-pollution.md) |
+| hpp-duplicate-emission | [hpp-duplicate-emission.md](hpp-duplicate-emission.md) |
+| xss-stored-two-step | [xss-stored-two-step.md](xss-stored-two-step.md) |
+| rfi-remote-include | [rfi-remote-include.md](rfi-remote-include.md) |
+| cve-dependency-scan | [cve-dependency-scan.md](cve-dependency-scan.md) |
 
 ## Lab Reports
 
@@ -41,6 +51,7 @@ The gate is enforced by `TestMetricGate` in `tests/plugins`, not by review conve
 |---|---|
 | aggressive recall, localhost synthetic lab (2026-10-14) | [lab-aggressive-local-2026-10-14.md](lab-aggressive-local-2026-10-14.md) |
 | compose lab DVWA/Juice Shop (2026-10-14, BLOCKED: no docker) | [lab-compose-dvwa-juiceshop-2026-10-14.md](lab-compose-dvwa-juiceshop-2026-10-14.md) |
+| compose lab DVWA/Juice Shop/WebGoat (2026-10-15, BLOCKED: no docker) | [lab-compose-2026-10-15.md](lab-compose-2026-10-15.md) |
 | Nuclei comparison (2026-10-14, not compared: no harness) | [nuclei-comparison-2026-10-14.md](nuclei-comparison-2026-10-14.md) |
 
 ## How to Reproduce

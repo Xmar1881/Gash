@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/xxe/xxe-reflected-basic.yaml
+# What: Tier 1 reflected/content XXE plugin backed by ReflectionOracle (GASH-011, CWE-611).
+# Why: Entity content reflected in the response proves in-band XXE without OOB.
+# Safety: LAB-CONTROLLED harmless canary entity only. No file:// read of real
+#   files (no /etc/passwd, no boot.ini) is ever requested or asserted.
+
+id: xxe-reflected-basic
+name: XXE Content Reflection (In-Band)
+description: Detects in-band XML External Entity injection via harmless canary entity reflection with clean control.
+author: GASH contributors
+severity: high
+tags: [xxe, xml, injection, reflection]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 50
+phase: probe
+order: 51
+api_version: "1.0"
+tests: tests/fixtures/xxe-reflected-basic/
+request:
+  method: POST
+  param_names: ["xml", "data", "payload", "content", "body", "input", "file"]
+  payload: '<!DOCTYPE foo [<!ENTITY xxe "GASH_XXE_CANARY">]><foo>&xxe;</foo>'
+oracle:
+  name: reflection
+  params:
+    canary: "GASH_XXE_CANARY"
+    require_executable_context: false
