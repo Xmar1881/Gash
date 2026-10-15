@@ -23,8 +23,10 @@ a clean control response, and no inline-execution-blocking CSP. This is not a
 browser proof. Stored-XSS write/render workflows and DOM source-to-sink
 browser execution remain `unsupported`/`blocked`; see the DOM metric report.
 
-The current reflected-XSS fixture result is TP=2, FP=0, TN=8, FN=0. It must
-not be generalized to real-target recall.
+The current reflected-XSS fixture result is TP=2, FP=0, TN=8, FN=0. The two
+positive cases are reported as `static-execution-evidence`, not `confirmed`,
+because no browser executed them. It must not be generalized to real-target
+recall.
 
 ## Chunked Transfer-Encoding bypass: BLOCKED (transport)
 

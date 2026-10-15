@@ -277,6 +277,7 @@ go run ./cmd/gash scan --target http://localhost:8080 --scope localhost --format
 go run ./cmd/gash scan --target http://localhost:8080 --scope localhost --fail-on firm
 ```
 
+`static-execution-evidence` raporlanır ancak `firm` eşiğinin altındadır.
 `--fail-on firm|confirmed` CI kapısıdır: eşik ve üstü bulgu varsa çıkış kodu
 1 olur. Metrik kapıları (`TestMetricGate`, korpus, bench) için
 `docs/metrics/README.md` ve `docs/ci-integration.md` dosyasına bak.

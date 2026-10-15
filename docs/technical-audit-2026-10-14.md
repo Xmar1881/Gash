@@ -23,7 +23,7 @@ in `docs/known-limits.md`.
 |---|---|---|---|
 | P0 | `ReflectionParams.Contexts` was accepted but ignored. | Fixed | `internal/oracle/reflection.go` enforces canonical contexts; `TestReflectionContextsAreEnforced` covers a disallowed event handler. |
 | P0 | HTML tokenizer state treated every script text occurrence as executable. | Fixed | JS lexical states distinguish code, strings, comments, executable MIME types, and JSON; `TestReflectionNonExecutableScriptFormsReject` covers string/comment/JSON. |
-| P0 | A random canary in a script/event attribute could become `confirmed`. | Fixed | Known execution payload plus clean control is required; `TestReflectionCanaryNeedsExecutionPayload` and updated XSS positives cover the ladder. |
+| P0 | A random canary in a script/event attribute could become `confirmed`. | Fixed | Parser-recognized execution call plus clean control now yields `static-execution-evidence`; `confirmed` requires browser evidence. Regression tests cover both paths. |
 | P0 | CSP was not part of reflection grading. | Fixed | Blocking inline CSP downgrades the evidence to `tentative`; `TestReflectionCSPDowngradesInlineExecution` covers it. |
 | P0 | Any non-blocking WAF variant was counted as bypass. | Fixed | `probe.Client` replays the exact variant and requires two stable application responses; probe and WAF tests cover auth, soft-404, dynamic, and generic 403 cases. |
 | P1 | Fixture metrics could drift from fixture bytes. | Existing gate, updated | XSS dataset now has 10 pinned fixtures and reports TP=2, FP=0, TN=8, FN=0. `TestMetricGate` recomputes the hash. |
@@ -32,7 +32,7 @@ in `docs/known-limits.md`.
 
 | Vulnerability / behavior | Current status | Honest boundary |
 |---|---|---|
-| Reflected XSS, basic HTML/JS contexts | partial | Static response proof only; active payload, control, CSP, and context rules are implemented. Browser execution is not performed. |
+| Reflected XSS, basic HTML/JS contexts | partial | Static response proof only; active payload, control, CSP, and context rules are implemented. Findings are `static-execution-evidence`; browser execution is not performed. |
 | Stored XSS | unsupported | No write-then-render workflow is wired into the current reflection API. |
 | DOM XSS | partial / blocked confirmation | Static source-sink analysis is available; browser confirmation is blocked by the missing pinned headless dependency. |
 | WAF detection | implemented | Baseline markers and block classification are separate from evidence. |

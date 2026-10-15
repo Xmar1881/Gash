@@ -117,6 +117,10 @@ returning an array.
   detects from the static vocabulary. Ceiling is `firm`; `confirmed` needs
   the headless build (`Triggered` plus `ControlClean`), which is BLOCKED
   without browser dependencies (see `docs/metrics/dom-sink-basic.md`).
+- `host.oracles.reflection(resp, canary[, contexts])`: reflected context
+  analysis. A parser-recognized executable call plus clean control returns
+  `static-execution-evidence`; browser `confirmed` requires a separate
+  controlled headless verifier and is not produced by the current binding.
 - `host.candidate(point, oracleRef, ev)`: builds the opaque candidate for
   accepted evidence; returns `null` for rejected evidence. Accepted refs
   include `reflected-xss`, `sqli-error`, `sqli-differential`, `ssrf-blind`,

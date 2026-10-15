@@ -12,6 +12,10 @@ Why: New formats are a Register call, not a CLI switch change.
 
 `gash scan --format` accepts any name registered in `internal/reporter`:
 
+`static-execution-evidence` is visible in JSON, text, and HTML, maps to SARIF
+`note`, and remains a skipped JUnit testcase. It does not satisfy the
+`--fail-on firm` or `--fail-on confirmed` gates.
+
 | Format | Content | Primary use |
 |---|---|---|
 | `text` | Human-readable terminal summary | Operators |

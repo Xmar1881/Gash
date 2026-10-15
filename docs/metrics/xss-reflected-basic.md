@@ -16,8 +16,9 @@ Tier 2 active plugin following the specification section 4.6 JavaScript
 example. The probe sends `alert(canary)`: a random canary reflection alone is
 not an XSS proof. Oracle `reflection` separates HTML, attributes, executable
 attributes, URLs, JavaScript code, strings/comments, and inert JSON blocks.
-Executable payload plus clean control confirms; text or encoded reflection
-stays `tentative`.
+Executable payload plus clean control produces `static-execution-evidence`;
+text or encoded reflection stays `tentative`. Browser `confirmed` is reserved
+for a controlled headless run and is not emitted by this plugin today.
 
 ## Evidence Standard
 
@@ -26,7 +27,7 @@ WAF block pages are untrusted and always reject. Missing reflection rejects.
 
 ## Fixtures
 
-- Positive: 2 of 2 accepted at `confirmed` (script block, event handler).
+- Positive: 2 of 2 accepted at `static-execution-evidence` (script block, event handler).
 - Negative: 8 of 8 clean (text stays `tentative`, encoded at most `tentative`,
   WAF rejects, absent reflection rejects, comment reflection rejects,
   style context at most `tentative`, JavaScript strings and JSON reject).
@@ -35,13 +36,15 @@ WAF block pages are untrusted and always reject. Missing reflection rejects.
 ## Corpus Result
 
 Oracle `reflection` with a never-present canary against clean, SPA, WAF,
-encoded, and dynamic bodies. `firm` plus findings: 0.
+encoded, and dynamic bodies. `firm` plus findings: 0. Static execution
+evidence remains below `firm` for CI gating and above `tentative` for reporting.
 
 ## Lab Result
 
 Procedure: use the DVWA reflected-XSS page at low security from
 `docker-compose.lab.yml`, scan the query input, expect a high severity
-`confirmed` finding. Status: pending manual run. Expected Recall 1.00 on the
+`static-execution-evidence` finding unless a browser-backed verifier is used.
+Status: pending manual run. Expected Recall 1.00 on the
 basic contexts covered here; exotic contexts stay out of scope.
 
 ## Precision
@@ -64,7 +67,7 @@ behaviour, not a plugin weakness.
 
 ## Dataset
 
-- Dataset hash: `c928c76632bff8dc2ffd84050584e72a407977635eb209ad1f41c6e212c574bd`
+- Dataset hash: `27bba26a7f282df1de7486a433f53ce926eb74fe2a5c765cac163cae49fbd0c5`
   (sha256 over all 10 fixture files under `tests/fixtures/xss-reflected-basic/`).
 - Samples: TP=2, FP=0, TN=8, FN=0. Fixture-only measurement; lab pending above.
 - Scope: script/attr-executable/text/encoded/comment/style/URL contexts,

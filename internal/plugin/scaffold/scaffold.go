@@ -242,7 +242,7 @@ func fixtureCases(oracle string) []fixtureCase {
 					"control_body":        "<html><body><p>zzz</p></body></html>",
 					"canary":              "gash_a1b2c3d4",
 					"expected_verdict":    "accept",
-					"expected_confidence": "confirmed",
+					"expected_confidence": "static-execution-evidence",
 				},
 			},
 			{
