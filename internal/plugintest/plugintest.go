@@ -63,6 +63,11 @@ type Fixture struct {
 	BaselineStddev float64   `json:"baseline_stddev"`
 	// Canary overrides the default reflection canary.
 	Canary string `json:"canary"`
+	// StoreStatus and StoreBody model the write exchange of a stored
+	// workflow (POST store). Render is Body/Headers/Status. Missing store
+	// fields default to an accepted write for backward compatibility.
+	StoreStatus int    `json:"store_status"`
+	StoreBody   string `json:"store_body"`
 	// Origin carries the request Origin for CORS fixtures (empty = passive only).
 	Origin string `json:"origin"`
 	// ExpectedVerdict is the oracle verdict the runner requires.
@@ -314,6 +319,29 @@ func Evaluate(ctx context.Context, oracleName string, f Fixture, oobEnabled bool
 		return o.Verify(ctx, cls, false, oracle.ExecutionParams{
 			Sink: sink, Source: detectFixtureSource(f.Body),
 			HeadlessEnabled: false,
+		})
+	case "stored", "storedexecution", "stored-execution", "stored_execution":
+		var o oracle.StoredOracle
+		contexts := getStringSliceParam(oracleParams, "contexts")
+		if len(contexts) == 0 {
+			contexts = []string{"html", "attr-executable", "script", "url", "url-executable"}
+		}
+		requireExecutable := true
+		if v, ok := oracleParams["require_executable_context"].(bool); ok {
+			requireExecutable = v
+		}
+		storeStatus := f.StoreStatus
+		storeBody := f.StoreBody
+		if storeStatus == 0 && storeBody == "" {
+			storeStatus = 200
+			storeBody = "<html><body>stored</body></html>"
+		}
+		return o.Verify(ctx, cls, false, oracle.StoredParams{
+			Canary: canary, Contexts: contexts,
+			RequireExecutableContext: requireExecutable,
+			StoreStatus:              storeStatus, StoreBody: storeBody,
+			RenderBody: f.Body, RenderHeaders: toHeader(f.Headers),
+			ControlBody: f.ControlBody,
 		})
 	default:
 		return nil, fmt.Errorf("plugintest: unknown oracle %q", oracleName)

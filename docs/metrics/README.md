@@ -44,6 +44,25 @@ The gate is enforced by `TestMetricGate` in `tests/plugins`, not by review conve
 | xss-stored-two-step | [xss-stored-two-step.md](xss-stored-two-step.md) |
 | rfi-remote-include | [rfi-remote-include.md](rfi-remote-include.md) |
 | cve-dependency-scan | [cve-dependency-scan.md](cve-dependency-scan.md) |
+| crlf-header-injection | [crlf-header-injection.md](crlf-header-injection.md) |
+| path-traversal-error | [path-traversal-error.md](path-traversal-error.md) |
+| error-message-disclosure | [error-message-disclosure.md](error-message-disclosure.md) |
+| jwt-token-exposure | [jwt-token-exposure.md](jwt-token-exposure.md) |
+| jwt-alg-confusion | [jwt-alg-confusion.md](jwt-alg-confusion.md) |
+| graphql-endpoint-discovery | [graphql-endpoint-discovery.md](graphql-endpoint-discovery.md) |
+| file-upload-unrestricted | [file-upload-unrestricted.md](file-upload-unrestricted.md) |
+| template-injection-reflection | [template-injection-reflection.md](template-injection-reflection.md) |
+| xxe-oob | [xxe-oob.md](xxe-oob.md) |
+| blind-sqli-oob | [blind-sqli-oob.md](blind-sqli-oob.md) |
+| idor-differential | [idor-differential.md](idor-differential.md) |
+| ldap-injection-differential | [ldap-injection-differential.md](ldap-injection-differential.md) |
+| command-injection-error | [command-injection-error.md](command-injection-error.md) |
+| server-version-disclosure | [server-version-disclosure.md](server-version-disclosure.md) |
+| sqli-time-based | [sqli-time-based.md](sqli-time-based.md) |
+| nosql-injection-error | [nosql-injection-error.md](nosql-injection-error.md) |
+| web-cache-poisoning-basic | [web-cache-poisoning-basic.md](web-cache-poisoning-basic.md) |
+| caa-dns-check (proto GASH-027, unit-scoped) | [caa-dns-check.md](caa-dns-check.md) |
+| content-discovery (engine-recon GASH-028, mock-fixture scoped) | [content-discovery-2026-10-16.md](content-discovery-2026-10-16.md) |
 
 ## Lab Reports
 

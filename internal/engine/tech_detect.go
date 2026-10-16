@@ -20,17 +20,26 @@ import (
 // Why: Chain gating needs runtime context; both fetches are same-target,
 // bounded (512KB/64KB), short-timeout, and best-effort (error yields empty).
 func (e *Engine) detectRuntimeTech(ctx context.Context, target string) {
-	if e.detectedTech == nil {
-		e.detectedTech = map[string]bool{}
-	}
-	if e.detectedCaps == nil {
-		e.detectedCaps = map[string]bool{}
+	e.detectedTech = map[string]bool{}
+	e.detectedCaps = map[string]bool{}
+	if e.sharedPolicy != nil && e.cfg.MaxRequestsTotal > 0 && e.sharedPolicy.TotalCount() >= e.cfg.MaxRequestsTotal {
+		return
 	}
 	u, err := url.Parse(target)
 	if err != nil || u.Host == "" {
 		return
 	}
-	client := &http.Client{Timeout: 8 * time.Second}
+	var tr http.RoundTripper = http.DefaultTransport
+	if strings.TrimSpace(e.cfg.ProxyURL) != "" {
+		if pu, err := url.Parse(strings.TrimSpace(e.cfg.ProxyURL)); err == nil {
+			if defTr, ok := http.DefaultTransport.(*http.Transport); ok {
+				t := defTr.Clone()
+				t.Proxy = http.ProxyURL(pu)
+				tr = t
+			}
+		}
+	}
+	client := &http.Client{Transport: tr, Timeout: 8 * time.Second}
 	reqCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, target, nil)

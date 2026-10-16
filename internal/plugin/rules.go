@@ -154,7 +154,7 @@ func CheckRequires(s PluginSpec, providesSet map[string]bool) error {
 // Faz 2'de kural-ID bilgisi plugin'de olmadığı için yalnızca genel tutarlılık zorlanır;
 // sınıf-bazlı "OOB geçersiz sınıfta required" kontrolü Tier1 oracle adı üzerinden yapılır.
 var oobInvalidOracles = map[string]bool{
-	"reflection": true, "header": true, "redirect": true, "version": true, "execution": true,
+	"reflection": true, "stored": true, "header": true, "redirect": true, "version": true, "execution": true,
 	"cookie": true, "cors": true,
 }
 

@@ -28,7 +28,7 @@ discovers this tree automatically; no enable flag exists.
 | ssrf-blind-oob | Tier 2 | oob (required) | `ssrf/ssrf-blind-oob.js` |
 | dom-sink-basic | Tier 2 | execution (static, firm max) | `xss/dom-sink-basic.js` |
 | hpp-duplicate-emission | Tier 2 | differential | `hpp/hpp-duplicate-emission.js` |
-| xss-stored-two-step | Tier 2 | reflection | `xss/xss-stored-two-step.js` |
+| xss-stored-two-step | Tier 2 | stored | `xss/xss-stored-two-step.js` |
 | sqli-auth-bypass | Tier 1 | error | `sqli/sqli-auth-bypass.yaml` |
 | sqli-stacked-time | Tier 1 | timing | `sqli/sqli-stacked-time.yaml` |
 | sqli-time-based | Tier 1 | timing | `sqli-time-based/sqli-time-based.yaml` |
@@ -56,6 +56,8 @@ discovers this tree automatically; no enable flag exists.
 | rfi-remote-include | Tier 1 | reflection | `rfi/rfi-remote-include.yaml` |
 | cve-dependency-scan | Tier 1 | version | `cve/cve-dependency-scan.yaml` |
 | server-version-disclosure | Tier 1 | version | `version-disclosure/server-version-disclosure.yaml` |
+| nosql-injection-error | Tier 1 | error | `nosql/nosql-injection-error.yaml` |
+| web-cache-poisoning-basic | Tier 1 | differential | `web-cache/web-cache-poisoning-basic.yaml` |
 | poc-native-header-check | Tier 3 | header | `native/poc-native-header-check.gashplugin.yaml` |
 
 ## Testing
@@ -65,6 +67,23 @@ go run ./cmd/gash plugins test plugins/headers/missing-security-headers.yaml
 go run ./cmd/gash plugins test plugins/xss/xss-reflected-basic.js
 go test ./tests/plugins/ -v
 ```
+
+## Engine-recon (no plugin file)
+
+`internal/discovery/content-discovery.go` (wordlist content discovery,
+GASH-028) ships as engine-recon, not as Tier 1 YAML — Tier 1 is single-request
+plus single-oracle and cannot express tech-conditional wordlist selection,
+HEAD-only sensitive handling, backup-suffix smart-recurse (depth <=2), or
+crawler feedback. Wordlists live pinned under
+`internal/discovery/wordlists/` (`common, wordpress, php, node, java, python`;
+each <=50 lines). Evidence is engine-built (`differential` control discipline,
+no new oracle). Test with:
+
+```sh
+go test ./internal/discovery/ -run 'TestContentDiscovery|TestWordlist' -v
+```
+
+Report: `docs/metrics/content-discovery-2026-10-16.md`.
 
 ## Adding a Plugin
 

@@ -61,6 +61,8 @@ func ruleAndCWE(oracleName string) (string, string) {
 	switch strings.ToLower(strings.TrimSpace(oracleName)) {
 	case "reflection":
 		return "GASH-001", "CWE-79"
+	case "stored", "storedexecution", "stored-execution", "stored_execution":
+		return "GASH-002", "CWE-79"
 	case "error", "differential":
 		return "GASH-004", "CWE-89"
 	case "redirect":
@@ -71,6 +73,8 @@ func ruleAndCWE(oracleName string) (string, string) {
 		return "GASH-022", "CWE-614"
 	case "cors":
 		return "GASH-023", "CWE-942"
+	case "content", "content-exposure", "contentexposure":
+		return "GASH-028", "CWE-200"
 	case "oob":
 		return "GASH-008", "CWE-918"
 	case "tls":
@@ -95,6 +99,8 @@ func ruleForPlugin(pluginID, oracleName string) (string, string) {
 	switch {
 	case strings.Contains(id, "ssrf"):
 		return "GASH-008", "CWE-918"
+	case strings.Contains(id, "content") || strings.Contains(id, "exposed-path"):
+		return "GASH-028", "CWE-200"
 	case strings.Contains(id, "idor") || strings.Contains(id, "bola"):
 		return "GASH-005", "CWE-639"
 	default:
@@ -123,13 +129,26 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 	}
 	pluginTimeout := time.Duration(timeoutMs) * time.Millisecond
 
-	policy := plugin.NewPolicySession(plugin.PolicyConfig{
-		MaxRequestsPerTarget: e.cfg.MaxRequestsPerTarget,
-		MaxRequestsTotal:     e.cfg.MaxRequestsTotal,
-		Scope:                e.cfg.Scope,
-		RatePerSecond:        e.cfg.RatePerSecond,
-		MaxResponseBytes:     5 * 1024 * 1024,
-	}, nil)
+	var parsedProxy *url.URL
+	if strings.TrimSpace(e.cfg.ProxyURL) != "" {
+		var err error
+		parsedProxy, err = url.Parse(strings.TrimSpace(e.cfg.ProxyURL))
+		if err != nil {
+			return nil, fmt.Errorf("invalid proxy URL %q: %w", e.cfg.ProxyURL, err)
+		}
+	}
+
+	policy := e.sharedPolicy
+	if policy == nil {
+		policy = plugin.NewPolicySession(plugin.PolicyConfig{
+			MaxRequestsPerTarget: e.cfg.MaxRequestsPerTarget,
+			MaxRequestsTotal:     e.cfg.MaxRequestsTotal,
+			Scope:                e.cfg.Scope,
+			RatePerSecond:        e.cfg.RatePerSecond,
+			MaxResponseBytes:     5 * 1024 * 1024,
+			ProxyURL:             parsedProxy,
+		}, nil)
+	}
 	// P1.3: Set original target for scope rebinding detection
 	policy.SetOriginalTarget(target)
 	// P2.5: kimlik bağlamı probe'a gömülür (requires_auth kapısı New'de açıldı).
@@ -146,6 +165,7 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		// işaretlenir, sınırlı varyant aynı politika/kapsam içinden denenir.
 		// Varsayılan taramada stealth davranışı YOKTUR (§14).
 		EnableWAFBypass: e.cfg.Profile == config.ProfileAggressive,
+		ProxyURL:        parsedProxy,
 	})
 
 	parallelism := e.cfg.Parallelism
@@ -164,13 +184,29 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 	execSkipped = append(execSkipped, protoSkipped...)
 	errorCount := 0
 
-	// Attack surface discovery: probe target to extract form inputs, query params, and links
+	// Attack surface discovery: crawl target to extract form inputs, query params, and links across pages
+	maxPages := e.cfg.MaxPages
+	if maxPages <= 0 {
+		maxPages = 50
+	}
+	depth := e.cfg.Depth
+	if depth < 0 {
+		depth = 3
+	}
+	crawlOpts := discovery.CrawlOptions{
+		MaxPages:    maxPages,
+		MaxDepth:    depth,
+		Scope:       e.cfg.Scope,
+		ReadRobots:  true,
+		ReadSitemap: true,
+	}
+	crawlRes, err := discovery.Crawl(ctx, client, target, crawlOpts)
 	var surfacePoints []loader.JSPoint
-	initResp, err := client.Send(ctx, http.MethodGet, target, nil, nil)
-	if err == nil && initResp != nil {
-		e.mergeSurfaceTech(initResp.Headers, nil, initResp.Body)
-		injected := discovery.ExtractSurface(target, initResp.Body)
-		for _, ip := range injected {
+	if err == nil && crawlRes != nil {
+		for _, page := range crawlRes.Pages {
+			e.mergeSurfaceTech(page.Headers, nil, page.Body)
+		}
+		for _, ip := range crawlRes.SurfacePoints {
 			surfacePoints = append(surfacePoints, loader.JSPoint{
 				URL:           ip.URL,
 				Method:        ip.Method,
@@ -190,6 +226,67 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 				ParamLocation: ip.ParamLocation,
 				Value:         ip.Value,
 			})
+		}
+	}
+
+	// OpenAPI yüzeyi (--openapi-spec): ParseSpec endpoint+parametreleri hedef
+	// bazında surfacePoints'e eklenir. Hedef host dışı + kapsam-dışı URL'ler
+	// ekleme anında atlanır (probe PolicySession ikinci kilittir).
+	// Hata fail-closed'tur (bozuk/kayıp spec taramayı durdurur).
+	if strings.TrimSpace(e.cfg.OpenAPISpec) != "" {
+		apiPoints, aerr := e.loadOpenAPISurface(ctx, target)
+		if aerr != nil {
+			return nil, aerr
+		}
+		surfacePoints = append(surfacePoints, apiPoints...)
+	}
+
+	// İçerik keşfi (wordlist): --active kapılı engine-recon (GASH-028).
+	// Tier1-YAML değil, engine-recon — gerekçe: teknoloji-koşullu wordlist
+	// seçimi + hassas path'te HEAD-only + smart-recurse (yedek uzantı,
+	// derinlik ≤2) + crawler geri-besleme tek-istekli YAML kalıbına sığmaz;
+	// kanıt motor-içidir (B3, finding.Build bypass — proto recon disiplini).
+	// Safe taramada sessizdir (profil disiplini); destructive YOK (GET/HEAD).
+	var contentRequests, contentFollowRequests, contentFindingCount int
+	if e.cfg.Active {
+		fpTech := discovery.TechFingerprint{Capabilities: map[string]bool{}}
+		for t := range e.detectedTech {
+			fpTech.Tech = append(fpTech.Tech, t)
+		}
+		cres, cerr := discovery.DiscoverContent(ctx, client, target, fpTech, nil, discovery.DefaultContentOptions())
+		if cerr == nil && cres != nil {
+			contentRequests = cres.Requests
+			contentFindingCount = len(cres.Findings)
+			allFindings = append(allFindings, cres.Findings...)
+			for _, p := range cres.DiscoveredPaths {
+				surfacePoints = append(surfacePoints, loader.JSPoint{URL: p, Method: http.MethodGet})
+			}
+			// Crawler geri-besleme: dizin-benzeri isabetlerin altında
+			// sınırlı mini-crawl (en fazla 3 dizin × 10 sayfa, derinlik 1).
+			dirs := 0
+			for _, p := range cres.DiscoveredPaths {
+				if dirs >= 3 {
+					break
+				}
+				if !strings.HasSuffix(p, "/") {
+					continue
+				}
+				dirs++
+				follow, ferr := discovery.Crawl(ctx, client, p, discovery.CrawlOptions{
+					MaxPages: 10, MaxDepth: 1, Scope: e.cfg.Scope,
+					ReadRobots: false, ReadSitemap: false,
+				})
+				if ferr != nil || follow == nil {
+					continue
+				}
+				contentFollowRequests += follow.TotalRequests
+				for _, ip := range follow.SurfacePoints {
+					surfacePoints = append(surfacePoints, loader.JSPoint{
+						URL: ip.URL, Method: ip.Method, ParamName: ip.ParamName,
+						ParamLocation: ip.ParamLocation, Value: ip.Value,
+					})
+				}
+			}
 		}
 	}
 
@@ -250,16 +347,18 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		Findings: deduped,
 		Skipped:  allSkipped,
 		Stats: map[string]int{
-			"scheduled":       len(ordered),
-			"skipped":         len(allSkipped),
-			"findings":        len(deduped),
-			"errors":          errorCount,
-			"waf_detected":    int(wafDet),
-			"waf_bypassed":    int(wafByp),
-			"fuzz_requests":   int(fuzzRequests),
-			"matrix_requests": int(matrixRequests),
-			"detected_tech":   len(e.detectedTech),
-			"detected_caps":   len(e.detectedCaps),
+			"scheduled":        len(ordered),
+			"skipped":          len(allSkipped),
+			"findings":         len(deduped),
+			"errors":           errorCount,
+			"waf_detected":     int(wafDet),
+			"waf_bypassed":     int(wafByp),
+			"fuzz_requests":    int(fuzzRequests),
+			"matrix_requests":  int(matrixRequests),
+			"content_requests": contentRequests + contentFollowRequests,
+			"content_findings": contentFindingCount,
+			"detected_tech":    len(e.detectedTech),
+			"detected_caps":    len(e.detectedCaps),
 		},
 		ScanID: newScanID(),
 	}
@@ -635,6 +734,15 @@ func (e *Engine) runProtoRecon(ctx context.Context, target string) ([]*finding.F
 				return
 			}
 			for _, pf := range proto.DNSFindings(target, res) {
+				pf := pf
+				out = append(out, pf.ToFinding())
+			}
+			// CAA: aynı dns dedektörü, aynı kapsam/izin; hata = sessiz (FP yok).
+			caaRes, cerr := proto.CheckCAA(c, host, po)
+			if cerr != nil || caaRes == nil {
+				return
+			}
+			for _, pf := range proto.CAAFindings(target, caaRes) {
 				pf := pf
 				out = append(out, pf.ToFinding())
 			}

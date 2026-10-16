@@ -20,8 +20,21 @@ attributes, event-handler attributes, executable JavaScript, JavaScript
 strings/comments, and inert JSON script blocks. A random canary reflection is
 at most `tentative`; `confirmed` requires a recognizable execution payload,
 a clean control response, and no inline-execution-blocking CSP. This is not a
-browser proof. Stored-XSS write/render workflows and DOM source-to-sink
-browser execution remain `unsupported`/`blocked`; see the DOM metric report.
+browser proof. DOM source-to-sink browser execution remains gated behind
+`-tags deep` (see below); see the DOM metric report.
+
+Stored-XSS write/render is `supported` via `StoredOracle`
+(`internal/oracle/stored.go`, oracle `stored`,
+`host.oracles.storedExecution`, Tier 1 `oracle: stored`): request 1 (POST
+store, canary payload) plus request 2 (GET render page, reflection-checked)
+plus a clean control render. The store exchange proves the write was accepted
+and is never itself XSS proof; the render exchange carries the claim.
+Limitations: `static-execution-evidence` ceiling without a controlled
+headless run (`confirmed` needs `BrowserVerified`+`Triggered`+`ControlClean`);
+binding control is fetched post-store so append-only boards need reset/isolate
+per canary or they reject as indistinguishable; JSON/data blocks, encoded
+renders (at most `tentative`), missing render canary, failed stores, and
+dirty controls reject; async polling/multi-user render flows are unmeasured.
 
 The current reflected-XSS fixture result is TP=2, FP=0, TN=8, FN=0. The two
 positive cases are reported as `static-execution-evidence`, not `confirmed`,
@@ -46,13 +59,16 @@ stable application responses and must not look like authentication rejection,
 soft-404, challenge, error, or dynamic noise. The repository has hermetic
 regression tests for these cases, but no real-WAF success rate is claimed.
 
-## CAA DNS checks: absent (stdlib gap)
+## CAA DNS checks: supported (miekg/dns, pinned)
 
 Protocol checks cover TLS observation (GASH-024), SPF/DMARC reads (GASH-025),
-and explicit TCP banners (GASH-026). CAA is absent: the standard library
-offers no generic DNS query type, and no extra dependency is pulled in for
-v1. SPF/DMARC plus resolution is the honest scope. See
-`internal/proto/proto.go` and `docs/proto-checks.md`.
+CAA reads (GASH-027, CWE-295), and explicit TCP banners (GASH-026).
+2026-10-16: the stdlib gap is closed with pinned `miekg/dns v1.1.73`
+(`internal/proto/caa.go`): read-only TypeCAA query, 5 s cap, safe-profile
+passive. NXDOMAIN/timeout/SERVFAIL stay silent (no finding, no FP);
+missing CAA → medium/`firm`, malformed CAA → medium/`firm`, healthy or
+IP-literal → silent. See `docs/proto-checks.md` and
+`docs/metrics/caa-dns-check.md`.
 
 ## Headless DOM confirmation: decided (chromedp, `-tags deep`)
 

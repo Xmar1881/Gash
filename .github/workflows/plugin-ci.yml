@@ -90,6 +90,34 @@ jobs:
           go test ./internal/reporter/ -run 'TestStaticExecutionEvidence|TestBrowserConfirmedEvidenceType' -v
           go test ./internal/plugin/loader/ -run 'TestExecuteJSInfiniteLoopAborts' -v
 
+      - name: Headless DOM XSS browser verification (Chrome deep-tag)
+        # Deep DOM verification: runs real headless Chrome via chromedp (-tags deep).
+        # Verifies that DOM source-to-sink payload executes in real Chrome and neutral control remains clean.
+        # Enforces that Chrome runs and the test is NOT skipped in CI.
+        run: |
+          echo "=== Verifying Chrome binary in CI ==="
+          if ! command -v google-chrome &>/dev/null && [ ! -x "/usr/bin/google-chrome" ]; then
+            echo "google-chrome not found, installing..."
+            sudo apt-get update && sudo apt-get install -y google-chrome-stable || true
+          fi
+          CHROME_BIN="$(command -v google-chrome || echo /usr/bin/google-chrome)"
+          echo "Using Chrome: $CHROME_BIN"
+          "$CHROME_BIN" --version || true
+          export CHROME_BIN
+          export CI=true
+
+          echo "=== Running Headless Deep Tests ==="
+          out=$(go test -tags deep -v -count=1 ./internal/headless/...)
+          echo "$out"
+          if echo "$out" | grep -Ei "skip|no Chrome binary found"; then
+            echo "ERROR: headless test was skipped in CI!" >&2
+            exit 1
+          fi
+          if ! echo "$out" | grep -q "PASS: TestDeepVerifiesDOMExecution"; then
+            echo "ERROR: TestDeepVerifiesDOMExecution did not pass!" >&2
+            exit 1
+          fi
+
       - name: Race detector (core packages)
         run: go test -race -count=1 ./internal/engine/ ./internal/oracle/ ./internal/plugin/... ./internal/probe/ ./internal/finding/ ./internal/baseline/
 

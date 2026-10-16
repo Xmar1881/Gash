@@ -402,6 +402,55 @@ func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File
 			InjectionPoint: plugin.InjectionPoint{URL: rawURL, Method: method, ParamName: param, ParamLocation: "query", Value: file.Request.Payload},
 			OracleName:     "oob",
 		}, Evidence: ev}}, nil
+	case "stored", "storedexecution", "stored-execution", "stored_execution":
+		var o oracle.StoredOracle
+		canary := file.Request.Payload
+		if c := getStringParam(oracleParams, "canary", ""); c != "" {
+			canary = c
+		}
+		contexts := getStringSliceParam(oracleParams, "contexts")
+		if len(contexts) == 0 {
+			contexts = []string{"html", "attr-executable", "script", "url", "url-executable"}
+		}
+		reqExecutable := true
+		if v, ok := oracleParams["require_executable_context"]; ok {
+			if b, ok := v.(bool); ok {
+				reqExecutable = b
+			}
+		}
+		// Exchange 1 is the declarative request already sent (store).
+		storeStatus, storeBody := status, body
+		// Exchange 2 is the render page GET on the base target.
+		renderStatus, renderHeaders, renderBody, renderErr := status, headers, body, error(nil)
+		renderStatus, renderHeaders, renderBody, renderErr = send(ctx, http.MethodGet, target)
+		if renderErr != nil {
+			return nil, fmt.Errorf("tier1 stored render %s: %w", target, renderErr)
+		}
+		renderCls := baseline.ClassifyStatic(renderStatus, renderHeaders, []byte(renderBody))
+		ctrlBody := ""
+		if _, _, cBody, cErr := send(ctx, http.MethodGet, target); cErr == nil {
+			ctrlBody = cBody
+		}
+		ev, err := o.Verify(ctx, renderCls, false, oracle.StoredParams{
+			Canary: canary, Contexts: contexts,
+			RequireExecutableContext: reqExecutable,
+			StoreStatus:              storeStatus, StoreBody: storeBody,
+			RenderBody: renderBody, RenderHeaders: renderHeaders,
+			ControlBody: ctrlBody,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if ev.Verdict != oracle.VerdictAccept {
+			return nil, nil
+		}
+		return []Tier1Result{{Candidate: plugin.Candidate{
+			PluginID:       spec.ID,
+			Target:         target,
+			InjectionPoint: plugin.InjectionPoint{URL: rawURL, Method: method, ParamName: param, ParamLocation: "query", Value: file.Request.Payload},
+			OracleName:     "stored",
+			OracleParams:   map[string]string{"canary": canary},
+		}, Evidence: ev}}, nil
 	default:
 		return nil, fmt.Errorf("tier1 execute: unsupported oracle %q: %w", file.Oracle.Name, plugin.ErrValidation)
 	}

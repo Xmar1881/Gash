@@ -1,7 +1,7 @@
 /* ---
 id: xss-stored-two-step
 name: Stored XSS Two-Step (Store plus Render)
-description: Detects stored XSS via a two-request flow that stores a payload through a form point and checks the render page with the reflection oracle.
+description: Detects stored XSS via a two-request flow that stores a payload through a form point and verifies the render page with the stored oracle.
 author: GASH contributors
 severity: high
 tags: [xss, stored-xss, injection, reflection]
@@ -22,8 +22,9 @@ tests: tests/fixtures/xss-stored-two-step/
 // What: Tier 2 stored-XSS plugin with a real store-plus-render flow.
 // Why: Tier 1 xss-stored-basic evaluates the synchronous render body offline
 //   (approximation). This plugin performs request 1 (store through the surface
-//   form point) plus request 2 (render page GET) and checks the render with
-//   the reflection oracle. Only probe.send plus surface plus host.oracles.
+//   form point) plus request 2 (render page GET) and verifies the pair with
+//   the stored oracle (two-exchange write/render plus clean control).
+//   Only probe.send plus surface plus host.oracles.
 
 function run(probe, ctx) {
   const points = ctx.injectionPoints();
@@ -31,8 +32,9 @@ function run(probe, ctx) {
   for (const point of points) {
     const canary = probe.canary();
     const payload = "<img src=x onerror=alert(" + canary + ")>";
+    let storeResp;
     try {
-      probe.send(point.withValue(payload));
+      storeResp = probe.send(point.withValue(payload));
     } catch (e) {
       continue;
     }
@@ -44,9 +46,9 @@ function run(probe, ctx) {
     } catch (e) {
       continue;
     }
-    const ev = host.oracles.reflection(renderResp, canary, ["html", "attr-executable", "script", "url", "url-executable"]);
+    const ev = host.oracles.storedExecution(storeResp, renderResp, canary, ["html", "attr-executable", "script", "url", "url-executable"]);
     if (ev) {
-      candidates.push(host.candidate(point, "reflection", ev));
+      candidates.push(host.candidate(point, "stored", ev));
     }
   }
   return candidates;

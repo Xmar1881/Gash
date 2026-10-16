@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -32,6 +33,9 @@ func domLab() *httptest.Server {
 // this browser run plus oracle.ExecutionParams.
 func TestDeepVerifiesDOMExecution(t *testing.T) {
 	if !Available() {
+		if os.Getenv("CI") != "" {
+			t.Fatal("headless zorunlu: CI ortaminda chrome bulunamadi (no Chrome binary found in CI)")
+		}
 		t.Skip("headless yok: chrome bulunamadı, skip")
 	}
 	srv := domLab()
@@ -73,5 +77,23 @@ func TestDeepVerifiesDOMExecution(t *testing.T) {
 	}
 	if ev2.Verdict == oracle.VerdictAccept && string(ev2.ConfidenceContribution) == "confirmed" {
 		t.Fatalf("tetiklenmeyen headless confirmed olmamali: %+v", ev2)
+	}
+}
+
+// TestFindChrome verifies that FindChrome returns a valid executable path.
+func TestFindChrome(t *testing.T) {
+	p := FindChrome()
+	if !Available() {
+		if os.Getenv("CI") != "" {
+			t.Fatal("FindChrome CI ortaminda chrome binary bulamadi")
+		}
+		t.Skip("chrome bulunamadi, skip")
+	}
+	if p == "" {
+		t.Fatal("Available() true iken FindChrome() bos donemez")
+	}
+	st, err := os.Stat(p)
+	if err != nil || st.IsDir() {
+		t.Fatalf("FindChrome() gecerli bir dosya dondurmedi: %s (err: %v)", p, err)
 	}
 }

@@ -1,0 +1,177 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: .github/workflows/lab-recall.yml
+# What: Manual compose-lab recall (DVWA / Juice Shop / WebGoat, localhost-only).
+# Why: Seeded-lab precision/recall is measured on demand via workflow_dispatch;
+#   the PR gate (plugin-ci.yml) never runs aggressive scans and stays fast.
+#   No schedule on purpose: aggressive scans run only when a human clicks
+#   "Run workflow" (schedule eklenmedi; eklenirse bu dosya + prosedür güncellenir).
+#
+# Pins: actions/checkout@v4 + actions/setup-go@v5 + go 1.27.2, plugin-ci.yml
+#   ile aynı (gosec/golangci-lint/govulncheck disiplini PR gate'indedir, burada
+#   tekrar koşmaz; bu workflow sadece scanner'ı derler ve localhost'u tarar).
+# Results: artifact + PR diff talimatı (dosyaya OTOMATİK commit YOK).
+#   Gerekçe: auto-commit PAT push ister, push→CI döngüsü tetikler ve doğrulanmamış
+#   sayıyı main'e yazar; "Unmeasured (BLOCKED)" satırları TP/FP el ile hükme
+#   bağlanana kadar kalır. Sahte sayı YOKTUR.
+#
+# Kırmızı çizgi: SADECE localhost compose hedefleri (127.0.0.1:8081-8083),
+#   her taramada `--scope 127.0.0.1` zorunlu; dış hedef YOK, secret YOK,
+#   agresif tarama bu runner dışına taşmaz. Veriler yıkılabilir
+#   (son adımda `down -v`, her durumda `if: always()`).
+
+name: lab-recall
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lab-recall
+  cancel-in-progress: false
+
+jobs:
+  lab-recall:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.2"
+          cache: true
+
+      - name: Build scanner
+        run: go build ./...
+
+      - name: Scope guard (red line, fail-closed)
+        # Kırmızı çizgi: taranacak her hedef 127.0.0.1 loopback olmalı.
+        # Bu listedeki dışına çıkan değer job'u daha compose ayağa
+        # kalkmadan durdurur.
+        run: |
+          for t in "http://127.0.0.1:8081" "http://127.0.0.1:8082" "http://127.0.0.1:8083/WebGoat"; do
+            case "$t" in
+              http://127.0.0.1:*) echo "in-scope: $t" ;;
+              *) echo "OUT-OF-SCOPE target refused: $t" >&2; exit 1 ;;
+            esac
+          done
+          echo "scope=127.0.0.1 enforced (her scan adiminda --scope 127.0.0.1)"
+
+      - name: Lab up (pinned compose, localhost-only)
+        run: |
+          docker compose -f docker-compose.lab.yml up -d
+          docker compose -f docker-compose.lab.yml ps
+
+      - name: Wait for lab readiness (5dk tavan)
+        # docker-compose.lab.yml içinde healthcheck alanı YOKTUR; hazır olma
+        # burada curl retry ile beklenir (prosedürdeki üç URL, HTTP 200).
+        # WebGoat ilk açılışı yavaştır; tavan 300s, yoklama 10s.
+        run: |
+          deadline=$((SECONDS + 300))
+          while [ $SECONDS -lt $deadline ]; do
+            a=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8081/ || true)
+            j=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8082/ || true)
+            w=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8083/WebGoat/ || true)
+            echo "ready poll: dvwa=$a juiceshop=$j webgoat=$w"
+            if [ "$a" = "200" ] && [ "$j" = "200" ] && [ "$w" = "200" ]; then
+              echo "lab ready"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "lab readiness timeout (5dk tavan)" >&2
+          docker compose -f docker-compose.lab.yml ps
+          docker compose -f docker-compose.lab.yml logs --tail=100
+          exit 1
+
+      - name: Scan DVWA (localhost only)
+        run: go run ./cmd/gash scan --target http://127.0.0.1:8081 --scope 127.0.0.1 --aggressive --format json --output lab-dvwa.json
+
+      - name: Scan Juice Shop (localhost only)
+        run: go run ./cmd/gash scan --target http://127.0.0.1:8082 --scope 127.0.0.1 --aggressive --format json --output lab-juiceshop.json
+
+      - name: Scan WebGoat (localhost only)
+        run: go run ./cmd/gash scan --target http://127.0.0.1:8083/WebGoat --scope 127.0.0.1 --aggressive --format json --output lab-webgoat.json
+
+      - name: Summarize (counts only, TP/FP manual)
+        # SADECE ham sayım: findings toplamı + rule_id/confidence kırılımı +
+        # digest + sha256. TP/FP hükmü OTOMATİK VERİLMEZ: bilinen-zafiyetli
+        # endpoint hit = TP adayı, temiz endpoint hit = FP; ayırım imaj+sürüm
+        # seed listesine karşı EL İLE yapılır ve docs'a EL İLE yazılır.
+        run: |
+          {
+            echo "# Lab recall summary ($(date -u +%F))"
+            echo ""
+            for f in lab-dvwa.json lab-juiceshop.json lab-webgoat.json; do
+              echo "## $f"
+              echo ""
+              echo "- target: $(jq -r '.target' "$f")"
+              echo "- findings: $(jq -r '.findings | length' "$f")"
+              echo "- suppressed: $(jq -r '.suppressed' "$f")"
+              echo "- skipped: $(jq -r '.skipped | length' "$f")"
+              echo ""
+              echo "by rule_id (count rule_id):"
+              echo '```'
+              jq -r '.findings | group_by(.rule_id)[] | "\(length)  .[0].rule_id"' "$f" | sort -rn || true
+              echo '```'
+              echo ""
+              echo "by confidence (count confidence):"
+              echo '```'
+              jq -r '.findings | group_by(.confidence)[] | "\(length)  .[0].confidence"' "$f" | sort -rn || true
+              echo '```'
+              echo ""
+            done
+            echo "## Dataset"
+            echo ""
+            echo '```'
+            docker images --digests vulnerables/web-dvwa:2.0 bkimminich/juice-shop:17.1.0 webgoat/webgoat:2023.8 || true
+            echo '```'
+            echo ""
+            echo "sha256:"
+            echo '```'
+            sha256sum lab-dvwa.json lab-juiceshop.json lab-webgoat.json
+            echo '```'
+            echo ""
+            echo "TP/FP disiplini: bu özet HAM SAYIMDIR; TP/FP hükmü seed listesine"
+            echo "karşı el ile verilir (prosedür: docs/metrics/lab-compose-2026-10-15.md adım 4)."
+          } | tee recall-summary.md
+
+      - name: Upload lab artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab-recall
+          path: |
+            lab-dvwa.json
+            lab-juiceshop.json
+            lab-webgoat.json
+            recall-summary.md
+          retention-days: 30
+
+      - name: PR diff talimati (docs update is manual)
+        # Artifact + PR diff talimatı seçildi (auto-commit YOK); gerekçe dosya
+        # başlığındadır. Aşağıdaki çıktı, takip PR'ında yapılacak el diff'ini tarifler.
+        run: |
+          cat <<'EOF'
+          === LAB-RECALL PR TALIMATI (manuel, review'li) ===
+          1. Bu job'un "lab-recall" artifact'ini indir (lab-*.json + recall-summary.md).
+          2. Seed listesini sabitle: docker images --digests ciktisi + imaj surumleri
+             (DVWA 2.0 / Juice Shop 17.1.0 / WebGoat 2023.8).
+          3. Her hedef icin TP/FP'yi EL ILE hukme bagla:
+               bilinen-zafiyetli endpoint hit = TP adayi, temiz endpoint hit = FP.
+          4. docs/metrics/lab-compose-2026-10-15.md dosyasinda SADECE su bolumleri
+             gercek sayilarla degistir: ## Precision, ## Recall, ## Gate Verdict,
+             ## Dataset (uc JSON yolu + Dataset hash = sha256 listesi).
+             "Unmeasured (BLOCKED)" satirlari olcum girilmeden KALDIRILMAZ.
+          5. Gate Verdict: Precision >= 0.99 ise PASS, degilse FAIL + gerekce.
+          6. Ayri PR ac, plugin-ci yesilini bekle, merge et. Bu workflow main'e
+             kendi basina commitlemez.
+          EOF
+
+      - name: Lab down (resetlenebilir cleanup)
+        if: always()
+        run: docker compose -f docker-compose.lab.yml down -v

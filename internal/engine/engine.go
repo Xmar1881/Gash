@@ -47,6 +47,13 @@ type Config struct {
 	ShowTentative        bool
 	IgnorePlugins        map[string]bool
 	Target               string
+	MaxPages             int    // Maximum pages to crawl (default 50)
+	Depth                int    // Maximum crawl depth (default 3)
+	ProxyURL             string // Upstream HTTP proxy URL (e.g. http://127.0.0.1:8080)
+	// OpenAPISpec --openapi-spec karşılığıdır (dosya yolu veya http(s) URL).
+	// Doluysa ParseSpec endpoint+parametreleri hedef bazında surfacePoints'e
+	// eklenir; URL ise yalnızca kapsam-içi/loopback çekilir (fail-closed).
+	OpenAPISpec string
 
 	// P1.2: Scan profile (Safe/Standard/Deep)
 	Profile config.ProfileName
@@ -67,6 +74,8 @@ func DefaultConfig() Config {
 		Parallelism:          8,
 		NoisyThreshold:       10,
 		IgnorePlugins:        make(map[string]bool),
+		MaxPages:             50,
+		Depth:                3,
 	}
 }
 
@@ -92,6 +101,8 @@ type Engine struct {
 	// detectedCaps çalışma-anı yetenek kümesidir (login-form, graphql-endpoint, ...).
 	// ResolveChain Capabilities girdisini besler.
 	detectedCaps map[string]bool
+	// sharedPolicy is an optional shared PolicySession used across multi-target bulk scans.
+	sharedPolicy *plugin.PolicySession
 }
 
 // New motor kurar.
@@ -338,6 +349,16 @@ func (e *Engine) SetTrustRecord(id, sha, platform string) {
 
 // TrustedPlatform returns the platform pin of a Tier 3 approval.
 func (e *Engine) TrustedPlatform(id string) string { return e.trustPlatform[id] }
+
+// SetSharedPolicy attaches a shared policy session (for multi-target bulk scans).
+func (e *Engine) SetSharedPolicy(p *plugin.PolicySession) {
+	e.sharedPolicy = p
+}
+
+// SharedPolicy returns the configured shared policy session, if any.
+func (e *Engine) SharedPolicy() *plugin.PolicySession {
+	return e.sharedPolicy
+}
 
 // Run executes scheduled plugins against the target with live probing.
 // What: Validated target plus scheduled execution plus correlated findings.

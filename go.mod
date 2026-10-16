@@ -9,6 +9,7 @@ require (
 	github.com/dop251/goja v0.0.0-20261011204819-0c9fae1b959d
 	github.com/go-playground/validator/v10 v10.27.0
 	github.com/hashicorp/go-plugin v1.8.0
+	github.com/miekg/dns v1.1.73
 	github.com/spf13/cobra v1.10.2
 	go.etcd.io/bbolt v1.5.0
 	golang.org/x/net v0.61.0

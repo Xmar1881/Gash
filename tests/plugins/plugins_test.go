@@ -658,6 +658,8 @@ func ruleFor(oracleName string) string {
 	switch oracleName {
 	case "reflection":
 		return "GASH-001"
+	case "stored", "storedexecution", "stored-execution":
+		return "GASH-002"
 	case "error", "differential":
 		return "GASH-004"
 	case "redirect":
@@ -676,7 +678,7 @@ func ruleFor(oracleName string) string {
 // Why: Completes finding metadata in the drop-in proof.
 func cweFor(oracleName string) string {
 	switch oracleName {
-	case "reflection":
+	case "reflection", "stored", "storedexecution", "stored-execution":
 		return "CWE-79"
 	case "error", "differential":
 		return "CWE-89"

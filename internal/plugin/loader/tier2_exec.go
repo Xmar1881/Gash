@@ -117,6 +117,8 @@ func oracleRefName(ref string) string {
 		return "cors"
 	case "execution", "dom-xss", "dom-sink", "dom":
 		return "execution"
+	case "stored", "stored-xss", "storedexecution", "stored-execution", "stored_execution", "storedxss":
+		return "stored"
 	default:
 		return strings.ToLower(strings.TrimSpace(ref))
 	}
@@ -395,6 +397,59 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 		}
 		return evToObject(vm, ev)
 	})
+	storedVerify := func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 3 {
+			panic("storedExecution(storeResp, renderResp, canary[, contexts|opts]) requires 3 arguments")
+		}
+		storeResp := respFromValue(call.Arguments[0])
+		renderResp := respFromValue(call.Arguments[1])
+		canary := call.Arguments[2].String()
+		contexts := []string{"html", "attr-executable", "script", "url", "url-executable"}
+		requireExecutable := true
+		if len(call.Arguments) >= 4 && !goja.IsNull(call.Arguments[3]) && !goja.IsUndefined(call.Arguments[3]) {
+			arg := call.Arguments[3].ToObject(vm)
+			if lengthVal := arg.Get("length"); lengthVal != nil && !goja.IsUndefined(lengthVal) {
+				if length := int(lengthVal.ToInteger()); length > 0 {
+					contexts = make([]string, 0, length)
+					for i := 0; i < length; i++ {
+						contexts = append(contexts, arg.Get(fmt.Sprintf("%d", i)).String())
+					}
+				}
+			} else {
+				if v := arg.Get("contexts"); v != nil && !goja.IsUndefined(v) && !goja.IsNull(v) {
+					arr := v.ToObject(vm)
+					if length := int(arr.Get("length").ToInteger()); length > 0 {
+						contexts = make([]string, 0, length)
+						for i := 0; i < length; i++ {
+							contexts = append(contexts, arr.Get(fmt.Sprintf("%d", i)).String())
+						}
+					}
+				}
+				if v := arg.Get("requireExecutableContext"); v != nil && !goja.IsUndefined(v) && !goja.IsNull(v) {
+					requireExecutable = v.ToBoolean()
+				}
+				if v := arg.Get("require_executable_context"); v != nil && !goja.IsUndefined(v) && !goja.IsNull(v) {
+					requireExecutable = v.ToBoolean()
+				}
+			}
+		}
+		cls := baseline.ClassifyStatic(renderResp.Status, toHTTPHeader(renderResp.Headers), []byte(renderResp.Body))
+		ctrl := controlFor(JSPoint{URL: renderResp.URL})
+		var o oracle.StoredOracle
+		ev, err := o.Verify(context.Background(), cls, false, oracle.StoredParams{
+			Canary: canary, Contexts: contexts,
+			RequireExecutableContext: requireExecutable,
+			StoreStatus:              storeResp.Status, StoreBody: storeResp.Body,
+			RenderBody: renderResp.Body, RenderHeaders: toHTTPHeader(renderResp.Headers),
+			ControlBody: ctrl.Body,
+		})
+		if err != nil {
+			panic(err.Error())
+		}
+		return evToObject(vm, ev)
+	}
+	_ = oraclesObj.Set("stored", storedVerify)
+	_ = oraclesObj.Set("storedExecution", storedVerify)
 	_ = oraclesObj.Set("error", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 2 {
 			panic("error(resp, controlResp) requires 2 arguments")

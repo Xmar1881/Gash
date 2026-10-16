@@ -36,6 +36,7 @@ func VerifyDOM(ctx context.Context, payloadURL, controlURL, probeExpr string, ti
 		chromedp.Flag("headless", true),
 		chromedp.Flag("disable-gpu", true),
 		chromedp.Flag("no-sandbox", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
 		chromedp.Flag("no-first-run", true),
 		chromedp.Flag("no-default-browser-check", true),
 	)
