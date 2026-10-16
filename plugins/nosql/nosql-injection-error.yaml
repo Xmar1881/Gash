@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/nosql/nosql-injection-error.yaml
+# What: Tier 1 NoSQL injection plugin backed by ErrorSignatureOracle (generic_error mode).
+# Why: Detects MongoDB-style NoSQL injection via error signature match plus
+#   absent-in-control proof; harmless $ne operator probe, no destructive payload.
+
+id: nosql-injection-error
+name: NoSQL Injection Error-Based
+description: Detects NoSQL injection via database error signature match plus absent-in-control proof using a harmless MongoDB $ne operator probe.
+author: GASH contributors
+severity: high
+tags: [nosql, injection, error-signature]
+safe: false
+deep: false
+active: true
+requires_auth: false
+phase: probe
+order: 64
+api_version: "1.0"
+tests: tests/fixtures/nosql-injection-error/
+request:
+  method: GET
+  param_names: [username, password, id, search, filter, q]
+  payload: '{"$ne": null}'
+oracle:
+  name: error
+  params:
+    mode: "generic_error"
+    signature_set: ["generic_error"]

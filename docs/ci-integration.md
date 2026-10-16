@@ -99,6 +99,51 @@ gash-scan:
       junit: report.xml
 ```
 
+## Baseline diff (fail only on new findings)
+
+Leave existing findings alone, fail only when a *new* fingerprint appears:
+
+- Matching key is the stored `fingerprint` (`finding.Fingerprint`:
+  URL + evidence based, never line-based). Reordered reports stay
+  `UNCHANGED`; suppress entries keep working because they use the same key.
+- `gash diff` exit codes mirror `scan --fail-on`: `0` = no NEW (or no gate),
+  `1` = `--fail-on new` triggered or CLI/validation error.
+
+```sh
+# 1. Scan current commit (JSON keeps fingerprints):
+gash scan --target https://app.example.com --scope app.example.com \
+  --format json --output current.json
+
+# 2. Compare against the checked-in baseline (do not touch old findings):
+gash diff --old baseline.json --new current.json --format text --fail-on new
+
+# Machine-readable form for artifact upload:
+gash diff --old baseline.json --new current.json --format json > diff.json
+```
+
+GitHub Actions example (baseline stored as an artifact):
+
+```yaml
+- name: GASH scan (current)
+  run: |
+    go run ./cmd/gash scan --target https://app.example.com \
+      --scope app.example.com --profile standard \
+      --format json --output current.json
+- name: Download baseline
+  uses: actions/download-artifact@v4
+  with:
+    name: gash-baseline
+    path: .
+- name: Fail only on new findings
+  run: |
+    go run ./cmd/gash diff --old baseline.json \
+      --new current.json --format text --fail-on new
+```
+
+Triage loop: fix what you can, then promote `current.json` to
+`baseline.json` only after review — never auto-overwrite the baseline on
+green builds.
+
 ## Safety notes for CI
 
 - Always pass `--scope` for non-local targets; external targets without

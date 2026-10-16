@@ -1,0 +1,1 @@
+{"body": "<html><body>Welcome user</body></html>", "control_body": "<html><body>Welcome user</body></html>", "control_status": 200, "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "no error in response", "status": 200, "target": "http://example.com/login?username=gash"}

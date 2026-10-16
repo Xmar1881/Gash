@@ -24,6 +24,23 @@ Dates are UTC.
 - WAF statistics now distinguish detection from verified bypass. Aggressive
   bypass counts require stable application responses and exclude auth,
   soft-404, challenge, error, and dynamic responses.
+- BFS Web Crawler (`internal/discovery/crawl.go`): automated link following with
+  robots.txt/sitemap.xml parsing, `--max-pages`, and `--depth` control.
+- Multi-target bulk scanning (`cmd/gash/bulk.go`): `--target-file`, `--resume`,
+  `--output-dir`, and aggregated `bulk_summary.json` reporting with strictly
+  shared global request budgets.
+- Upstream HTTP interception proxy support (`--proxy <url>`): full Burp Suite /
+  OWASP ZAP integration wired to `probe.Client.Transport` with fail-closed
+  preflight `--scope` firewall enforcement.
+- Stored XSS two-step verification oracle (`internal/oracle/stored.go`) with
+  isolated injection and rendering phases.
+- Smart Content & Directory Discovery (`internal/discovery/content-discovery.go`):
+  soft-404 baseline learning, embedded technology wordlists, and sensitive HEAD checks.
+- Scan report diffing engine (`internal/reporter/diff.go`) for tracking regressions,
+  fixed findings, and new vulnerabilities across recurring runs.
+- Headless Chrome Deep XSS automated testing (`-tags deep`) wired into CI.
+- New vulnerability detectors: CAA DNS verification, NoSQL injection error-based,
+  and Web Cache Poisoning basic checks.
 
 ## [v0.1.0-dev] - 2026-10-13
 

@@ -4,7 +4,7 @@ Copyright (C) 2026 Xmar1881 / GASH contributors
 Module: github.com/Xmar1881/Gash
 
 File: docs/proto-checks.md
-What: DNS/TLS/TCP protocol checks (package internal/proto, rules GASH-024/025/026).
+What: DNS/TLS/TCP protocol checks (package internal/proto, rules GASH-024/025/026/027).
 Why: Protocol surface is outside the plugin HTTP path; passive-first, scope-bound.
 -->
 
@@ -20,6 +20,7 @@ probes** — no destructive control exists in this package.
 | TLS self-signed / hostname mismatch | GASH-024 (CWE-295) | same | `confirmed` (observed fact) | chain_len, self_signed, hostname_err |
 | TLS version < 1.2 | GASH-024 (CWE-327) | same | `confirmed` (negotiated fact) | tls_version |
 | Missing SPF / DMARC | GASH-025 (CWE-693) | domain target, `dns` detector (safe+) | `firm` (resolver-dependent) | spf, dmarc records |
+| Missing / malformed CAA | GASH-027 (CWE-295) | domain target, `dns` detector (safe+) | `firm` (resolver-dependent) | caa records, signal, detail |
 | TCP service banner | GASH-026 (CWE-200) | `--tcp-banner host:port` + `--active` + `tcp` detector | `tentative` (unverified banner) | banner (≤300 chars, sanitized) |
 
 Profiles: `safe` and `standard`/`deep` enable `tls`+`dns`; `standard`/`deep`
@@ -41,9 +42,12 @@ gash scan --target https://app.example.com --scope app.example.com \
 
 ## Deliberately absent (will not be added by default)
 
-- **DNS zone transfer (AXFR) attempts**: only read queries (A/AAAA/TXT).
-- **CAA checks**: the standard library offers no generic DNS query; no extra
-  dependency is pulled in for v1 (documented gap, not silent).
+- **DNS zone transfer (AXFR) attempts**: only read queries (A/AAAA/TXT/CAA).
+- **CAA checks**: supported since 2026-10-16 via pinned `miekg/dns v1.1.73`
+  (`internal/proto/caa.go`, GASH-027). Read-only TypeCAA query, 5 s cap,
+  NXDOMAIN/timeout/SERVFAIL stay silent (no finding, no FP); malformed
+  validation is intentionally narrow (empty tag, bad tag charset, empty
+  value, bad iodef scheme) so unknown tags and flag bits never fire.
 - **TCP payload interaction**: banner grab connects, reads ≤1 KB, sends
   nothing, and closes immediately. Web-port banner mode is not auto-run
   (TLS bytes would be false-positive noise).

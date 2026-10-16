@@ -20,10 +20,11 @@ import (
 // TestXSSStoredTwoStepE2E proves the two-request store-plus-render flow.
 // What: Executes xss-stored-two-step.js against a stateful store/render mock:
 // request 1 stores through the form point, request 2 GETs the render page,
-// which is then checked with the reflection oracle.
+// and the pair is verified with the stored oracle (two exchanges plus
+// clean control).
 // Why: Tier 1 xss-stored-basic is a synchronous-render approximation; Tier 2
 // must prove the real POST-store plus render-GET flow through the existing
-// probe.send plus surface bindings with no new sandbox surface.
+// probe.send plus surface plus host.oracles bindings with no new transport.
 func TestXSSStoredTwoStepE2E(t *testing.T) {
 	root := repoRoot(t)
 	path := filepath.Join(root, "plugins", "xss", "xss-stored-two-step.js")
@@ -77,15 +78,21 @@ func TestXSSStoredTwoStepE2E(t *testing.T) {
 		if ev.ConfidenceContribution != plugin.ConfidenceStaticExecution {
 			t.Fatalf("static-execution-evidence required, got %s (%s)", ev.ConfidenceContribution, ev.Note)
 		}
-		if cands[0].Candidate.OracleName != "reflection" {
-			t.Fatalf("oracle must stay reflection, got %q", cands[0].Candidate.OracleName)
+		if cands[0].Candidate.OracleName != "stored" {
+			t.Fatalf("oracle must be stored, got %q", cands[0].Candidate.OracleName)
+		}
+		if ev.Artifacts["workflow"] != "store+render" {
+			t.Fatalf("two-exchange workflow stamp required: %+v", ev.Artifacts)
 		}
 		lower := strings.ToLower(string(src))
-		if !strings.Contains(lower, "host.oracles.reflection") {
-			t.Fatal("must use host.oracles.reflection")
+		if !strings.Contains(lower, "host.oracles.stored") {
+			t.Fatal("must use host.oracles.storedExecution")
 		}
-		if strings.Contains(lower, "host.oracles.stored") {
-			t.Fatal("new sandbox surface is forbidden")
+		if strings.Contains(lower, "host.oracles.reflection") {
+			t.Fatal("single-exchange reflection must not bypass the stored workflow")
+		}
+		if strings.Contains(lower, "eval(") || strings.Contains(lower, "function(") {
+			t.Fatal("no new sandbox surface: only probe.send plus surface plus host.oracles")
 		}
 	})
 

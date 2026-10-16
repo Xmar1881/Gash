@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/web-cache/web-cache-poisoning-basic.yaml
+# What: Tier 1 web cache poisoning plugin backed by DifferentialOracle.
+# Why: Stable divergence between cache-buster (poison marker) and normal values
+#   with unkeyed-input reflection proves cache confusion (3/3 masked stability).
+# Note: Harmless marker values only; no cache purge or destructive request.
+
+id: web-cache-poisoning-basic
+name: Web Cache Poisoning Basic
+description: Detects web cache poisoning via differential response analysis on cache-buster versus normal values with unkeyed-input reflection.
+author: GASH contributors
+severity: medium
+tags: [cache-poisoning, web-cache, differential]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 100
+phase: probe
+order: 66
+api_version: "1.0"
+tests: tests/fixtures/web-cache-poisoning-basic/
+request:
+  method: GET
+  param_names: [utm_source, q, page, x, callback]
+  payload: "gash-cache-poison"
+oracle:
+  name: differential
+  params:
+    repeats: 3
+    false_payload: "gash-cache-normal"

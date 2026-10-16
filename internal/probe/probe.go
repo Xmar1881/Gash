@@ -13,7 +13,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -77,6 +79,8 @@ func (s *Store) Get(id string) (*Response, bool) {
 // Client politika-filtreli HTTP istemcisidir.
 type Client struct {
 	policy     *plugin.PolicySession
+	transport  *http.Transport
+	proxyURL   *url.URL
 	store      *Store
 	maxBytes   int64
 	extra      map[string]string
@@ -101,6 +105,10 @@ type Options struct {
 	// (header/HPP/encode/comment/case) denemesine izin verir. Yalnızca
 	// --aggressive profili açar; tüm denemeler politika/kapsam içindedir.
 	EnableWAFBypass bool
+	// ProxyURL upstream HTTP proxy URL (örn. http://127.0.0.1:8080).
+	ProxyURL *url.URL
+	// Transport doğrudan özel transport enjeksiyonudur (nil ise DefaultTransport clone).
+	Transport *http.Transport
 }
 
 // NewClient politika + baseline sınıflandırmalı istemci kurar.
@@ -112,17 +120,67 @@ func NewClient(opts Options) *Client {
 	if opts.MaxBytes <= 0 {
 		opts.MaxBytes = 5 * 1024 * 1024
 	}
+	tr := opts.Transport
+	if tr == nil {
+		if defTr, ok := http.DefaultTransport.(*http.Transport); ok {
+			tr = defTr.Clone()
+		} else {
+			tr = &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout:   30 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				ForceAttemptHTTP2:     true,
+				MaxIdleConns:          100,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+			}
+		}
+	}
+	if opts.ProxyURL != nil {
+		tr.Proxy = http.ProxyURL(opts.ProxyURL)
+	}
+	if opts.Policy != nil {
+		opts.Policy.SetBase(tr)
+	}
 	c := &Client{
-		policy:   opts.Policy,
-		store:    NewStore(),
-		maxBytes: opts.MaxBytes,
-		extra:    cloneMap(opts.ExtraHeaders),
+		policy:    opts.Policy,
+		transport: tr,
+		proxyURL:  opts.ProxyURL,
+		store:     NewStore(),
+		maxBytes:  opts.MaxBytes,
+		extra:     cloneMap(opts.ExtraHeaders),
 		classifier: func(status int, headers http.Header, body []byte) baseline.Classification {
 			return baseline.ClassifyStatic(status, headers, body)
 		},
 		enableWAFBypass: opts.EnableWAFBypass,
 	}
 	return c
+}
+
+// Policy returns the underlying policy session, or nil if none configured.
+func (c *Client) Policy() *plugin.PolicySession {
+	if c == nil {
+		return nil
+	}
+	return c.policy
+}
+
+// Transport returns the underlying *http.Transport used for HTTP requests.
+func (c *Client) Transport() *http.Transport {
+	if c == nil {
+		return nil
+	}
+	return c.transport
+}
+
+// ProxyURL returns the configured upstream proxy URL, or nil.
+func (c *Client) ProxyURL() *url.URL {
+	if c == nil {
+		return nil
+	}
+	return c.proxyURL
 }
 
 // extraHeaders bağlam başlıklarının kopyasını döner (çağıran değiştiremez).
@@ -250,7 +308,10 @@ func (c *Client) doSingle(ctx context.Context, method, rawURL string, headers ma
 		}
 	} else {
 		// Fallback: direct transport without policy (tests only)
-		tr := http.DefaultTransport
+		var tr http.RoundTripper = c.transport
+		if tr == nil {
+			tr = http.DefaultTransport
+		}
 		resp, errResp = tr.RoundTrip(req)
 		if errResp != nil {
 			errClass := plugin.ClassifyError(errResp)

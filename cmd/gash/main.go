@@ -109,6 +109,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(newPluginsCmd())
 	root.AddCommand(newBenchCmd())
 	root.AddCommand(newSuppressCmd())
+	root.AddCommand(newDiffCmd())
 	root.AddCommand(newCompletionCmd())
 	return root
 }
@@ -116,6 +117,10 @@ func newRoot() *cobra.Command {
 func newScanCmd() *cobra.Command {
 	var (
 		target        string
+		targetFile    string
+		resume        bool
+		outputDir     string
+		proxy         string
 		safe          bool
 		deep          bool
 		active        bool
@@ -143,6 +148,9 @@ func newScanCmd() *cobra.Command {
 		authUserB     []string
 		techFlags     []string
 		tcpBanners    []string
+		maxPages      int
+		depth         int
+		openapiSpec   string
 	)
 	cmd := &cobra.Command{
 		Use:   "scan",
@@ -161,8 +169,14 @@ func newScanCmd() *cobra.Command {
 					showTentative = true
 				}
 			}
-			if strings.TrimSpace(target) == "" {
-				return fmt.Errorf("scan: --target zorunlu")
+			if strings.TrimSpace(target) == "" && strings.TrimSpace(targetFile) == "" {
+				return fmt.Errorf("scan: --target veya --target-file zorunlu")
+			}
+			if strings.TrimSpace(target) != "" && strings.TrimSpace(targetFile) != "" {
+				return fmt.Errorf("scan: --target ve --target-file birlikte kullanılamaz")
+			}
+			if strings.TrimSpace(targetFile) != "" && strings.TrimSpace(output) != "" {
+				return fmt.Errorf("scan: --target-file ile --output yerine --output-dir kullanın")
 			}
 			if oobServer != "" && !active {
 				return fmt.Errorf("scan: --oob-server verildiyse --active zorunlu (OOB invasive'dir)")
@@ -176,9 +190,13 @@ func newScanCmd() *cobra.Command {
 			if len(tcpBanners) > 0 && !active {
 				return fmt.Errorf("scan: --tcp-banner verildiyse --active zorunlu (banner probu aktiftir)")
 			}
-			normalized, err := validateScanTarget(target)
-			if err != nil {
-				return err
+			var normalized string
+			if strings.TrimSpace(target) != "" {
+				var err error
+				normalized, err = validateScanTarget(target)
+				if err != nil {
+					return err
+				}
 			}
 			pluginDur, err := time.ParseDuration(strings.TrimSpace(pluginTimeout))
 			if err != nil {
@@ -242,15 +260,22 @@ func newScanCmd() *cobra.Command {
 			if authCtx.HasAuth() {
 				fmt.Fprintln(cmd.ErrOrStderr(), authCtx.Redacted())
 			}
-			if len(scope) > 0 {
-				if err := enforceScanScope(ctx, normalized, scope); err != nil {
-					return err
+			if strings.TrimSpace(target) != "" {
+				if len(scope) > 0 {
+					if err := enforceScanScope(ctx, normalized, scope); err != nil {
+						return err
+					}
+				} else if !isLocalScanTarget(normalized) {
+					fmt.Fprintln(cmd.ErrOrStderr(), "warn: external target without --scope — scan only with explicit permission")
 				}
-			} else if !isLocalScanTarget(normalized) {
-				fmt.Fprintln(cmd.ErrOrStderr(), "warn: external target without --scope — scan only with explicit permission")
 			}
 			if !safe {
 				fmt.Fprintln(cmd.ErrOrStderr(), "warn: --safe=false enables state-changing requests — use only with explicit permission")
+			}
+			if strings.TrimSpace(openapiSpec) != "" {
+				if err := validateOpenAPISpecRef(ctx, strings.TrimSpace(openapiSpec), scope); err != nil {
+					return err
+				}
 			}
 			_ = noPluginCache
 			reg := discoverDefault()
@@ -289,6 +314,16 @@ func newScanCmd() *cobra.Command {
 			cfg.ShowTentative = showTentative
 			cfg.IgnorePlugins = ignoreSet
 			cfg.Target = normalized
+			cfg.MaxPages = maxPages
+			cfg.Depth = depth
+			cfg.OpenAPISpec = strings.TrimSpace(openapiSpec)
+			if strings.TrimSpace(proxy) != "" {
+				pu, err := url.Parse(strings.TrimSpace(proxy))
+				if err != nil || pu.Host == "" || (pu.Scheme != "http" && pu.Scheme != "https" && pu.Scheme != "socks5") {
+					return fmt.Errorf("scan: --proxy geçersiz (http, https veya socks5 URL olmalı, got %q)", proxy)
+				}
+				cfg.ProxyURL = strings.TrimSpace(proxy)
+			}
 
 			// P1.2: Apply scan profile
 			profileName := config.ProfileName(strings.ToLower(strings.TrimSpace(profile)))
@@ -320,11 +355,24 @@ func newScanCmd() *cobra.Command {
 					if !cmd.Flags().Changed("plugin-timeout") {
 						cfg.PluginTimeoutMs = p.PluginTimeoutMs
 					}
+					if !cmd.Flags().Changed("max-pages") && p.MaxPages > 0 {
+						cfg.MaxPages = p.MaxPages
+					}
+					if !cmd.Flags().Changed("depth") && p.CrawlDepth > 0 {
+						cfg.Depth = p.CrawlDepth
+					}
 					// Deep profile requires explicit opt-in
 					if p.RequireExplicitOptIn && !cmd.Flags().Changed("deep") {
 						fmt.Fprintln(cmd.ErrOrStderr(), "warn: deep profile requires explicit --deep flag; use --deep to enable")
 					}
 				}
+			}
+			if strings.TrimSpace(targetFile) != "" {
+				bulkFormats := formats
+				if !cmd.Flags().Changed("format") {
+					bulkFormats = []string{"json", "sarif"}
+				}
+				return runBulkScan(ctx, cmd, reg, cfg, records, targetFile, outputDir, resume, bulkFormats, failLevel, showTentative)
 			}
 			eng := engine.New(reg, cfg)
 			for id, rec := range records {
@@ -349,6 +397,10 @@ func newScanCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", "", "hedef URL (yalnızca izinli hedef, only with explicit permission)")
+	cmd.Flags().StringVar(&targetFile, "target-file", "", "hedef listesi dosyası (bir satır bir hedef, # yorum)")
+	cmd.Flags().BoolVar(&resume, "resume", false, "önceki taramada raporu olan hedefleri atla")
+	cmd.Flags().StringVar(&outputDir, "output-dir", "reports", "toplu tarama rapor çıktı dizini")
+	cmd.Flags().StringVar(&proxy, "proxy", "", "upstream HTTP proxy URL (örn. http://127.0.0.1:8080)")
 	cmd.Flags().BoolVar(&safe, "safe", true, "varsayılan safe")
 	cmd.Flags().BoolVar(&deep, "deep", false, "deep faz + ExecutionOracle kapısı")
 	cmd.Flags().BoolVar(&active, "active", false, "state-changing/OOB payload kapısı")
@@ -376,6 +428,9 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&authUserB, "auth-user-b", nil, "BOLA matrisi kullanıcı B başlığı 'Ad: değer' (tekrarlanabilir, --auth-user-a ile birlikte, --active şart)")
 	cmd.Flags().StringSliceVar(&techFlags, "tech", nil, "bilinen teknoloji (tekrarlanabilir/virgüllü, örn. wordpress,graphql — chain kapısı)")
 	cmd.Flags().StringSliceVar(&tcpBanners, "tcp-banner", nil, "açık TCP banner probu 'host:port' (tekrarlanabilir, --active şart, kapsam-izinli)")
+	cmd.Flags().IntVar(&maxPages, "max-pages", 50, "crawler maksimum sayfa sayısı (0=sadece hedef sayfa)")
+	cmd.Flags().IntVar(&depth, "depth", 3, "crawler maksimum derinlik")
+	cmd.Flags().StringVar(&openapiSpec, "openapi-spec", "", "OpenAPI/Swagger dosyası veya http(s) URL (endpoint+parametreler surfacePoints'e eklenir; URL yalnızca loopback/kapsam-içi)")
 	return cmd
 }
 
@@ -401,6 +456,42 @@ func validateScanTarget(raw string) (string, error) {
 		return "", fmt.Errorf("scan: --target userinfo içermemeli")
 	}
 	return u.String(), nil
+}
+
+// validateOpenAPISpecRef --openapi-spec dosya/URL ayrımı + URL kapsam kapısıdır.
+// What: http(s) öneki URL'dir — loopback her zaman izinli, diğer host'lar
+// yalnızca --scope içinde (fetch ÖNCESİ karar, ağa çıkılmaz); dosya yolu
+// aynen geçirilir (yokluk/bozukluk taramada fail-closed hata verir).
+// Why: Dış URL'ye kapsam-dışı fetch YOK — karar tek GET'ten önce verilir.
+func validateOpenAPISpecRef(ctx context.Context, ref string, scope []string) error {
+	trimmed := strings.TrimSpace(ref)
+	if trimmed == "" {
+		return nil
+	}
+	lower := strings.ToLower(trimmed)
+	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
+		return nil // dosya yolu — varlık kontrolü engine'de (fail-closed)
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return fmt.Errorf("scan: --openapi-spec geçersiz URL %q: %w", ref, err)
+	}
+	if scheme := strings.ToLower(u.Scheme); scheme != "http" && scheme != "https" {
+		return fmt.Errorf("scan: --openapi-spec URL http(s) olmalı (got %q)", u.Scheme)
+	}
+	if u.User != nil {
+		return fmt.Errorf("scan: --openapi-spec URL userinfo içeremez")
+	}
+	if isLocalScanTarget(u.String()) {
+		return nil // loopback istisnası
+	}
+	if len(scope) == 0 {
+		return fmt.Errorf("scan: --openapi-spec URL kapsam-dışı (loopback veya --scope içi olmalı, fetch yapılmadı)")
+	}
+	if err := enforceScanScope(ctx, u.String(), scope); err != nil {
+		return fmt.Errorf("scan: --openapi-spec %w (fetch yapılmadı)", err)
+	}
+	return nil
 }
 
 // normalizeScanFormats validates repeatable reporter formats.
@@ -1111,6 +1202,69 @@ func newSuppressCmd() *cobra.Command {
 		}},
 	)
 	return cmd
+}
+
+// newDiffCmd builds the baseline-diff command.
+// What: Compares two JSON scan reports by finding fingerprint (old vs new).
+// Why: CI needs "fail only on new findings" without touching existing ones.
+func newDiffCmd() *cobra.Command {
+	var oldPath, newPath, format, failOn string
+	c := &cobra.Command{
+		Use:   "diff",
+		Short: "Compare two JSON scan reports by fingerprint",
+		Long: "Compare a baseline report (--old) with a current report (--new) using stored finding fingerprints.\n" +
+			"Prints NEW / FIXED / UNCHANGED lists as text or JSON.\n" +
+			"With --fail-on new, exits non-zero only when at least one NEW finding exists.\n\n" +
+			"Examples:\n" +
+			"  gash diff --old baseline.json --new current.json\n" +
+			"  gash diff --old baseline.json --new current.json --format json --fail-on new",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.TrimSpace(oldPath) == "" || strings.TrimSpace(newPath) == "" {
+				return fmt.Errorf("diff: --old and --new are required")
+			}
+			failLevel, err := reporter.NormalizeDiffFailOn(failOn)
+			if err != nil {
+				return err
+			}
+			fmtName := strings.ToLower(strings.TrimSpace(format))
+			if fmtName == "" {
+				fmtName = "text"
+			}
+			if fmtName != "text" && fmtName != "json" {
+				return fmt.Errorf("diff: --format %q invalid (text|json)", format)
+			}
+			oldData, err := os.ReadFile(oldPath)
+			if err != nil {
+				return fmt.Errorf("diff: --old %q: %w", oldPath, err)
+			}
+			newData, err := os.ReadFile(newPath)
+			if err != nil {
+				return fmt.Errorf("diff: --new %q: %w", newPath, err)
+			}
+			res, err := reporter.DiffReports(oldData, newData)
+			if err != nil {
+				return err
+			}
+			if fmtName == "json" {
+				if err := reporter.WriteDiffJSON(cmd.OutOrStdout(), res); err != nil {
+					return err
+				}
+			} else {
+				if err := reporter.WriteDiffText(cmd.OutOrStdout(), res); err != nil {
+					return err
+				}
+			}
+			if res.ShouldFail(failLevel) {
+				return fmt.Errorf("diff: --fail-on %s triggered (%d new)", failLevel, len(res.New))
+			}
+			return nil
+		},
+	}
+	c.Flags().StringVar(&oldPath, "old", "", "baseline (old) JSON report path")
+	c.Flags().StringVar(&newPath, "new", "", "current (new) JSON report path")
+	c.Flags().StringVar(&format, "format", "text", "output format (text|json)")
+	c.Flags().StringVar(&failOn, "fail-on", "", "CI gate (new or empty; empty never fails)")
+	return c
 }
 
 func newCompletionCmd() *cobra.Command {

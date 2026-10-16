@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -123,6 +124,8 @@ type PolicyConfig struct {
 	MaxRequestBytes int64
 	// P1.1: Backpressure threshold (in-flight requests)
 	BackpressureLimit int
+	// ProxyURL upstream HTTP proxy URL (örn. http://127.0.0.1:8080).
+	ProxyURL *url.URL
 }
 
 // RetryConfig controls retry behavior for idempotent requests.
@@ -217,7 +220,19 @@ type PolicySession struct {
 // NewPolicySession proxy'yi kurar (base nil ise http.DefaultTransport).
 func NewPolicySession(cfg PolicyConfig, base http.RoundTripper) *PolicySession {
 	if base == nil {
-		base = http.DefaultTransport
+		if cfg.ProxyURL != nil {
+			if defTr, ok := http.DefaultTransport.(*http.Transport); ok {
+				tr := defTr.Clone()
+				tr.Proxy = http.ProxyURL(cfg.ProxyURL)
+				base = tr
+			} else {
+				base = &http.Transport{
+					Proxy: http.ProxyURL(cfg.ProxyURL),
+				}
+			}
+		} else {
+			base = http.DefaultTransport
+		}
 	}
 	ps := &PolicySession{
 		cfg:             cfg,
@@ -302,12 +317,18 @@ func (sm *scopeManager) parseEntry(entry string) *scopeEntry {
 		if err != nil {
 			return nil
 		}
+		portNum, _ := strconv.Atoi(u.Port())
 		return &scopeEntry{
 			Type:     scopeTypeURLPrefix,
-			Value:    u.Host,
-			Protocol: u.Scheme,
+			Value:    strings.ToLower(u.Hostname()),
+			Port:     portNum,
+			Protocol: strings.ToLower(u.Scheme),
 			Path:     strings.TrimSuffix(u.Path, "/"),
 		}
+	}
+	if h, p, err := net.SplitHostPort(entry); err == nil {
+		portNum, _ := strconv.Atoi(p)
+		return &scopeEntry{Type: scopeTypeDomain, Value: strings.ToLower(h), Port: portNum}
 	}
 	return &scopeEntry{Type: scopeTypeDomain, Value: strings.ToLower(entry)}
 }
@@ -610,6 +631,14 @@ func (p *PolicySession) checkScope(ctx context.Context, u *url.URL) error {
 	return p.scopeManager.check(ctx, u)
 }
 
+// CheckScope reports whether u is permitted under the session's scope allowlist.
+func (p *PolicySession) CheckScope(ctx context.Context, u *url.URL) error {
+	if p == nil {
+		return nil
+	}
+	return p.checkScope(ctx, u)
+}
+
 // TotalCount test/rapor için toplam istek sayısı.
 func (p *PolicySession) TotalCount() int64 { return p.total.Load() }
 
@@ -623,6 +652,32 @@ func (p *PolicySession) SetOriginalTarget(target string) {
 	if p.scopeManager != nil {
 		p.scopeManager.setOriginalTarget(target)
 	}
+}
+
+// SetBase sets the underlying RoundTripper.
+func (p *PolicySession) SetBase(base http.RoundTripper) {
+	if p != nil {
+		p.base = base
+	}
+}
+
+// Base returns the underlying RoundTripper.
+func (p *PolicySession) Base() http.RoundTripper {
+	if p == nil {
+		return nil
+	}
+	return p.base
+}
+
+// Transport returns base as *http.Transport if it is one.
+func (p *PolicySession) Transport() *http.Transport {
+	if p == nil {
+		return nil
+	}
+	if tr, ok := p.base.(*http.Transport); ok {
+		return tr
+	}
+	return nil
 }
 
 // acquireHostSemaphore acquires a per-host concurrency slot.

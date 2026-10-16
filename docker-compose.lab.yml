@@ -1,10 +1,10 @@
-// SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (C) 2026 Xmar1881 / GASH contributors
-// Modül: github.com/Xmar1881/Gash
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Modül: github.com/Xmar1881/Gash
 
-// docker-compose.lab.yml — recall laboratuvarı pinleri (S4/A-21).
-// Faz 2'de iskelet; imaj digest'leri Faz 3 lab kurulumunda kilitlenir.
-// localhost-only, izole network; `latest` YOKTUR (tekrar üretilebilirlik).
+# docker-compose.lab.yml — recall laboratuvarı pinleri (S4/A-21).
+# Faz 2'de iskelet; imaj digest'leri Faz 3 lab kurulumunda kilitlenir.
+# localhost-only, izole network; `latest` YOKTUR (tekrar üretilebilirlik).
 version: "3.8"
 services:
   dvwa:

@@ -12,7 +12,9 @@ package headless
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
@@ -30,30 +32,55 @@ type Result struct {
 	ControlClean bool
 }
 
-// chromeCandidates lists well-known Chrome locations (Windows + PATH fallback).
+// chromeCandidates lists well-known Chrome locations across platforms (Windows, Linux, macOS).
 func chromeCandidates() []string {
-	candidates := []string{
-		`C:\Program Files\Google\Chrome\Application\chrome.exe`,
-		`C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`,
-	}
+	var candidates []string
 	if exe := os.Getenv("CHROME_BIN"); exe != "" {
-		candidates = append([]string{exe}, candidates...)
+		candidates = append(candidates, exe)
+	}
+	if exe := os.Getenv("CHROME_PATH"); exe != "" {
+		candidates = append(candidates, exe)
+	}
+	switch runtime.GOOS {
+	case "windows":
+		candidates = append(candidates,
+			`C:\Program Files\Google\Chrome\Application\chrome.exe`,
+			`C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`,
+			filepath.Join(os.Getenv("LocalAppData"), `Google\Chrome\Application\chrome.exe`),
+		)
+	case "darwin":
+		candidates = append(candidates,
+			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+			"/Applications/Chromium.app/Contents/MacOS/Chromium",
+		)
+	default: // linux, bsd, etc.
+		candidates = append(candidates,
+			"/usr/bin/google-chrome",
+			"/usr/bin/google-chrome-stable",
+			"/usr/bin/chromium",
+			"/usr/bin/chromium-browser",
+			"/snap/bin/chromium",
+			"/opt/google/chrome/chrome",
+			"/opt/google/chrome/google-chrome",
+		)
 	}
 	return candidates
 }
 
 // FindChrome returns the first existing Chrome binary path, or "".
+// What: Checks environment, OS-specific standard locations, then searches PATH.
+// Why: Enables headless DOM verification across Linux CI, Windows, and macOS.
 func FindChrome() string {
 	for _, p := range chromeCandidates() {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			return p
-		}
-	}
-	for _, name := range []string{"chrome", "chrome.exe", "chromium", "chromium.exe", "google-chrome"} {
-		if p, err := filepath.Abs(name); err == nil {
-			if st, serr := os.Stat(p); serr == nil && !st.IsDir() {
+		if p != "" {
+			if st, err := os.Stat(p); err == nil && !st.IsDir() {
 				return p
 			}
+		}
+	}
+	for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome", "chrome.exe", "chromium.exe"} {
+		if p, err := exec.LookPath(name); err == nil {
+			return p
 		}
 	}
 	return ""

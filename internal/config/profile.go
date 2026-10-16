@@ -38,6 +38,8 @@ type Profile struct {
 	AllowActive          bool // Allow active (safe=false) plugins
 	AllowDeep            bool // Allow deep (browser/OOB) plugins
 	RequireExplicitOptIn bool // Deep requires explicit --deep flag
+	MaxPages             int  // Maximum pages to crawl
+	CrawlDepth           int  // Maximum crawl depth
 }
 
 // SafeProfile returns the Safe profile: passive-only, low budget.
@@ -55,6 +57,8 @@ func SafeProfile() Profile {
 		AllowActive:          false,
 		AllowDeep:            false,
 		RequireExplicitOptIn: false,
+		MaxPages:             20,
+		CrawlDepth:           2,
 	}
 }
 
@@ -73,6 +77,8 @@ func StandardProfile() Profile {
 		AllowActive:          true,
 		AllowDeep:            false,
 		RequireExplicitOptIn: false,
+		MaxPages:             50,
+		CrawlDepth:           3,
 	}
 }
 
@@ -91,6 +97,8 @@ func DeepProfile() Profile {
 		AllowActive:          true,
 		AllowDeep:            true,
 		RequireExplicitOptIn: true,
+		MaxPages:             200,
+		CrawlDepth:           5,
 	}
 }
 
@@ -109,6 +117,8 @@ func AggressiveProfile() Profile {
 		AllowActive:          true,
 		AllowDeep:            true,
 		RequireExplicitOptIn: false,
+		MaxPages:             500,
+		CrawlDepth:           10,
 	}
 }
 

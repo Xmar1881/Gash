@@ -39,8 +39,12 @@ type Options struct {
 	Resolve func(host string) ([]net.IP, error)
 	// LookupTXT TXT kaydı enjeksiyonu (SPF/DMARC); nil ise net.LookupTXT.
 	LookupTXT func(name string) ([]string, error)
-	// Not: CAA bilerek YOKTUR — stdlib genel DNS sorgusu sunmaz; ek bağımlılık
-	// eklenmeden dürüst kapsam SPF/DMARC + çözümlemedir (bkz. docs/proto-checks.md).
+	// LookupCAA CAA kaydı enjeksiyonu (test determinizmi); nil ise miekg/dns
+	// ile wire sorgu (yalnızca okuma, TypeCAA; AXFR yok).
+	LookupCAA func(host string) ([]CAARecord, error)
+	// CAAServer CAA wire sorgusunun hedefi (host:port); boşsa sistem
+	// çözümleyicisi (/etc/resolv.conf → GASH_DNS_SERVER → 8.8.8.8:53).
+	CAAServer string
 }
 
 func (o Options) timeout() time.Duration {

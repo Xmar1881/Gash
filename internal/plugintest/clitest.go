@@ -20,7 +20,7 @@ import (
 // What: Ordered oracle vocabulary shared by inference and validation.
 // Why: One list prevents the CLI and the gate tests from drifting apart.
 var KnownOracles = []string{
-	"reflection", "differential", "error", "timing",
+	"stored", "reflection", "differential", "error", "timing",
 	"oob", "header", "redirect", "version", "execution",
 	"cookie", "cors",
 }
