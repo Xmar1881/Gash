@@ -16,6 +16,21 @@ Tier 2 plugin with `oob: required`, `safe: false`, `active: true`. Oracle `oob`.
 A callback matching correlation plus namespace confirms. Without an OOB
 server the scheduler skips the plugin and no `tentative` is produced.
 
+## Live Path (multi-variant corpus, shared window)
+
+The live script ships a bounded corpus per injection point (≤60 requests):
+absolute/alternate schemes (`http`, `https`, scheme-relative, `gopher://`,
+`ftp://`, `dns://`), parser-confusion forms (userinfo `@`, raw/encoded `#`,
+backslash), redirect-echo forms against the target origin, and — only for
+dotted-quad callback domains — numeric-notation hosts (decimal, dotted-octal,
+hex, IPv4-mapped IPv6). Every variant carries its own single-use correlation
+token in the hostname, so a callback can only match the exact request that
+caused it. All tokens are verified in ONE shared bounded window
+(`oob.WaitForCallbacks`, 10 s / 2 polls) via `host.oracles.oobAny`; a token
+that never fires produces no finding. Numeric-notation hosts carry the token
+only in the path, so they can confirm solely when the operator's server
+indexes path tokens — best-effort coverage, documented in `known-limits.md`.
+
 ## Evidence Standard
 
 Rule GASH-008. Blind SSRF has no in-band confirmation path. Missing callback

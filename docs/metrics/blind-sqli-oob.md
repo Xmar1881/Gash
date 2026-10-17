@@ -17,6 +17,20 @@ detection via out-of-band DNS/HTTP callback (e.g., `xp_dirtree`, `LOAD_FILE`,
 `UTL_INADDR.GET_HOST_ADDRESS`). Single cryptographically-random callback match
 yields `confirmed`. Without OOB server, plugin is skipped (not an error).
 
+## Live Path (dialect corpus, deferred shared window)
+
+The live corpus sends callback-only functions per dialect: MSSQL
+`xp_dirtree`/`xp_fileexist` (UNC and HTTP path forms), MySQL `LOAD_FILE` with
+UNC path (backslash and forward-slash variants), Oracle
+`UTL_INADDR.GET_HOST_ADDRESS` and `UTL_HTTP.REQUEST`, each with its own
+single-use `{{CORRELATION}}` token under the operator's real
+`{{OOB_DOMAIN}}`/`{{OOB_URL}}` (server-pinned expansion; previously a broken
+literal placeholder). All tokens are verified in ONE shared bounded window
+(`oob.WaitForCallbacks`, 10 s / 2 polls); unmatched tokens yield no finding.
+PostgreSQL is deliberately absent: it has no callback-only blind primitive
+short of `COPY ... TO PROGRAM` / `dblink`, both outside the no-command-execution
+scope — recorded as a gap in `known-limits.md`.
+
 ## Evidence Standard
 
 Rule GASH-008/010/012/013. Correlation ID is cryptographically random (128-bit).

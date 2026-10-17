@@ -9,10 +9,20 @@ package headless
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
+
+// Supported reports whether this build carries a real browser driver.
+// What: true under -tags deep (chromedp linked); Chrome availability is a
+// separate runtime check via Available().
+// Why: The engine gates the generic browser-verify pass on this so the
+// default build degrades honestly with an audit reason instead of errors.
+func Supported() bool { return true }
 
 // VerifyDOM runs a controlled headless-Chrome proof for DOM execution.
 // What: Navigates to payloadURL then controlURL, evaluating probeExpr (a JS
@@ -77,4 +87,123 @@ func VerifyDOM(ctx context.Context, payloadURL, controlURL, probeExpr string, ti
 		return Result{}, fmt.Errorf("headless: chromedp evaluate control: %w", err)
 	}
 	return Result{Triggered: payloadHit, ControlClean: !controlHit}, nil
+}
+
+// xssCanaryProbe is the DOM/window canary observer. Dialog opening is observed
+// separately through CDP events; this expression covers payload forms that
+// mark execution by planting a canary node or a window flag instead of (or in
+// addition to) a dialog. No external requests are ever made.
+const xssCanaryProbe = `(function(){try{return (document.getElementById('__gash_canary')!==null)||(window.__gashCanary===true);}catch(e){return false;}})()`
+
+// VerifyXSS runs the generic controlled browser proof for reflected/stored
+// XSS findings.
+// What: Loads payloadURL then controlURL in isolated browser contexts and
+// reports Triggered when any of the three triggers is observed (dialog
+// open, DOM canary node `__gash_canary`, `window.__gashCanary`), plus
+// ControlClean when the neutral control shows none of them.
+// Why: Only a real browser trigger plus a clean control may lift a static
+// finding to confirmed. The payload and control run in separate contexts so
+// no JS state can leak between them; any dialog is auto-dismissed (accepted)
+// so the page keeps loading and the DOM probe still runs. No network egress
+// beyond the two supplied URLs: payloads are expected to stay local/DOM-only.
+func VerifyXSS(ctx context.Context, payloadURL, controlURL string, timeout time.Duration) (Result, error) {
+	if payloadURL == "" || controlURL == "" {
+		return Result{}, fmt.Errorf("headless: payload/control URLs required")
+	}
+	if payloadURL == controlURL {
+		return Result{}, fmt.Errorf("headless: payload and control URLs must differ")
+	}
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	chromePath := FindChrome()
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.Flag("headless", true),
+		chromedp.Flag("disable-gpu", true),
+		chromedp.Flag("no-sandbox", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.Flag("no-first-run", true),
+		chromedp.Flag("no-default-browser-check", true),
+	)
+	if chromePath != "" {
+		opts = append(opts, chromedp.ExecPath(chromePath))
+	}
+	allocCtx, allocCancel := chromedp.NewExecAllocator(ctx, opts...)
+	defer allocCancel()
+
+	payloadHit, err := xssPhase(allocCtx, payloadURL)
+	if err != nil {
+		return Result{}, fmt.Errorf("headless: xss payload phase: %w", err)
+	}
+	controlHit, err := xssPhase(allocCtx, controlURL)
+	if err != nil {
+		return Result{}, fmt.Errorf("headless: xss control phase: %w", err)
+	}
+	return Result{Triggered: payloadHit, ControlClean: !controlHit}, nil
+}
+
+// xssPhase runs one navigation and observes the dialog/canary triggers.
+// What: Per-phase browser context plus a protocol-event dialog observer plus
+// the DOM canary probe.
+// Why: Isolating the control in its own context keeps a payload's leftover
+// DOM/canary state from tainting the clean-control determination. The
+// observer uses the chromedp v0.21 event API (cdp.Events replaces the old
+// ListenTarget) and accepts dialogs so the renderer keeps loading; a dialog
+// observed is already a trigger even if accepting races the load.
+func xssPhase(allocCtx context.Context, target string) (bool, error) {
+	browserCtx, cancel := chromedp.NewContext(allocCtx)
+	defer cancel()
+
+	hit, err := chromedp.Run(browserCtx, func(ctx context.Context, t *chromedp.Target) (bool, error) {
+		var mu sync.Mutex
+		dialogHit := false
+		obsCtx, obsCancel := context.WithCancel(ctx)
+		defer obsCancel()
+		observerDone := make(chan struct{})
+		go func() {
+			defer close(observerDone)
+			for _, err := range cdp.Events(obsCtx, t, page.JavascriptDialogOpening) {
+				if err != nil {
+					return
+				}
+				mu.Lock()
+				dialogHit = true
+				mu.Unlock()
+				// A dialog blocks the renderer until it is handled; accepting
+				// keeps the load (and the later DOM probe) moving. Best-effort:
+				// the observed event is the trigger even if this call fails.
+				_, _ = cdp.Call(obsCtx, t, page.HandleJavaScriptDialog, page.HandleJavaScriptDialogParams{Accept: true})
+			}
+		}()
+		var stopOnce sync.Once
+		stopObserver := func() {
+			stopOnce.Do(func() {
+				obsCancel()
+				<-observerDone
+			})
+		}
+		defer stopObserver()
+
+		if _, err := chromedp.Navigate(target)(ctx, t); err != nil {
+			return false, fmt.Errorf("chromedp navigate %s: %w", target, err)
+		}
+		if _, err := chromedp.Sleep(500*time.Millisecond)(ctx, t); err != nil {
+			return false, fmt.Errorf("chromedp sleep %s: %w", target, err)
+		}
+		domHit, err := chromedp.Evaluate[bool](xssCanaryProbe)(ctx, t)
+		if err != nil {
+			return false, fmt.Errorf("chromedp evaluate %s: %w", target, err)
+		}
+		mu.Lock()
+		d := dialogHit
+		mu.Unlock()
+		return d || domHit, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return hit, nil
 }

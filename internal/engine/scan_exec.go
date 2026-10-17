@@ -22,6 +22,7 @@ import (
 	"github.com/Xmar1881/Gash/internal/config"
 	"github.com/Xmar1881/Gash/internal/discovery"
 	"github.com/Xmar1881/Gash/internal/finding"
+	"github.com/Xmar1881/Gash/internal/headless"
 	"github.com/Xmar1881/Gash/internal/oob"
 	"github.com/Xmar1881/Gash/internal/oracle"
 	"github.com/Xmar1881/Gash/internal/plugin"
@@ -405,6 +406,13 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 	}
 	wg.Wait()
 
+	// Generic browser-verify pass (opt-in, deep builds): static XSS findings
+	// may reach confirmed only through a real trigger plus a clean control;
+	// otherwise the static tier is preserved untouched.
+	if e.cfg.BrowserVerify {
+		execSkipped = append(execSkipped, e.verifyBrowserFindings(ctx, allFindings)...)
+	}
+
 	deduped := Correlate(allFindings)
 	counts := make(map[string]int, len(allFindings))
 	for _, f := range allFindings {
@@ -478,7 +486,7 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 				}
 				return resp.Status, resp.Headers, string(resp.Body), nil
 			}
-			results, err := loader.ExecuteTier1(pctx, &spec, file, target, sender)
+			results, err := loader.ExecuteTier1WithOptions(pctx, &spec, file, target, sender, loader.Tier1Options{OOB: e.oobSource()})
 			if err != nil {
 				return nil, err
 			}
@@ -506,7 +514,7 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 			if spec.Safe {
 				pts = readOnlyJSPoints(points)
 			}
-			env := jsEnvForScan(pctx, target, client, e.cfg.OOBServer, pts)
+			env := e.jsEnvForScan(pctx, target, client, pts)
 			got, err := loader.ExecuteJS(pctx, &spec, string(source), env, timeout)
 			if err != nil {
 				return nil, err
@@ -615,9 +623,12 @@ func loadTier3ForScan(sourcePath string) (*loader.Tier3Manifest, error) {
 }
 
 // jsEnvForScan builds live JS bindings over the probe client with real surface and OOB.
-// What: Dynamic injection points (URL, body, headers) plus probe and OOB backends.
-// Why: Reference scripts expect points; live scans provide honest multi-point surface.
-func jsEnvForScan(pctx context.Context, target string, client *probe.Client, oobServer string, points []loader.JSPoint) *loader.JSEnv {
+// What: Dynamic injection points (URL, body, headers) plus probe, OOB, and
+// (deep/opt-in) browser-verify backends.
+// Why: Reference scripts expect points; live scans provide honest multi-point
+// surface. OOB URL/domain bindings point at the operator's self-hosted server
+// (never a public service), and callback polling uses the bounded window.
+func (e *Engine) jsEnvForScan(pctx context.Context, target string, client *probe.Client, points []loader.JSPoint) *loader.JSEnv {
 	sendOne := func(p loader.JSPoint, value string) (loader.JSResponse, error) {
 		method := p.Method
 		if method == "" {
@@ -674,25 +685,54 @@ func jsEnvForScan(pctx context.Context, target string, client *probe.Client, oob
 	}
 
 	var oobProvider oob.Provider
-	if oobServer != "" {
-		oobProvider = oob.NewSelfHostedProvider(oobServer, "")
+	if strings.TrimSpace(e.cfg.OOBServer) != "" {
+		oobProvider = oob.NewSelfHostedProvider(e.cfg.OOBServer, "")
 	}
 
-	return &loader.JSEnv{
+	env := &loader.JSEnv{
 		Points: jsPoints,
 		Send: func(p loader.JSPoint) (loader.JSResponse, error) {
 			return sendOne(p, p.Value)
 		},
-		OOBEnabled:   oobServer != "",
+		OOBEnabled:   oobProvider != nil && oobProvider.Enabled(),
 		OOBNamespace: "scan",
 		OOBCallbackSeen: func(corrID string) bool {
-			if oobProvider == nil || !oobProvider.Enabled() {
-				return false
-			}
-			ev, err := oobProvider.PollCallback(pctx, corrID)
-			return err == nil && ev != nil
+			// Bounded window (10s / 2 polls, docs/known-limits.md): any
+			// protocol matches because the token is unique per payload.
+			_, ok := oob.WaitForCallback(pctx, oobProvider, corrID, oob.DefaultWaitWindow, oob.DefaultWaitPolls)
+			return ok
+		},
+		OOBCallbackSeenAny: func(corrIDs []string) []string {
+			// Shared window across a plugin's whole payload corpus so the
+			// per-payload token count never multiplies the wait budget.
+			return oob.WaitForCallbacks(pctx, oobProvider, corrIDs, oob.DefaultWaitWindow, oob.DefaultWaitPolls)
 		},
 	}
+	if oobProvider != nil && oobProvider.Enabled() {
+		env.OOBDomain = func(c string) string { return oobProvider.DNSCallbackDomain(c) }
+		env.OOBURL = func(c string) string { return oobProvider.HTTPCallbackURL(c) }
+	}
+	// Browser-verify seam: only when explicitly enabled; the stub build
+	// refuses through Supported() so a default binary never fabricates a
+	// browser proof.
+	if e.cfg.BrowserVerify {
+		switch {
+		case e.cfg.BrowserVerifyFunc != nil:
+			env.BrowserVerify = func(payloadURL, controlURL string) (bool, bool, bool, error) {
+				t, c, err := e.cfg.BrowserVerifyFunc(pctx, payloadURL, controlURL)
+				return err == nil, t, c, err
+			}
+		case headless.Supported() && headless.Available():
+			env.BrowserVerify = func(payloadURL, controlURL string) (bool, bool, bool, error) {
+				res, err := headless.VerifyXSS(pctx, payloadURL, controlURL, headless.DefaultTimeout)
+				if err != nil {
+					return false, false, false, err
+				}
+				return true, res.Triggered, res.ControlClean, nil
+			}
+		}
+	}
+	return env
 }
 
 // readOnlyJSPoints safe Tier 2 plugin'lere verilen yüzeydir.

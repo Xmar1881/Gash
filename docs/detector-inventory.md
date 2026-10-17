@@ -20,7 +20,7 @@ for a controlled headless browser result.
 
 | Oracle | Plugin(s) Using | Tier | Confidence Ladder | Requires Control | Active Probing | OOB | Notes |
 |--------|-----------------|------|-------------------|------------------|----------------|-----|-------|
-| `reflection` | XSS plugins, `xss-stored-basic`, `xxe-reflected-basic`, `rfi-remote-include` | 1/2/3 | tentative → firm → confirmed | Yes (for confirmed) | Yes (canary injection) | No | HTML tokenizer + context analysis; GASH-001/002/007/009/011/014/017; deep-research: stored-XSS sync-render (static-execution-evidence max) + in-band XXE canary-entity (firm, file:// YOK); RFI loopback-canary reflection (tentative max, dis fetch YOK) |
+| `reflection` | XSS plugins, `xss-stored-basic`, `xxe-reflected-basic`, `rfi-remote-include` | 1/2/3 | tentative → firm → confirmed | Yes (for confirmed) | Yes (canary injection) | No | HTML tokenizer + context analysis; GASH-001/002/007/009/011/014/017; deep-research: stored-XSS sync-render (static-execution-evidence max) + in-band XXE canary-entity (firm, file:// YOK); RFI loopback-canary reflection (tentative max, dis fetch YOK); browser-verify pass (`--browser-verify`, deep build) lifts eligible GET/query static-execution-evidence to browser-confirmed on trigger+clean control |
 | `stored` | `xss-stored-two-step` | 1/2 | tentative → static-execution-evidence → confirmed | Yes | Yes (write+render canary) | No | GASH-002 two-exchange write/render plus clean control; render checked with reflection discipline; static-execution-evidence max without headless, browser-confirmed with controlled run |
 | `header` | `missing-security-headers`, `crlf-header-injection`, `jwt-token-exposure`, `csrf-token-absence`, `clickjacking-frameable`, `missing-rate-limit`, `host-header-injection` | 1 | confirmed only, except `ratelimit` mode (tentative ceiling) and `host_header` mode (firm ceiling) | No (deterministic) | No (passive) except `ratelimit` burst and `host_header` canary probes | No | GASH-019: logic-based header absence/weakness; P1.4: CRLF/JWT modes; deep-research: csrf (GASH-020 POST-form token screen) + frame (GASH-019 clickjacking) modes; lab-batch: ratelimit (GASH-032 missing-rate-limit, budgeted anonymous burst, tentative ceiling, 429/headers reject); lab-batch: host_header (GASH-035 Host/X-Forwarded-Host/Forwarded canary reflection, GET-only, absolute-URI variant out of scope) |
 | `redirect` | `open-redirect-param` | 1 | firm → confirmed | Yes | Yes (payload) | No | GASH-016: Location parse + host compare + DNS double-check; payload variants (bare host, path, encoded slash) added in lab batch |
@@ -35,14 +35,14 @@ for a controlled headless browser result.
 | `cors` | `cors-misconfig` | 1 | firm → confirmed | No (deterministic) | No (passive) | No | GASH-023: ACAO wildcard/reflection + credentials |
 | `error` | `file-upload-unrestricted` | 1 | firm → confirmed | Yes | Yes (payload) | No | P1.4: generic_error mode |
 | `reflection` | `template-injection-reflection` | 1 | tentative → firm → confirmed | Yes | Yes (canary) | No | P1.4: SSTI payload reflection |
-| `oob` | `xxe-oob`, `blind-sqli-oob` | 1 | confirmed only | No | Yes (OOB payload) | **Required** | P1.4: blind XXE/SQLi via OOB |
+| `oob` | `xxe-oob`, `blind-sqli-oob` | 1 | confirmed only | No | Yes (OOB payload) | **Required** | P1.4: blind XXE/SQLi via OOB; multi-variant corpora with single-use tokens, deferred shared bounded window (`WaitAny`/`oobAny`, 10 s / 2 polls); MSSQL/MySQL/Oracle SQLi payloads (PostgreSQL gap documented), XXE DTD variants |
 | `tls` | (engine proto recon: `proto-tls-cert`) | recon | confirmed only (observed fact) | No (handshake observation) | No (no payload sent) | No | P2.1: GASH-024 expiry/chain/hostname/version; safe-profile |
 | `dns` | (engine proto recon: `proto-dns-records`, `proto-dns-caa`) | recon | firm max (resolver-dependent) | No (read queries) | No (DNS reads only, AXFR yok) | No | P2.1: GASH-025 SPF/DMARC + GASH-027 CAA (miekg/dns pinned); safe-profile |
 | `tcp` | (engine proto recon: `proto-tcp-banner`, explicit `--tcp-banner`) | recon | tentative only (unverified banner) | No | Yes (connect+read, no write; `--active` şart) | No | P2.1: GASH-026 banner; scope-checked |
 | `header` | `jwt-alg-confusion` | 1 | confirmed only | No (deterministic) | No (passive) | No | P1.4: jwt_alg mode |
 | `differential` | `idor-differential` | 1 | confirmed only (N=3) | Yes | Yes (true/false) | No | P1.4: IDOR via differential |
 | `execution` | DOM XSS (Deep) | 3 | tentative → firm → confirmed | Yes (for confirmed) | Yes (headless) | No | GASH-003: headless-enabled build-tag `deep` |
-| `oob` | Blind SSRF/SQLi/RCE | 1/2/3 | confirmed only | No | Yes (OOB payload) | **Required** | GASH-008/010/012/013: single cryptographically-random callback match |
+| `oob` | Blind SSRF/SQLi/RCE | 1/2/3 | confirmed only | No | Yes (OOB payload) | **Required** | GASH-008/010/012/013: single cryptographically-random callback match; `ssrf-blind-oob` live corpus adds scheme/parser-confusion/redirect-echo/numeric-host variants under one shared window, best-effort when the server indexes path tokens only |
 
 ## Reference Plugins (Tier 2 JS)
 
@@ -127,7 +127,10 @@ The reflected-XSS fixture set currently measures TP=2, FP=0, TN=8, FN=0 at
 `static-execution-evidence` (dataset hash `27bba26a7f282df1de7486a433f53ce926eb74fe2a5c765cac163cae49fbd0c5`).
 The set includes executable payloads, text/encoded/comment/style reflections,
 JavaScript strings, and `application/json` script data. This is a fixture
-measurement, not browser execution or real-target recall.
+measurement, not browser execution or real-target recall. The separate
+browser-verify pass (`--browser-verify`, deep build, `--active`) can lift
+eligible findings to `confirmed` at scan time; it does not change these
+fixture numbers.
 
 ## WAF Measurement Boundary
 

@@ -75,10 +75,14 @@ permission to test (`--scope` opts into a strict allowlist; see Legal).
   tests feed injection points without changing the evidence pipeline.
 - **OOB, honestly gated** — out-of-band verification stays disabled unless
   `--oob-server` points at a self-hosted interaction server you control.
-  `oob: required` plugins skip honestly (`oob-not-configured`).
+  `oob: required` plugins skip honestly (`oob-not-configured`). Multi-variant
+  corpora use single-use tokens verified in one shared bounded window; no
+  callback means no finding.
 - **Headless-deep path** — static DOM sinks report up to `firm` today;
   browser `confirmed` requires the headless build (`internal/headless`,
-  `deep` build path) plus a clean control.
+  `deep` build path) plus a clean control. `--browser-verify` (needs
+  `--active`) re-checks eligible reflected-XSS findings in a real browser and
+  upgrades to `confirmed` only on trigger with clean control.
 - **JUnit + SARIF** — SARIF 2.1.0 primary for CI code scanning, plus JSON,
   text, HTML, and JUnit. Tentative stays hidden unless `--show-tentative`.
 - **Supply-chain + static gates in CI** — `govulncheck` dependency CVE scan

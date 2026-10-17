@@ -44,14 +44,20 @@ type Config struct {
 	RatePerSecond        float64
 	Parallelism          int
 	OOBServer            string
-	NoisyThreshold       int
-	StrictPlugins        bool
-	ShowTentative        bool
-	IgnorePlugins        map[string]bool
-	Target               string
-	MaxPages             int    // Maximum pages to crawl (default 50)
-	Depth                int    // Maximum crawl depth (default 3)
-	ProxyURL             string // Upstream HTTP proxy URL (e.g. http://127.0.0.1:8080)
+	// BrowserVerify enables the generic controlled browser-verify pass for
+	// static-execution-evidence XSS findings (needs a -tags deep build plus a
+	// Chrome binary; the CLI gates it behind --active). Off by default.
+	BrowserVerify bool
+	// BrowserVerifyFunc is a test seam; nil uses the real headless verifier.
+	BrowserVerifyFunc func(ctx context.Context, payloadURL, controlURL string) (triggered, controlClean bool, err error)
+	NoisyThreshold    int
+	StrictPlugins     bool
+	ShowTentative     bool
+	IgnorePlugins     map[string]bool
+	Target            string
+	MaxPages          int    // Maximum pages to crawl (default 50)
+	Depth             int    // Maximum crawl depth (default 3)
+	ProxyURL          string // Upstream HTTP proxy URL (e.g. http://127.0.0.1:8080)
 	// OpenAPISpec --openapi-spec karşılığıdır (dosya yolu veya http(s) URL).
 	// Doluysa ParseSpec endpoint+parametreleri hedef bazında surfacePoints'e
 	// eklenir; URL ise yalnızca kapsam-içi/loopback çekilir (fail-closed).

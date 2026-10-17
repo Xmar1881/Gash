@@ -17,8 +17,24 @@ example. The probe sends `alert(canary)`: a random canary reflection alone is
 not an XSS proof. Oracle `reflection` separates HTML, attributes, executable
 attributes, URLs, JavaScript code, strings/comments, and inert JSON blocks.
 Executable payload plus clean control produces `static-execution-evidence`;
-text or encoded reflection stays `tentative`. Browser `confirmed` is reserved
-for a controlled headless run and is not emitted by this plugin today.
+text or encoded reflection stays `tentative`.
+
+## Live Path (payload corpus, browser-verify pass)
+
+The live script ships a bounded template corpus (≤60 requests): plain `alert`
+and canary-write forms plus tag/attribute breakouts (script, img/onerror,
+svg/onload, iframe/srcdoc, body/onload, math, details, quote breakouts). Each
+attempt uses a fresh canary and `point.withValue(payload)`, so per-candidate
+reflection evidence stays exact. Browser `confirmed` is no longer reserved
+unconditionally: with `--browser-verify` (requires `--active` plus the
+`-tags deep` build and a Chrome binary) the engine re-fetches each
+`static-execution-evidence` GET/query finding as payload URL plus a
+neutral-control URL through `headless.VerifyXSS`; only a real trigger
+(dialog or DOM canary) with a clean control upgrades the finding to
+`confirmed` (`Evidence["execution"]="browser-confirmed"`). Non-eligible
+findings, dirty controls, and no-trigger runs stay unchanged and are noted
+honestly in the finding's note. The fixture measurements below are unchanged:
+no fixture is browser-executed here.
 
 ## Evidence Standard
 

@@ -29,6 +29,18 @@ tests: tests/fixtures/xss-stored-two-step/
 function run(probe, ctx) {
   const points = ctx.injectionPoints();
   const candidates = [];
+
+  // Sibling render pages never received the payload, so they are the clean
+  // control for the opt-in browser-verify pass (--browser-verify): confirmed
+  // requires the store page to trigger AND a sibling page to stay clean.
+  const bases = [];
+  for (const p of points) {
+    const base = String(p.url || "").split("?")[0].split("#")[0];
+    if (base && bases.indexOf(base) === -1) {
+      bases.push(base);
+    }
+  }
+
   for (const point of points) {
     const canary = probe.canary();
     const payload = "<img src=x onerror=alert(" + canary + ")>";
@@ -46,7 +58,17 @@ function run(probe, ctx) {
     } catch (e) {
       continue;
     }
-    const ev = host.oracles.storedExecution(storeResp, renderResp, canary, ["html", "attr-executable", "script", "url", "url-executable"]);
+    let controlUrl = "";
+    for (const b of bases) {
+      if (b !== base) {
+        controlUrl = b;
+        break;
+      }
+    }
+    const contexts = ["html", "attr-executable", "script", "url", "url-executable"];
+    const ev = controlUrl
+      ? host.oracles.storedExecution(storeResp, renderResp, canary, {contexts: contexts, controlUrl: controlUrl})
+      : host.oracles.storedExecution(storeResp, renderResp, canary, contexts);
     if (ev) {
       candidates.push(host.candidate(point, "stored", ev));
     }

@@ -551,7 +551,13 @@ func toHeader(m map[string]string) http.Header {
 // Why: Fixture evaluation must use the identical static claim as live scans.
 func detectFixtureSink(body string) string {
 	lower := strings.ToLower(body)
-	for _, s := range []string{"innerhtml", "outerhtml", "document.write", "document.writeln", "eval(", "settimeout(", "setinterval(", "location.hash", "postmessage"} {
+	for _, s := range []string{
+		"innerhtml", "outerhtml", "insertadjacenthtml",
+		"document.write", "document.writeln",
+		"eval(", "settimeout(", "setinterval(",
+		".html(", "new function(",
+		"location.hash", "postmessage",
+	} {
 		if strings.Contains(lower, s) {
 			return s
 		}
@@ -562,7 +568,11 @@ func detectFixtureSink(body string) string {
 // detectFixtureSource mirrors the Tier 2 static source vocabulary.
 func detectFixtureSource(body string) string {
 	lower := strings.ToLower(body)
-	for _, s := range []string{"location.hash", "location.search", "location.href", "document.url", "window.name", "postmessage"} {
+	for _, s := range []string{
+		"location.hash", "location.search", "location.href", "document.location",
+		"document.url", "document.referrer", "urlsearchparams",
+		"window.name", "postmessage",
+	} {
 		if strings.Contains(lower, s) {
 			return s
 		}

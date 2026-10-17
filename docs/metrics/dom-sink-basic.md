@@ -15,10 +15,14 @@ confirmed requires headless execution (documented BLOCKED without deps).
 
 Tier 2 passive plugin. Oracle `execution` without a browser. The script sends
 one probe value and calls `host.oracles.execution(resp)`; the Go binding
-detects a static sink (`innerHTML`, `document.write`, ...) plus a
-URL-controlled source (`location.hash`, `location.search`, ...). Maximum
-confidence `firm` (headless absent). Headless `confirmed` path stays
-BLOCKED (no browser dependency in this build; see Lab).
+detects a static sink (`innerHTML`, `outerHTML`, `insertAdjacentHTML`,
+`document.write`/`writeln`, `eval(`, `setTimeout(`/`setInterval(` with string
+args, jQuery `.html(`, `new Function(`, `location.hash` assignment,
+`postMessage(`) plus a URL-controlled source (`location.hash`/`search`,
+`document.location`, `document.URL`, `document.referrer`, `URLSearchParams`,
+`window.name`, `postMessage`). Maximum confidence `firm` (headless absent).
+Headless `confirmed` path stays BLOCKED (no browser dependency in this build;
+see Lab).
 
 ## Evidence Standard
 

