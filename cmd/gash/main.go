@@ -131,6 +131,7 @@ func newScanCmd() *cobra.Command {
 		pluginTimeout string
 		oobServer     string
 		oobWait       string
+		browserVerify bool
 		showTentative bool
 		format        []string
 		output        string
@@ -189,6 +190,11 @@ func newScanCmd() *cobra.Command {
 			}
 			if len(tcpBanners) > 0 && !active {
 				return fmt.Errorf("scan: --tcp-banner verildiyse --active zorunlu (banner probu aktiftir)")
+			}
+			// Tarayıcı doğrulaması yalnızca statik XSS kanıtını gerçek tetikleme
+			// + temiz kontrol ile confirmed'a taşır; aktif probdur.
+			if browserVerify && !active {
+				return fmt.Errorf("scan: --browser-verify verildiyse --active zorunlu (tarayıcı probu aktiftir)")
 			}
 			var normalized string
 			if strings.TrimSpace(target) != "" {
@@ -310,6 +316,7 @@ func newScanCmd() *cobra.Command {
 			cfg.RatePerSecond = rateLimit
 			cfg.Parallelism = parallelism
 			cfg.OOBServer = strings.TrimSpace(oobServer)
+			cfg.BrowserVerify = browserVerify
 			cfg.StrictPlugins = strictPlugins
 			cfg.ShowTentative = showTentative
 			cfg.IgnorePlugins = ignoreSet
@@ -411,6 +418,7 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().StringVar(&pluginTimeout, "plugin-timeout", "30s", "per-plugin timeout")
 	cmd.Flags().StringVar(&oobWait, "oob-wait", "60s", "scan-sonu OOB penceresi")
 	cmd.Flags().StringVar(&oobServer, "oob-server", "", "self-hosted interaction sunucusu (boş=kapalı)")
+	cmd.Flags().BoolVar(&browserVerify, "browser-verify", false, "statik XSS kanıtını gerçek tarayıcı tetiklemesi + temiz kontrol ile doğrula (--active ve -tags deep build şart; stub build'de dürüstçe atlanır)")
 	cmd.Flags().BoolVar(&showTentative, "show-tentative", false, "tentative'i dahil et")
 	cmd.Flags().StringSliceVar(&format, "format", []string{"text"}, "json|sarif|text|html|junit (tekrarlanabilir)")
 	cmd.Flags().StringVar(&output, "output", "", "rapor dosyası (tek format ile kullanın)")

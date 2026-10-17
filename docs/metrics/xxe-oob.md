@@ -51,9 +51,22 @@ PASS. Precision 1.00 is above the 0.99 gate. Corpus holds 0 findings (OOB requir
 - Samples: TP=2, FP=0, TN=2, FN=0. Fixture-only measurement; lab pending above.
   `TestMetricGate` fails the build if this hash drifts from the fixtures.
 
+## Live Path (variant corpus, deferred shared window)
+
+The corpus now carries five callback-only variants: external DTD `SYSTEM`
+with `{{OOB_URL}}`, external DTD with `PUBLIC`, classic SYSTEM with
+`{{OOB_DOMAIN}}`, `%`-parameter entity in the internal subset, and a nested
+parameter-entity form. All variants reference only the operator's self-hosted
+callbacks (`{{OOB_URL}}`/`{{OOB_DOMAIN}}`/`{{CORRELATION}}` expanded by the
+loader from provider bindings); `file://` and secret-reading payloads are out
+of scope by rule. All tokens are verified in ONE shared bounded window
+(`oob.WaitForCallbacks`, 10 s / 2 polls), so the whole corpus fits the plugin
+request budget even when many parameters exist.
+
 ## Limitations
 
 - Requires `--oob-server` (interactsh-compatible); skipped otherwise.
-- XXE payload is single variant; parameter entity obfuscation, CDATA, and DTD variations are future work.
+- Variant set covers DTD/external-entity shape; exotic encodings (UTF-16/UTF-7
+  document bodies, CDATA-smuggled DTDs) remain future work.
 - Does not test error-based XXE (uses error oracle separately).
 - OOB server must be reachable from target; network segmentation may cause false negatives.

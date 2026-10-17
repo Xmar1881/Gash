@@ -97,5 +97,10 @@ PASS. Precision 1.00 is above the 0.99 gate. Corpus holds 0 `firm` plus.
 - Binding control is fetched post-store; append-only render boards return the
   just-stored canary on the control fetch and reject (indistinguishable).
   Lab must reset or isolate per canary so the control stays pre-store clean.
-- `confirmed` requires a controlled headless run (`browser-confirmed`), not measured here.
+- `confirmed` requires a controlled headless run (`browser-confirmed`). The
+  stored binding now supports it: the script passes a sibling-page
+  `controlUrl` per context and (with `--browser-verify`, `-tags deep`, Chrome
+  present) the engine only marks the candidate browser-verified when the real
+  render URL triggers and the sibling control stays clean. Without browser
+  evidence the ceiling remains `static-execution-evidence`; not measured here.
 - Real-target recall (multi-user render flows, async polling) is unmeasured.

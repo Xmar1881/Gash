@@ -13,15 +13,52 @@ Why: Unimplemented paths stay documented with reasons instead of silent gaps.
 This file records what Gash deliberately does not do, with the technical
 reason for each. Nothing here is implied as covered elsewhere.
 
+## Out-of-band (OOB) blind detectors: self-hosted only, shared bounded window
+
+OOB plugins (`ssrf-blind-oob`, `blind-sqli-oob`, `xxe-oob`) run only with a
+self-hosted `--oob-server` (no public interactsh default) and require
+`--active`; without a server the scheduler skips them honestly
+(`oob-not-configured`). Callback proof discipline: every payload variant
+carries its own single-use correlation token, so an incoming callback can
+only confirm the exact request that caused it. Token verification is
+deferred: Tier 1 sends the whole corpus first and then verifies all tokens
+in ONE shared bounded window (`oob.WaitForCallbacks`, 10 s / 2 polls);
+JS plugins call `host.oracles.oobAny(ids)` for the same shared window.
+Per-payload waiting was rejected because N payloads x 10 s overflows the
+plugin timeout budget. Consequences (documented tradeoffs):
+
+- `oobAny` returns only the FIRST matched token; with several matching
+  variants a run reports one confirmed finding for that plugin/point.
+- Numeric-notation SSRF hosts (decimal/octal/hex, IPv4-mapped) can only
+  carry the token in the path; they confirm solely when the operator's
+  server indexes path tokens. Best-effort, never fake.
+- PostgreSQL blind SQLi has no callback-only primitive short of
+  `COPY ... TO PROGRAM` / `dblink`, both outside the no-command-execution
+  scope. PostgreSQL is therefore absent from the corpus; this is a
+  deliberate gap, not coverage.
+- DNS-only exfil works wherever the operator's server sees the A/AAAA
+  query for `<token>.<domain>`; HTTP callbacks must reach `/cb/<token>`.
+  Network segmentation can cause false negatives.
+- The window is a scan-time optimization; final `--oob-wait` (default 60 s)
+  still applies at scan end for late callbacks.
+
 ## Reflected XSS execution proof: static-only boundary
+
+
 
 The reflection oracle separates HTML text, ordinary attributes, URL
 attributes, event-handler attributes, executable JavaScript, JavaScript
 strings/comments, and inert JSON script blocks. A random canary reflection is
 at most `tentative`; `confirmed` requires a recognizable execution payload,
 a clean control response, and no inline-execution-blocking CSP. This is not a
-browser proof. DOM source-to-sink browser execution remains gated behind
-`-tags deep` (see below); see the DOM metric report.
+browser proof by itself. The opt-in browser-verify pass
+(`--browser-verify`, requires `--active` plus the `-tags deep` build and a
+Chrome binary) re-fetches each eligible GET/query `static-execution-evidence`
+finding as payload URL plus a neutral-control URL through
+`headless.VerifyXSS` and upgrades to `confirmed` only on a real trigger
+(dialog or DOM canary) with a clean control; otherwise the finding is left
+unchanged and annotated honestly. DOM source-to-sink browser execution
+remains gated behind `-tags deep` (see below); see the DOM metric report.
 
 Stored-XSS write/render is `supported` via `StoredOracle`
 (`internal/oracle/stored.go`, oracle `stored`,
@@ -130,6 +167,15 @@ proof (skips only when no Chrome binary is found). Reflected-XSS `confirmed`
 likewise requires supplied
 `BrowserVerified`/`BrowserTriggered`/`BrowserControlClean` evidence; static
 findings stay `static-execution-evidence` and never claim `browser-confirmed`.
+
+2026-10-17: the deep driver was ported to the chromedp v0.21.0 generic API
+(`cdp.Events` iterators and `cdp.Call` command values; the old
+`ListenTarget`/`HandleJavaScriptDialog` helpers are gone) and
+`headless.VerifyXSS` was added with a default-build stub that never confirms.
+The engine consumes it through the opt-in browser-verify pass
+(`--browser-verify`, `--active` required) for eligible reflected-XSS
+findings and through the stored binding's `controlUrl` option for the
+two-step plugin; without browser evidence both ceilings stay unchanged.
 
 ## Compose-lab recall: BLOCKED where docker is absent
 

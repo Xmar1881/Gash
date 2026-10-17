@@ -66,6 +66,31 @@ Dates are UTC.
   open-redirect-param, ldap-injection-differential, xss-attribute-injection,
   and reflected XSS (JS templates); ssrf-cloud-metadata now covers AWS (IMDSv1),
   Alibaba Cloud, and Azure IMDS payloads with per-payload canaries.
+- OOB blind detectors now ship multi-variant corpora with single-use tokens:
+  SSRF (schemes, parser-confusion forms, redirect-echo, best-effort
+  numeric-notation hosts), blind SQLi (MSSQL/MySQL/Oracle callback-only
+  functions; PostgreSQL deliberately omitted), and XXE (external DTD
+  SYSTEM/PUBLIC, parameter-entity and nested forms). Templating is pinned to
+  the operator's real provider bindings (`{{OOB_DOMAIN}}`/`{{OOB_URL}}`/
+  `{{CORRELATION}}`); the previous inert placeholder is fixed.
+- Deferred batch OOB verification: tokens are checked in one shared bounded
+  window (`oob.WaitForCallbacks`, 10 s / 2 polls) instead of per-payload
+  waits; Tier 1 gains this via the new `OOBSource.WaitAny` seam and JS plugins
+  via the new `host.oracles.oobAny` binding. `oob.generate` in JS now returns
+  correlations under the self-hosted server's domain instead of a fixture
+  host.
+- Browser-verify pass (`--browser-verify`, `--active` required): eligible GET
+  query `static-execution-evidence` XSS findings are re-fetched as payload
+  plus neutral-control URLs through `headless.VerifyXSS` in the `-tags deep`
+  build and upgraded to `confirmed` only on real trigger with clean control;
+  the stored two-step binding gained a `controlUrl` option that wires the same
+  evidence path. Default-build stub never confirms.
+- `internal/headless` ported to the chromedp v0.21.0 generic API
+  (`cdp.Events` iterators, `cdp.Call` command values) and `VerifyXSS`
+  (dialog or DOM-canary trigger channel, control-checked).
+- DOM sink/source vocabulary expanded (`outerHTML`, `insertAdjacentHTML`,
+  `eval(`, string-arg timers, jQuery `.html(`, `new Function(`, `postMessage`,
+  `URLSearchParams`, `window.name`) with the fixture mirror kept in sync.
 
 ### Changed
 

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Xmar1881/Gash/internal/baseline"
+	"github.com/Xmar1881/Gash/internal/oob"
 	"github.com/Xmar1881/Gash/internal/oracle"
 	"github.com/Xmar1881/Gash/internal/plugin"
 	"github.com/dop251/goja"
@@ -78,8 +79,24 @@ type JSEnv struct {
 	OOBNamespace string
 	// OOBCorrelation fixes the next correlation ID for tests.
 	OOBCorrelation string
-	// OOBCallbackSeen reports whether a correlation ID was observed.
+	// OOBCallbackSeen reports whether a correlation ID was observed. Live scans
+	// wire this to the bounded multi-channel wait (dns or http).
 	OOBCallbackSeen func(correlationID string) bool
+	// OOBCallbackSeenAny reports the first correlation ID (input order) with a
+	// callback inside ONE bounded window shared by all tokens. Multi-payload
+	// plugins use it so the wait is paid once per run, not once per payload.
+	OOBCallbackSeenAny func(correlationIDs []string) []string
+	// OOBDomain maps a correlation ID to the DNS callback domain of the
+	// operator's self-hosted server. Nil keeps the fixture fallback domain.
+	OOBDomain func(correlationID string) string
+	// OOBURL maps a correlation ID to the HTTP callback URL of the
+	// operator's self-hosted server. Nil keeps the fixture fallback URL.
+	OOBURL func(correlationID string) string
+	// BrowserVerify is the optional controlled-browser proof seam used by the
+	// stored binding (render URL vs supplied clean control URL). Nil disables
+	// the confirmed path; the static ceiling is preserved. The first return
+	// says verification actually ran.
+	BrowserVerify func(payloadURL, controlURL string) (verified, triggered, controlClean bool, err error)
 }
 
 // JSCandidate pairs a script candidate with its engine-side evidence.
@@ -406,6 +423,7 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 		canary := call.Arguments[2].String()
 		contexts := []string{"html", "attr-executable", "script", "url", "url-executable"}
 		requireExecutable := true
+		controlURL := ""
 		if len(call.Arguments) >= 4 && !goja.IsNull(call.Arguments[3]) && !goja.IsUndefined(call.Arguments[3]) {
 			arg := call.Arguments[3].ToObject(vm)
 			if lengthVal := arg.Get("length"); lengthVal != nil && !goja.IsUndefined(lengthVal) {
@@ -431,17 +449,35 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 				if v := arg.Get("require_executable_context"); v != nil && !goja.IsUndefined(v) && !goja.IsNull(v) {
 					requireExecutable = v.ToBoolean()
 				}
+				// Optional pre-store-clean control render URL: when supplied
+				// and browser verification is enabled, a real trigger plus a
+				// clean control may lift the render exchange to confirmed.
+				if v := arg.Get("controlUrl"); v != nil && !goja.IsUndefined(v) && !goja.IsNull(v) {
+					controlURL = v.String()
+				}
+				if v := arg.Get("control_url"); v != nil && !goja.IsUndefined(v) && !goja.IsNull(v) {
+					controlURL = v.String()
+				}
 			}
 		}
 		cls := baseline.ClassifyStatic(renderResp.Status, toHTTPHeader(renderResp.Headers), []byte(renderResp.Body))
 		ctrl := controlFor(JSPoint{URL: renderResp.URL})
+		var browserVerified, browserTriggered, browserControlClean bool
+		if env.BrowserVerify != nil && controlURL != "" && renderResp.URL != "" && controlURL != renderResp.URL {
+			if verified, triggered, clean, err := env.BrowserVerify(renderResp.URL, controlURL); err == nil {
+				browserVerified, browserTriggered, browserControlClean = verified, triggered, clean
+			}
+		}
 		var o oracle.StoredOracle
 		ev, err := o.Verify(context.Background(), cls, false, oracle.StoredParams{
 			Canary: canary, Contexts: contexts,
 			RequireExecutableContext: requireExecutable,
 			StoreStatus:              storeResp.Status, StoreBody: storeResp.Body,
 			RenderBody: renderResp.Body, RenderHeaders: toHTTPHeader(renderResp.Headers),
-			ControlBody: ctrl.Body,
+			ControlBody:         ctrl.Body,
+			BrowserVerified:     browserVerified,
+			BrowserTriggered:    browserTriggered,
+			BrowserControlClean: browserControlClean,
 		})
 		if err != nil {
 			panic(err.Error())
@@ -573,6 +609,55 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 			panic(err.Error())
 		}
 		return evToObject(vm, ev)
+	})
+	_ = oraclesObj.Set("oobAny", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			panic("oobAny(correlationIds[, namespace]) requires 1 argument")
+		}
+		arr := call.Arguments[0].ToObject(vm)
+		length := int(arr.Get("length").ToInteger())
+		ids := make([]string, 0, length)
+		for i := 0; i < length; i++ {
+			ids = append(ids, arr.Get(fmt.Sprintf("%d", i)).String())
+		}
+		ns := "scan_js"
+		if len(call.Arguments) >= 2 && !goja.IsUndefined(call.Arguments[1]) && !goja.IsNull(call.Arguments[1]) {
+			if s := call.Arguments[1].String(); s != "" {
+				ns = s
+			}
+		}
+		// One shared bounded window across every token the plugin shipped.
+		var matched []string
+		if env.OOBCallbackSeenAny != nil {
+			matched = env.OOBCallbackSeenAny(ids)
+		} else if env.OOBCallbackSeen != nil {
+			for _, id := range ids {
+				if env.OOBCallbackSeen(id) {
+					matched = append(matched, id)
+					break
+				}
+			}
+		}
+		if len(matched) == 0 {
+			return goja.Null()
+		}
+		o := oracle.OOBOracle{Enabled: env.OOBEnabled}
+		ev, err := o.Verify(context.Background(), baseline.Classification{Note: "normal"}, false, oracle.OOBParams{
+			CorrelationID: matched[0], Namespace: ns, CallbackSeen: true,
+		})
+		if err != nil {
+			panic(err.Error())
+		}
+		val := evToObject(vm, ev)
+		if val == nil || goja.IsNull(val) || goja.IsUndefined(val) {
+			return goja.Null()
+		}
+		obj := val.ToObject(vm)
+		// The plugin maps correlationId back to the exact point+payload that
+		// fired; the evidence object itself stays the single source of truth.
+		_ = obj.Set("correlationId", matched[0])
+		_ = obj.Set("namespace", ns)
+		return obj
 	})
 	_ = oraclesObj.Set("timing", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 2 {
@@ -712,14 +797,38 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 		}
 		corr := env.OOBCorrelation
 		if corr == "" {
-			corr = nextCanary()
+			// Cryptographic single-use token per payload (same discipline as
+			// the Tier 1 path); the fixture counter is only a fallback.
+			if id, err := oob.NewCorrelationID(); err == nil {
+				corr = id
+			} else {
+				corr = nextCanary()
+			}
 		}
 		ns := env.OOBNamespace
 		if ns == "" {
 			ns = "scan_js"
 		}
+		// Live scans fill OOBDomain/OOBURL from the self-hosted provider so
+		// payloads point at the operator's server; the oob.example fallback
+		// is fixture-only and never resolves anywhere.
+		domain := ""
+		if env.OOBDomain != nil {
+			domain = env.OOBDomain(corr)
+		}
+		if domain == "" {
+			domain = corr + "." + ns + ".oob.example"
+		}
+		cbURL := ""
+		if env.OOBURL != nil {
+			cbURL = env.OOBURL(corr)
+		}
+		if cbURL == "" {
+			cbURL = "http://" + domain + "/"
+		}
 		obj := vm.NewObject()
-		_ = obj.Set("url", fmt.Sprintf("http://%s.%s.oob.example/", corr, ns))
+		_ = obj.Set("url", cbURL)
+		_ = obj.Set("domain", domain)
 		_ = obj.Set("correlationId", corr)
 		_ = obj.Set("namespace", ns)
 		return obj
@@ -847,12 +956,23 @@ func samplesFromValue(vm *goja.Runtime, v goja.Value) []JSResponse {
 }
 
 // detectDOMSink finds the first known dangerous sink in a body (static only).
-// What: Substring scan over the headless-free sink vocabulary.
-// Why: DOM verdicts without a browser cap at firm; the sink name is the
-// only static claim the execution oracle accepts.
+// What: Substring scan over the headless-free sink vocabulary:
+// innerHTML/outerHTML/insertAdjacentHTML, document.write/writeln, eval(),
+// setTimeout/setInterval (string form is unresolved statically), the Function
+// constructor (`new Function(`), and jQuery `.html(`.
+// Why: DOM verdicts without a browser cap at firm; the sink name is the only
+// static claim the execution oracle accepts. Vocabulary stays deliberately
+// specific (`new function(` not bare `function(`) to avoid matching every
+// bundled script and turning firm into noise.
 func detectDOMSink(body string) string {
 	lower := strings.ToLower(body)
-	sinks := []string{"innerhtml", "outerhtml", "document.write", "document.writeln", "eval(", "settimeout(", "setinterval(", "location.hash", "postmessage"}
+	sinks := []string{
+		"innerhtml", "outerhtml", "insertadjacenthtml",
+		"document.write", "document.writeln",
+		"eval(", "settimeout(", "setinterval(",
+		".html(", "new function(",
+		"location.hash", "postmessage",
+	}
 	for _, s := range sinks {
 		if strings.Contains(lower, s) {
 			return s
@@ -862,11 +982,17 @@ func detectDOMSink(body string) string {
 }
 
 // detectDOMSource finds the first known URL-controlled source in a body.
-// What: Substring scan over location/hash/search style sources.
+// What: Substring scan over URL-borne sources only (location.hash/search/href,
+// document.URL/location, referrer, URLSearchParams, window.name, postMessage).
 // Why: Source presence lifts tentative to firm; absence keeps the floor.
+// Cookie/document storage sources are deliberately out of scope.
 func detectDOMSource(body string) string {
 	lower := strings.ToLower(body)
-	sources := []string{"location.hash", "location.search", "location.href", "document.url", "window.name", "postmessage"}
+	sources := []string{
+		"location.hash", "location.search", "location.href", "document.location",
+		"document.url", "document.referrer", "urlsearchparams",
+		"window.name", "postmessage",
+	}
 	for _, s := range sources {
 		if strings.Contains(lower, s) {
 			return s
