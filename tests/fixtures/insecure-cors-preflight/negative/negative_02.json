@@ -1,0 +1,1 @@
+{"name": "allowlist origin", "target": "http://example.com/", "status": 200, "headers": {"Access-Control-Allow-Origin": "https://trusted.example", "Access-Control-Allow-Credentials": "true", "Content-Type": "text/html"}, "body": "<html><body>OK</body></html>", "expected_verdict": "reject"}

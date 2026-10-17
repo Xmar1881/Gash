@@ -1,0 +1,1 @@
+{"name": "none alg jwt", "target": "http://example.com/api", "status": 200, "headers": {"Authorization": "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWV9.", "Content-Type": "application/json"}, "body": "{\"ok\":true}", "expected_verdict": "accept", "expected_confidence": "confirmed"}

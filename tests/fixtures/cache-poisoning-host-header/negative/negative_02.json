@@ -1,0 +1,1 @@
+{"name": "no reflection", "target": "http://example.com/", "status": 200, "headers": {"Content-Type": "text/html"}, "body": "<html><body>example.com</body></html>", "control_body": "<html><body>example.com</body></html>", "expected_verdict": "reject"}

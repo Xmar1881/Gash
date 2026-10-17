@@ -1,0 +1,1 @@
+{"name": "strong jwt validation", "target": "http://example.com/api", "status": 200, "headers": {"Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc", "Content-Type": "application/json"}, "body": "{\"ok\":true}", "expected_verdict": "reject"}

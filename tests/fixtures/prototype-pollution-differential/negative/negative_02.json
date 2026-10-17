@@ -1,0 +1,1 @@
+{"name": "unstable true branch", "target": "http://example.com/api/merge", "status": 200, "headers": {"Content-Type": "application/json"}, "body": "{\"ok\":true}", "true_bodies": ["{\"gashCanary\":\"x\"}", "{\"gashCanary\":\"y\"}", "{\"gashCanary\":\"x\"}"], "false_bodies": ["{}", "{}", "{}"], "control_body": "{}", "expected_verdict": "reject"}

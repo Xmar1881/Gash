@@ -1,0 +1,1 @@
+{"name": "override header returns admin content", "target": "http://example.com/admin", "status": 200, "headers": {"Content-Type": "text/html"}, "body": "<html><body><h1>Admin</h1></body></html>", "control_body": "Unauthorized", "control_status": 401, "expected_verdict": "accept", "expected_confidence": "firm"}

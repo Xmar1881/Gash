@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: ssti-blind-timing
+name: SSTI Blind Timing
+description: Detects blind server-side template injection via timing differential.
+author: GASH contributors
+severity: critical
+tags: [ssti, injection, timing, blind]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 30
+phase: probe
+order: 80
+api_version: "1.0"
+tests: tests/fixtures/ssti-blind-timing/
+request:
+  method: GET
+  param_names: [template, view, page]
+  payload: "{{7*7}}"
+oracle:
+  name: timing
+  params:
+    min_delay_ms: 5000
+    repeats: 3
+    strategy: mann-whitney-u

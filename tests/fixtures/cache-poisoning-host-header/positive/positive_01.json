@@ -1,0 +1,1 @@
+{"name": "host header reflected in body", "target": "http://example.com/", "status": 200, "headers": {"Content-Type": "text/html"}, "body": "<html><body><a href=\"http://gash-host-canary.example/\">link</a></body></html>", "control_body": "<html><body><a href=\"http://example.com/\">link</a></body></html>", "expected_verdict": "accept", "expected_confidence": "firm"}

@@ -1,0 +1,1 @@
+{"name": "same body as baseline", "target": "http://example.com/admin", "status": 200, "headers": {"Content-Type": "text/html"}, "body": "Unauthorized", "control_body": "Unauthorized", "control_status": 401, "expected_verdict": "reject"}

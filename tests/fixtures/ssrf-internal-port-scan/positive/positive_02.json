@@ -1,0 +1,1 @@
+{"name": "ssrf internal port timing 2", "target": "http://example.com/fetch", "status": 200, "headers": {"Content-Type": "text/html"}, "body": "<html><body>OK</body></html>", "delay_samples": [5500.0, 5600.0, 5700.0], "control_samples": [90.0, 95.0, 100.0], "baseline_stddev": 5.0, "expected_verdict": "accept", "expected_confidence": "firm"}

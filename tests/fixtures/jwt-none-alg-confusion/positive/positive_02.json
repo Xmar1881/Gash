@@ -1,0 +1,1 @@
+{"name": "algorithm confusion indicator", "target": "http://example.com/api", "status": 200, "headers": {"X-JWT-Debug": "algorithm confusion: HS256 used for RS256", "Content-Type": "application/json"}, "body": "{\"ok\":true}", "expected_verdict": "accept", "expected_confidence": "confirmed"}
