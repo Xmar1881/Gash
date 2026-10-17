@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/takeover/subdomain-takeover-basic.yaml
+# What: Tier 1 subdomain takeover screen backed by ErrorSignatureOracle
+#   (takeover mode, GASH-030, CWE-693, firm ceiling).
+# Why: Hedef (alt)domainin çıplak GET yanıtında bilinen unclaimed-servis
+#   gövde imzaları (S3/GitHub Pages/Heroku/Shopify/Tumblr) + kontrolde yokluk.
+# Red lines: yalnızca kapsam-içi hedefe pasif GET (param enjeksiyonu YOK,
+#   dış hosta istek YOK, yıkıcı payload YOK). DNS CNAME önkoşulu tarama
+#   prosedüründedir (proto-dns recon / dig ile doğrulanır, fixture'da mock);
+#   bu imza HTTP yarısını kanıtlar, DNS-bağımlı firm tavan.
+# Tier gerekçesi: tek-istekli pasif gövde-imza kontrolü; DNS bağlamı sandbox
+# dışındadır → Tier 2 katma değer sağlamaz.
+
+id: subdomain-takeover-basic
+name: Subdomain Takeover Basic
+description: Screens in-scope domains for unclaimed-service body signatures indicating possible subdomain takeover, with absent-in-control proof at a DNS-dependent firm ceiling.
+author: GASH contributors
+severity: high
+tags: [takeover, subdomain, misconfig, error]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 10
+phase: probe
+order: 68
+api_version: "1.0"
+tests: tests/fixtures/subdomain-takeover-basic/
+request:
+  method: GET
+oracle:
+  name: error
+  params:
+    mode: "takeover"
+    signature_set: ["takeover"]

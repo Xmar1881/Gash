@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/mass-assignment/mass-assignment-basic.yaml
+# What: Tier 1 mass assignment screen backed by DifferentialOracle
+#   (GASH-031, CWE-915, `confidence_ceiling: firm`).
+# Why: Forma/API'ye fazladan zararsız alan (role/is_admin/debug) ekleyip
+#   bağlanma/yansıma farkını 3/3 maskeli stabilite ile ölçer; ekstra alan
+#   filtrelenmiyorsa firm bulgu. Yetki YÜKSELTME denemesi YOK: true dal
+#   "0", false dal etkisiz kukla değerdir (admin/true/1 asla gönderilmez);
+#   yalnızca filtrelenmeme (binding/reflection) farkı kanıttır.
+# Red lines: yıkıcı/kalıcı-etkili payload YOK, --active + --scope kapılı,
+#   yetkili lab hedefi; yansıma-bağlanma ayrımı Limitations'da.
+# Tier gerekçesi: tek ekstra-alan + true/false/neutral üçlüsü Tier 1
+# differential kalıbına uyar; Tier 2'de fixture parametre akışı (tavan)
+# taşınamadığı için Tier 1 burada DAHA doğru tavanı verir.
+
+id: mass-assignment-basic
+name: Mass Assignment Basic
+description: Detects unfiltered mass assignment fields via differential response analysis on extra harmless fields with non-escalating values, capped at firm confidence.
+author: GASH contributors
+severity: high
+tags: [mass-assignment, authorization, differential]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 100
+phase: probe
+order: 69
+api_version: "1.0"
+tests: tests/fixtures/mass-assignment-basic/
+request:
+  method: GET
+  param_names: [role, is_admin, isAdmin, admin, debug]
+  payload: "0"
+oracle:
+  name: differential
+  params:
+    repeats: 3
+    false_payload: "gash-mass-inert"
+    confidence_ceiling: "firm"

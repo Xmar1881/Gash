@@ -265,8 +265,15 @@ func newScanCmd() *cobra.Command {
 					if err := enforceScanScope(ctx, normalized, scope); err != nil {
 						return err
 					}
-				} else if !isLocalScanTarget(normalized) {
-					fmt.Fprintln(cmd.ErrOrStderr(), "warn: external target without --scope — scan only with explicit permission")
+				} else {
+					host := normalized
+					if u, uerr := url.Parse(normalized); uerr == nil && u.Hostname() != "" {
+						host = u.Hostname()
+					}
+					fmt.Fprintf(cmd.ErrOrStderr(), "warn: implicit scope: only %s and its known www/apex variant will be scanned; use --scope for full subdomain coverage.\n", host)
+					if !isLocalScanTarget(normalized) {
+						fmt.Fprintln(cmd.ErrOrStderr(), "warn: external target without --scope — scan only with explicit permission")
+					}
 				}
 			}
 			if !safe {

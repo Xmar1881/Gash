@@ -41,14 +41,25 @@ positive cases are reported as `static-execution-evidence`, not `confirmed`,
 because no browser executed them. It must not be generalized to real-target
 recall.
 
-## Chunked Transfer-Encoding bypass: BLOCKED (transport)
+## Chunked Transfer-Encoding / request smuggling: supported (raw-TCP, lab-only)
 
 WAF bypass mutations cover header bypass, HPP duplication, double URL
 encoding, SQL comment injection, and mixed-case (`internal/wafbypass`).
-Chunked Transfer-Encoding Kali-style body splitting is absent: Go `net/http`
-owns framing and exposes no manual chunk-size control, so a raw-TCP transport
-would be needed. WAF evasion therefore never relies on chunking, and no
-chunked claim appears in reports. See `internal/wafbypass/wafbypass.go`.
+Chunk framing itself stays out of `net/http` (it owns framing and exposes
+no manual chunk-size control), so CL.TE / TE.CL / TE.TE desync detection
+lives in a dedicated raw-TCP transport: `internal/smuggle` (engine-recon,
+GASH-033, CWE-444, oracle `smuggling-differential`). The probe sends an
+ambiguous CL+TE request plus a byte-identical harmless follow-up on the
+same keep-alive connection and requires dual-channel proof (follow-up
+status/body divergence AND delay/timeout) for at most a `firm` finding;
+single-channel signals reject, `confirmed` never fires. Limits: lab-only
+loopback (non-loopback gets no raw socket, auditable skip), `--active` +
+`--aggressive` gate (safe/standard/deep skip with reason), `AllowHost`
+preflight before any dial (scope violation → `ErrScopeViolation`, zero
+sockets), max 10 requests with a 5 s cap, harmless terminator/marker bodies
+only (no cache-poisoning/DOS impact). HTTPS verifies SNI/hostname (no
+skip); ALPN forces http/1.1 and a negotiated HTTP/2 yields a skip
+(smuggling is invalid over h2). See `docs/metrics/smuggle-differential.md`.
 
 ## WAF bypass success rate: unmeasured outside controlled tests
 

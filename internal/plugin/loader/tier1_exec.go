@@ -64,6 +64,55 @@ func ExecuteTier1(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File,
 	return out, nil
 }
 
+// executeRateLimit bütçeli burst ile eksik rate-limit ekranı yapar (GASH-032).
+// What: Aynı endpoint'e N istek (params burst, default 20, tavan 50) gönderip
+// 429/lockout/rate-limit sinyali yokluğunu tentative bulguya dönüştürür.
+// Why: Tekil prob politika yokluğunu kanıtlamaz; burst gözlemsel tavanda kalır
+// (tentative). Tüm istekler policy-session Sender'dan geçer: --scope dışı
+// hedefe istek YOK, profil + max_requests bütçesi motorca zorlanır, isimsiz
+// GET burst'ünde credential stuffing ve hesap kilitleme riski YOKTUR.
+func executeRateLimit(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File, target, method, param, rawURL string, status int, headers http.Header, body string, oracleParams map[string]any, send Sender) ([]Tier1Result, error) {
+	burst := getIntParam(oracleParams, "burst", 20)
+	if burst < 1 {
+		burst = 1
+	}
+	if burst > 50 {
+		burst = 50
+	}
+	statuses := []int{status}
+	lastStatus, lastHeaders, lastBody := status, headers, body
+	for i := 1; i < burst; i++ {
+		s, h, b, err := send(ctx, method, rawURL)
+		if err != nil {
+			break // bütçe/kapsam kesintisi: toplananla devam (sinyal uydurma YOK)
+		}
+		statuses = append(statuses, s)
+		lastStatus, lastHeaders, lastBody = s, h, b
+	}
+	cls := baseline.ClassifyStatic(lastStatus, lastHeaders, []byte(lastBody))
+	var o oracle.HeaderOracle
+	ev, err := o.Verify(ctx, cls, false, oracle.HeaderParams{
+		Headers: lastHeaders,
+		Mode:    "ratelimit",
+		Body:    lastBody,
+		Status:  lastStatus,
+		Burst:   statuses,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if ev.Verdict != oracle.VerdictAccept {
+		return nil, nil
+	}
+	return []Tier1Result{{Candidate: plugin.Candidate{
+		PluginID:       spec.ID,
+		Target:         target,
+		InjectionPoint: plugin.InjectionPoint{URL: rawURL, Method: method, ParamName: param, ParamLocation: "query"},
+		OracleName:     "header",
+		OracleParams:   map[string]string{"mode": "ratelimit"},
+	}, Evidence: ev}}, nil
+}
+
 func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File, target, method, param string, send Sender) ([]Tier1Result, error) {
 	rawURL := target
 	if param != "" {
@@ -89,6 +138,9 @@ func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File
 	case "header":
 		var o oracle.HeaderOracle
 		mode := getStringParam(oracleParams, "mode", "security")
+		if mode == "ratelimit" {
+			return executeRateLimit(ctx, spec, file, target, method, param, rawURL, status, headers, body, oracleParams, send)
+		}
 		var reqHeaders http.Header
 		if rh, ok := oracleParams["request_headers"]; ok {
 			if rhMap, ok := rh.(map[string]any); ok {
@@ -335,6 +387,7 @@ func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File
 		var o oracle.DifferentialOracle
 		repeats := getIntParam(oracleParams, "repeats", 3)
 		falsePayload := getStringParam(oracleParams, "false_payload", "gash_diff_false_val")
+		ceiling := getStringParam(oracleParams, "confidence_ceiling", "")
 		var trueBodies, falseBodies []string
 
 		trueBodies = append(trueBodies, body)
@@ -366,10 +419,11 @@ func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File
 		}
 
 		ev, err := o.Verify(ctx, cls, false, oracle.DifferentialParams{
-			TrueBodies:  trueBodies,
-			FalseBodies: falseBodies,
-			ControlBody: ctrlBody,
-			Repeats:     repeats,
+			TrueBodies:        trueBodies,
+			FalseBodies:       falseBodies,
+			ControlBody:       ctrlBody,
+			Repeats:           repeats,
+			ConfidenceCeiling: ceiling,
 		})
 		if err != nil {
 			return nil, err

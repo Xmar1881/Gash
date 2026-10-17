@@ -1,0 +1,34 @@
+# smuggle-differential fixture: POSITIVE (CL.TE desync, TP → firm)
+#
+# Ham bayt dizisi (CRLF = \r\n). Sunucu: ön-uç CL'yi, arka-uç TE'yi yorumlar.
+# Takip yanıtı hem gecikir (timing) hem ayrışır (differential: 200/OK-clean
+# yerine 400/desync-queued) → çift kanıt → GASH-033 firm.
+#
+# --- istek 1 (muğlak, gövde ZARARSIZ chunk sonlandırıcı) ---
+# POST / HTTP/1.1
+# Host: 127.0.0.1
+# Content-Type: application/x-www-form-urlencoded
+# Content-Length: 4
+# Transfer-Encoding: chunked
+# Connection: keep-alive
+# User-Agent: gash-smuggle-probe/1.0
+#
+# 0
+#
+# --- yanıt 1 ---
+# HTTP/1.1 200 OK (gövde: OK-first)
+#
+# --- istek 2 (kontrolle BİREBİR aynı zararsız takip) ---
+# GET / HTTP/1.1
+# Host: 127.0.0.1
+# Connection: keep-alive
+# User-Agent: gash-smuggle-probe/1.0
+#
+# --- yanıt 2 (~1000ms gecikmeli + ayrışık) ---
+# HTTP/1.1 400 Bad Request (gövde: desync-queued)
+#
+# Kontrol çifti (düz POST Content-Length: 5 gövde "x=1&y" + aynı takip):
+# yanıt 1 = 200/OK-clean, yanıt 2 = 200/OK-clean (hızlı).
+# Beklenen: divergent_kinds içinde CL.TE (+TE.CL/TE.TE mock'ta aynı eksen),
+# confidence=firm, confirmed YOK.
+POSITIVE-CL.TE-desync-dual-channel

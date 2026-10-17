@@ -21,7 +21,10 @@
 //   - Blok sayfasının kendisi asla kanıt sayılmaz (oracle guard reject);
 //     yalnızca bypass sonrası gelen temiz yanıt normal doğrulanır.
 //   - Chunked Transfer-Encoding burada YOKTUR: net/http istemcisi gövde
-//     parçalamayı denetlemez; kalan iş olarak raporda kayıtlıdır.
+//     parçalamayı denetlemez. Ham-soket CL.TE/TE.CL/TE.TE diferansiyel
+//     probu ayrı pakettedir (internal/smuggle, engine-recon GASH-033);
+//     WAF kaçışı chunking'e dayanmaz, smuggling iddiası çift-kanıtla
+//     en fazla firm üretir.
 package wafbypass
 
 import (

@@ -204,6 +204,7 @@ func Evaluate(ctx context.Context, oracleName string, f Fixture, oobEnabled bool
 			Mode:           mode,
 			RequestHeaders: reqHeaders,
 			Body:           f.Body,
+			Status:         f.Status,
 		})
 	case "redirect":
 		var o oracle.RedirectOracle
@@ -255,6 +256,7 @@ func Evaluate(ctx context.Context, oracleName string, f Fixture, oobEnabled bool
 		return o.Verify(ctx, cls, false, oracle.DifferentialParams{
 			TrueBodies: f.TrueBodies, FalseBodies: f.FalseBodies,
 			ControlBody: f.ControlBody, Repeats: 3,
+			ConfidenceCeiling: getStringParam(oracleParams, "confidence_ceiling", ""),
 		})
 	case "oob":
 		o := oracle.OOBOracle{Enabled: oobEnabled}
