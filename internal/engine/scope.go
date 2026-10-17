@@ -23,7 +23,8 @@ import (
 
 // ScopeManager manages allowed targets and validates requests against scope.
 // What: Central authority for target allow/deny decisions.
-// Why: Prevents unbounded scans, enforces redirect re-validation, detects DNS rebinding.
+// Why: Explicit --scope entries are strict (allowlist + rebinding); without
+// entries the manager is open mode (no host is denied, DNS decides).
 type ScopeManager struct {
 	mu sync.RWMutex
 
@@ -31,10 +32,6 @@ type ScopeManager struct {
 	allowedEntries []ScopeEntry
 	// Resolved IPs for domain entries (for rebinding detection)
 	resolvedIPs map[string][]net.IP
-	// Resolved IPs for the original target (for change detection)
-	targetIPs map[string][]net.IP
-	// Original target for cross-reference
-	originalTarget string
 	// Resolver for DNS lookups
 	resolver *net.Resolver
 	// Cache TTL for DNS resolutions
@@ -64,7 +61,6 @@ func NewScopeManager(entries []string) *ScopeManager {
 	sm := &ScopeManager{
 		allowedEntries: make([]ScopeEntry, 0, len(entries)),
 		resolvedIPs:    make(map[string][]net.IP),
-		targetIPs:      make(map[string][]net.IP),
 		resolver:       &net.Resolver{},
 		cacheTTL:       5 * time.Minute,
 	}
@@ -107,11 +103,13 @@ func (sm *ScopeManager) parseEntry(entry string) *ScopeEntry {
 	return &ScopeEntry{Type: ScopeTypeDomain, Value: strings.ToLower(entry)}
 }
 
-// SetOriginalTarget records the original scan target for cross-reference.
+// SetOriginalTarget records the original scan target and warms the DNS cache.
+// What: Resolves the target hostname for rebinding comparisons.
+// Why: Keeps redirect re-validation data ready in strict (--scope) mode;
+// open mode does not enforce IP pinning.
 func (sm *ScopeManager) SetOriginalTarget(target string) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.originalTarget = target
 	u, _ := url.Parse(target)
 	if u != nil {
 		sm.resolveAndCache(u.Hostname())
@@ -138,24 +136,18 @@ func (sm *ScopeManager) resolveAndCache(host string) []net.IP {
 }
 
 // CheckScope validates a URL against the scope.
-// What: Returns nil if allowed, error with classification if denied.
-// Why: Single point for all scope decisions (initial + redirects).
+// What: No entries -> open mode (allow all, no enforcement); entries ->
+// strict allowlist match plus DNS-rebinding check for domain entries.
+// Why: Single point for all scope decisions (initial + redirects); strictness
+// is opt-in via --scope (operator-responsibility model).
 func (sm *ScopeManager) CheckScope(ctx context.Context, u *url.URL) error {
 	sm.mu.RLock()
 	entries := sm.allowedEntries
-	originalTarget := sm.originalTarget
 	sm.mu.RUnlock()
 
 	if len(entries) == 0 {
-		// Implicit scope: only the original target is allowed
-		if originalTarget != "" {
-			origU, _ := url.Parse(originalTarget)
-			if origU != nil && sm.sameTarget(u, origU) {
-				return nil
-			}
-			return &ScopeError{Op: "implicit-scope", URL: u.String(), Err: fmt.Errorf("%w: target %s not in implicit scope (original: %s)", plugin.ErrScopeViolation, u.String(), originalTarget)}
-		}
-		return nil // No scope configured = allow all (backward compat for tests)
+		// Open mode: no --scope configured. No host is denied; DNS decides.
+		return nil
 	}
 
 	host := strings.ToLower(u.Hostname())
@@ -262,13 +254,6 @@ func (sm *ScopeManager) checkIPRebinding(ctx context.Context, host, allowedDomai
 		}
 	}
 	return nil
-}
-
-// sameTarget checks if two URLs refer to the same target (scheme + host + port).
-func (sm *ScopeManager) sameTarget(a, b *url.URL) bool {
-	return strings.EqualFold(a.Scheme, b.Scheme) &&
-		strings.EqualFold(a.Hostname(), b.Hostname()) &&
-		a.Port() == b.Port()
 }
 
 // ScopeError wraps scope violations with operation context.

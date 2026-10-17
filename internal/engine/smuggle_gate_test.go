@@ -80,8 +80,9 @@ func TestSmuggleSkipReported(t *testing.T) {
 	}
 }
 
-// TestSmuggleAggressiveConsistentNoFinding agresif profilde tutarlı
-// localhost backend'in bulgusuz (TN) kaldığını kanıtlar.
+// TestSmuggleAggressiveConsistentNoFinding agresif + --scope yok (open mod):
+// tutarlı localhost backend'de bulgu YOK ve soket AÇILIR (skip değil,
+// smuggle_requests > 0 open-mod dial kanıtıdır).
 func TestSmuggleAggressiveConsistentNoFinding(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -109,5 +110,47 @@ func TestSmuggleAggressiveConsistentNoFinding(t *testing.T) {
 	}
 	if n, ok := rep.Stats["smuggle_requests"]; !ok || n <= 0 {
 		t.Fatalf("agresif taramada smuggle_requests ölçülmeli: %+v", rep.Stats)
+	}
+}
+
+// TestSmuggleScopedOutNoSocket --scope verilince kapsam-dışı hedefe soket
+// AÇILMAZ (strict mod kanıtı; open modda yazılımsal engel yok).
+func TestSmuggleScopedOutNoSocket(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK-clean"))
+	}))
+	defer srv.Close()
+	dir := writeE2EPlugin(t)
+	reg := plugin.NewRegistry()
+	if _, err := loader.Discover([]string{dir}, reg); err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	cfg := DefaultConfig()
+	cfg.Active = true
+	cfg.Profile = config.ProfileAggressive
+	cfg.Scope = []string{"example.org"} // loopback hedef kapsam DIŞI
+	e := New(reg, cfg)
+	rep, err := e.Run(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	found := false
+	for _, s := range rep.Skipped {
+		if s.PluginID == smuggle.PluginID && strings.Contains(s.Reason, "scope violation") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("kapsam-dışı → smuggle scope-violation skip izi beklenir: %+v", rep.Skipped)
+	}
+	if n := rep.Stats["smuggle_requests"]; n != 0 {
+		t.Fatalf("kapsam-dışı soket AÇILMAMALI (smuggle_requests=%d)", n)
+	}
+	for _, f := range rep.Findings {
+		if f.RuleID == smuggle.RuleID {
+			t.Fatalf("kapsam-dışı GASH-033 bulgusu olmamalı: %+v", f)
+		}
 	}
 }

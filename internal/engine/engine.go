@@ -34,7 +34,9 @@ type Config struct {
 	// Technologies bilinen/tespit edilen teknolojiler (P2.3 chain kapısı, örn. "wordpress").
 	Technologies []string
 	// TCPBanners açık TCP banner probları "host:port" (P2.1, --active şart).
-	TCPBanners           []string
+	TCPBanners []string
+	// Scope explicit --scope allowlist'idir. Boşsa open mod: yazılımsal host
+	// engeli yok (redirect/crawl takibi serbest, operatör sorumluluğu).
 	Scope                []string
 	MaxRequestsPerTarget int64
 	MaxRequestsTotal     int64

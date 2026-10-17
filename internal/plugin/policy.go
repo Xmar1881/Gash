@@ -17,7 +17,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/net/publicsuffix"
 	"golang.org/x/time/rate"
 )
 
@@ -107,7 +106,7 @@ type PolicyConfig struct {
 	// SafeDefault tarama safe varsayılanıdır; Safe=false plugin'ler ayrıca filtrelenir.
 	MaxRequestsPerTarget int64
 	MaxRequestsTotal     int64
-	Scope                []string // CIDR veya domain allowlist; boşsa implicit-scope (hedefe izin)
+	Scope                []string // CIDR/domain allowlist; boşsa open mod (blok yok, operatör sorumluluğu)
 	RatePerSecond        float64  // per-target token bucket; <=0 ise limitsiz (testler için)
 	MaxResponseBytes     int64
 
@@ -267,13 +266,16 @@ func max(a, b int) int {
 }
 
 // scopeManager manages allowed targets with IP rebinding detection (P1.3).
+// What: Explicit --scope entries only; empty entry list = open mode (no
+// host enforcement, no IP pinning - DNS decides).
+// Why: Scope is an opt-in strict mode (Nuclei/ZAP operator-responsibility
+// model); without --scope the operator carries the authorization burden.
 type scopeManager struct {
-	mu             sync.RWMutex
-	entries        []scopeEntry
-	resolvedIPs    map[string][]net.IP
-	originalTarget string
-	resolver       *net.Resolver
-	cacheTTL       time.Duration
+	mu          sync.RWMutex
+	entries     []scopeEntry
+	resolvedIPs map[string][]net.IP
+	resolver    *net.Resolver
+	cacheTTL    time.Duration
 }
 
 type scopeEntryType int
@@ -336,10 +338,12 @@ func (sm *scopeManager) parseEntry(entry string) *scopeEntry {
 	return &scopeEntry{Type: scopeTypeDomain, Value: strings.ToLower(entry)}
 }
 
+// setOriginalTarget records the scan target and warms the resolver cache.
+// What: Diagnostics/DNS-cache seed only; open mode has no enforcement role.
+// Why: Keeps SetOriginalTarget call sites working without implicit-scope blocking.
 func (sm *scopeManager) setOriginalTarget(target string) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.originalTarget = target
 	u, _ := url.Parse(target)
 	if u != nil {
 		sm.resolveAndCache(u.Hostname())
@@ -364,27 +368,19 @@ func (sm *scopeManager) resolveAndCache(host string) []net.IP {
 	return ipList
 }
 
+// check validates a URL against the session scope (single decision point).
+// What: Explicit --scope -> strict allowlist + rebinding; no --scope -> open
+// mode: every host is allowed (redirects, crawl links, cross-scheme included).
+// Why: Operator-responsibility model (Nuclei/ZAP): software blocks are gone,
+// strictness must be opted in via --scope.
 func (sm *scopeManager) check(ctx context.Context, u *url.URL) error {
 	sm.mu.RLock()
 	entries := sm.entries
-	originalTarget := sm.originalTarget
 	sm.mu.RUnlock()
 
 	if len(entries) == 0 {
-		if originalTarget != "" {
-			origU, _ := url.Parse(originalTarget)
-			if origU != nil && sm.sameTarget(origU, u) {
-				// Apex↔www variant: the variant host must resolve to IPs already
-				// seen for the original target; different IPs are DNS rebinding.
-				if !strings.EqualFold(origU.Hostname(), u.Hostname()) {
-					if err := sm.checkIPRebinding(ctx, strings.ToLower(u.Hostname()), strings.ToLower(origU.Hostname())); err != nil {
-						return err
-					}
-				}
-				return nil
-			}
-			return fmt.Errorf("%w: target %s not in implicit scope (original: %s)", ErrScopeViolation, u.String(), originalTarget)
-		}
+		// Open mode: no --scope configured. No host is denied and DNS
+		// rebinding pinning is off (DNS decides).
 		return nil
 	}
 
@@ -405,6 +401,16 @@ func (sm *scopeManager) check(ctx context.Context, u *url.URL) error {
 	}
 
 	return fmt.Errorf("%w: host %s not in scope", ErrScopeViolation, host)
+}
+
+// hasExplicitScope reports whether an explicit --scope allowlist is in force.
+func (sm *scopeManager) hasExplicitScope() bool {
+	if sm == nil {
+		return false
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return len(sm.entries) > 0
 }
 
 func (sm *scopeManager) match(u *url.URL, host, scheme, path, port string, e scopeEntry) bool {
@@ -479,56 +485,14 @@ func (sm *scopeManager) checkIPRebinding(ctx context.Context, host, allowedDomai
 	return nil
 }
 
-// sameTarget reports whether candidate is allowed under the implicit scope of
-// the original target: same port, same host (or its apex↔www variant), and the
-// same scheme or an http→https upgrade. https→http downgrades are rejected.
-func (sm *scopeManager) sameTarget(original, candidate *url.URL) bool {
-	if !schemeAllowed(original.Scheme, candidate.Scheme) {
-		return false
-	}
-	if original.Port() != candidate.Port() {
-		return false
-	}
-	return sameSiteVariant(original.Hostname(), candidate.Hostname())
-}
-
-// schemeAllowed accepts an unchanged scheme or an http→https upgrade.
-// What: Cross-scheme implicit-scope decision for a single hop.
-// Why: Upgrade keeps confidentiality; downgrade must never be followed.
-func schemeAllowed(from, to string) bool {
-	return strings.EqualFold(from, to) || isSchemeUpgrade(from, to)
-}
-
+// isSchemeUpgrade reports an http→https transition (strict-mode allowed hop).
 func isSchemeUpgrade(from, to string) bool {
 	return strings.EqualFold(from, "http") && strings.EqualFold(to, "https")
 }
 
+// isSchemeDowngrade reports an https→http transition (strict mode: never).
 func isSchemeDowngrade(from, to string) bool {
 	return strings.EqualFold(from, "https") && strings.EqualFold(to, "http")
-}
-
-// sameSiteVariant reports whether two hostnames are the same host or its
-// apex↔www variant within one registrable domain (publicsuffix). Arbitrary
-// subdomains are NOT included; IP literals require an exact match.
-func sameSiteVariant(a, b string) bool {
-	a = strings.ToLower(strings.TrimSuffix(a, "."))
-	b = strings.ToLower(strings.TrimSuffix(b, "."))
-	if a == b {
-		return true
-	}
-	if a == "" || b == "" || net.ParseIP(a) != nil || net.ParseIP(b) != nil {
-		return false
-	}
-	regA, errA := publicsuffix.EffectiveTLDPlusOne(a)
-	regB, errB := publicsuffix.EffectiveTLDPlusOne(b)
-	if errA != nil || errB != nil || regA != regB {
-		return false
-	}
-	return isApexOrWWW(a, regA) && isApexOrWWW(b, regB)
-}
-
-func isApexOrWWW(host, registrable string) bool {
-	return host == registrable || host == "www."+registrable
 }
 
 // scanBudget tracks total scan budget to prevent unlimited scans (P1.3).
@@ -693,6 +657,17 @@ func (p *PolicySession) CheckScope(ctx context.Context, u *url.URL) error {
 		return nil
 	}
 	return p.checkScope(ctx, u)
+}
+
+// strictScope reports whether an explicit --scope allowlist is in force.
+// What: Open mode (no --scope) follows cross-host/cross-scheme redirects;
+// strict mode keeps upgrade-only/downgrade-never redirect rules.
+// Why: Scope is the opt-in strict mode; without it the operator decides.
+func (p *PolicySession) strictScope() bool {
+	if p == nil || p.scopeManager == nil {
+		return false
+	}
+	return p.scopeManager.hasExplicitScope()
 }
 
 // TotalCount test/rapor için toplam istek sayısı.
@@ -915,20 +890,25 @@ func (p *PolicySession) RoundTripWithRetry(req *http.Request) (*http.Response, e
 					Err: fmt.Errorf("%w: invalid redirect location %q: %v", ErrPolicyViolation, location, err)}
 			}
 
-			// Cross-scheme check: http→https upgrades only, downgrades never.
-			if !strings.EqualFold(nextURL.Scheme, req.URL.Scheme) {
+			// Cross-scheme redirect handling:
+			//  - strict mode (--scope): http→https upgrade only; https→http
+			//    downgrades (and any other transition) are never followed.
+			//  - open mode (no --scope): http↔https both directions are
+			//    followed (Nuclei/ZAP behavior); non-http(s) stays unsupported.
+			if !strings.EqualFold(nextURL.Scheme, currentReq.URL.Scheme) {
+				nextScheme := strings.ToLower(nextURL.Scheme)
 				switch {
-				case isSchemeDowngrade(req.URL.Scheme, nextURL.Scheme):
+				case nextScheme != "http" && nextScheme != "https":
 					return nil, &PolicyError{PluginID: pc.ID, Op: "redirect",
-						Err: fmt.Errorf("%w: scheme downgrade %s→%s never allowed", ErrPolicyViolation, req.URL.Scheme, nextURL.Scheme)}
-				case isSchemeUpgrade(req.URL.Scheme, nextURL.Scheme):
+						Err: fmt.Errorf("%w: redirect to unsupported scheme %q", ErrPolicyViolation, nextURL.Scheme)}
+				case isSchemeDowngrade(currentReq.URL.Scheme, nextURL.Scheme) && p.strictScope():
+					return nil, &PolicyError{PluginID: pc.ID, Op: "redirect",
+						Err: fmt.Errorf("%w: scheme downgrade %s→%s never allowed", ErrPolicyViolation, currentReq.URL.Scheme, nextURL.Scheme)}
+				case isSchemeUpgrade(currentReq.URL.Scheme, nextURL.Scheme):
 					if !p.cfg.RedirectPolicy.AllowCrossScheme {
 						return nil, &PolicyError{PluginID: pc.ID, Op: "redirect",
-							Err: fmt.Errorf("%w: cross-scheme redirect %s→%s not allowed", ErrPolicyViolation, req.URL.Scheme, nextURL.Scheme)}
+							Err: fmt.Errorf("%w: cross-scheme redirect %s→%s not allowed", ErrPolicyViolation, currentReq.URL.Scheme, nextURL.Scheme)}
 					}
-				default:
-					return nil, &PolicyError{PluginID: pc.ID, Op: "redirect",
-						Err: fmt.Errorf("%w: cross-scheme redirect %s→%s not allowed", ErrPolicyViolation, req.URL.Scheme, nextURL.Scheme)}
 				}
 			}
 

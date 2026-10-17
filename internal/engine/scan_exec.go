@@ -323,35 +323,60 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 	// Request smuggling (CL.TE/TE.CL/TE.TE): --active + --aggressive kapılı
 	// engine-recon (GASH-033, CWE-444). Tier1-YAML değil, engine-recon —
 	// gerekçe: net/http chunk çerçevelemeyi denetlemez; ham-TCP dial +
-	// keep-alive çift-isabet (muğlak+takip) + AllowHost preflight + lab-only
-	// kilidi tek-istekli YAML kalıbına sığmaz; kanıt motor-içidir
-	// (finding.Build bypass — proto/content-discovery recon disiplini).
+	// keep-alive çift-isabet (muğlak+takip) tek-istekli YAML kalıbına sığmaz;
+	// kanıt motor-içidir (finding.Build bypass — proto/content-discovery
+	// recon disiplini). Hedef kullanıcının verdiği host'tur (Nuclei/Burp
+	// smuggler modeli); kapsam preflight yalnızca --scope verilmişse uygulanır.
 	// Kapı dışı (safe/standard/deep dahil) sessiz değil, denetim izli
-	// skip'tir; kapsam-dışı/lab-dışı soket AÇILMAZ (≤10 istek, 5s tavan).
+	// skip'tir; kapsam-dışı soket AÇILMAZ (≤10 istek, 5s tavan).
 	var smuggleRequests int
 	if smuggleGateOK(e) {
-		if targetURL, perr := url.Parse(target); perr == nil {
-			allow := e.protoAllow(targetURL)
-			sres, serr := smuggle.Scan(ctx, target, smuggle.Options{
-				Timeout:    5 * time.Second,
-				Allow:      smuggle.AllowHost(allow),
-				Active:     e.cfg.Active,
-				Aggressive: e.cfg.Profile == config.ProfileAggressive,
-			})
-			switch {
-			case serr != nil && errors.Is(serr, plugin.ErrScopeViolation):
-				execSkipped = append(execSkipped, plugin.SkippedPlugin{PluginID: smuggle.PluginID, Reason: "skipped (smuggle-probe scope violation, no socket opened)"})
-			case serr != nil:
-				// Ölçülemeyen hedef sessiz geçilir (TCP banner recon disiplini);
-				// tarama durmaz, sahte bulgu YOK.
-			case sres != nil:
-				smuggleRequests = sres.Requests
-				if sres.Finding != nil {
-					allFindings = append(allFindings, sres.Finding)
+		var smuggleAllow smuggle.AllowHost
+		if len(e.cfg.Scope) > 0 {
+			targetURL, perr := url.Parse(target)
+			if perr != nil {
+				// Scope verilmiş ama hedef ayrıştırılamadı: fail-closed kapı.
+				smuggleAllow = func(string) bool { return false }
+			} else {
+				// Strict mod: smuggler yalnızca hedefe dial eder; hedef
+				// kapsam-dışıysa soket AÇILMAZ (plugin hattıyla tutarlı).
+				// Hedef-host muafiyeti (protoAllow) BURADA uygulanmaz.
+				sm := NewScopeManager(e.cfg.Scope)
+				sm.SetOriginalTarget(targetURL.String())
+				scheme := targetURL.Scheme
+				port := targetURL.Port()
+				if port == "" {
+					if scheme == "https" {
+						port = "443"
+					} else {
+						port = "80"
+					}
 				}
-				if sres.Skipped != "" {
-					execSkipped = append(execSkipped, plugin.SkippedPlugin{PluginID: smuggle.PluginID, Reason: sres.Skipped})
+				smuggleAllow = func(host string) bool {
+					checkURL := &url.URL{Scheme: scheme, Host: net.JoinHostPort(host, port)}
+					return sm.CheckScope(context.Background(), checkURL) == nil
 				}
+			}
+		}
+		sres, serr := smuggle.Scan(ctx, target, smuggle.Options{
+			Timeout:    5 * time.Second,
+			Allow:      smuggleAllow,
+			Active:     e.cfg.Active,
+			Aggressive: e.cfg.Profile == config.ProfileAggressive,
+		})
+		switch {
+		case serr != nil && errors.Is(serr, plugin.ErrScopeViolation):
+			execSkipped = append(execSkipped, plugin.SkippedPlugin{PluginID: smuggle.PluginID, Reason: "skipped (smuggle-probe scope violation, no socket opened)"})
+		case serr != nil:
+			// Ölçülemeyen hedef sessiz geçilir (TCP banner recon disiplini);
+			// tarama durmaz, sahte bulgu YOK.
+		case sres != nil:
+			smuggleRequests = sres.Requests
+			if sres.Finding != nil {
+				allFindings = append(allFindings, sres.Finding)
+			}
+			if sres.Skipped != "" {
+				execSkipped = append(execSkipped, plugin.SkippedPlugin{PluginID: smuggle.PluginID, Reason: sres.Skipped})
 			}
 		}
 	} else {
@@ -867,7 +892,7 @@ func (e *Engine) protoAllow(target *url.URL) proto.AllowHost {
 			return true
 		}
 		if len(e.cfg.Scope) == 0 {
-			return false // implicit scope: yalnızca hedef host
+			return false // open mod: proto kontrolleri yalnızca hedefte koşar
 		}
 		checkURL := &url.URL{Scheme: "https", Host: h}
 		return sm.CheckScope(context.Background(), checkURL) == nil

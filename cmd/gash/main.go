@@ -155,7 +155,7 @@ func newScanCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "scan",
 		Short: "Hedefi tara (Candidate→Verify→Finding hattı)",
-		Long:  "Target scanner with live Tier1/Tier2/Tier3 execution and oracle verification.\n\nResponsibility note: scan only targets you own or have explicit written permission to test.\nScan only with explicit permission; unauthorized scanning may be illegal and is strictly prohibited.\nUse --scope to lock the allowlist and keep --safe unless you understand active payloads.",
+		Long:  "Target scanner with live Tier1/Tier2/Tier3 execution and oracle verification.\n\nLegal: authorized testing only; operator responsibility. Scan only targets you own or have\nwritten permission to test; unauthorized scanning may be illegal.\nWithout --scope no host is blocked: redirects and crawl links (any host, any http/https\nscheme) are followed and DNS decides. Pass --scope <cidr/domain,...> to lock a strict\nallowlist (redirect re-validation, upgrade-only, downgrade never, DNS-rebinding pinning).\nKeep --safe unless you understand active payloads.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			if aggressive {
@@ -266,14 +266,7 @@ func newScanCmd() *cobra.Command {
 						return err
 					}
 				} else {
-					host := normalized
-					if u, uerr := url.Parse(normalized); uerr == nil && u.Hostname() != "" {
-						host = u.Hostname()
-					}
-					fmt.Fprintf(cmd.ErrOrStderr(), "warn: implicit scope: only %s and its known www/apex variant will be scanned; use --scope for full subdomain coverage.\n", host)
-					if !isLocalScanTarget(normalized) {
-						fmt.Fprintln(cmd.ErrOrStderr(), "warn: external target without --scope — scan only with explicit permission")
-					}
+					fmt.Fprintln(cmd.ErrOrStderr(), "notice: no --scope set: redirects and crawl links on any host will be followed; scan only systems you are authorized to test.")
 				}
 			}
 			if !safe {
@@ -412,7 +405,7 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&deep, "deep", false, "deep faz + ExecutionOracle kapısı")
 	cmd.Flags().BoolVar(&active, "active", false, "state-changing/OOB payload kapısı")
 	cmd.Flags().BoolVar(&aggressive, "aggressive", false, "tam güç ofansif tarama: tüm dedektörler, genişletilmiş bütçe, yüksek rate-limit")
-	cmd.Flags().StringSliceVar(&scope, "scope", nil, "CIDR/domain allowlist (verilirse hedef doğrulanır)")
+	cmd.Flags().StringSliceVar(&scope, "scope", nil, "CIDR/domain allowlist (verilirse opt-in sıkı mod; verilmezse host engeli yok)")
 	cmd.Flags().Int64Var(&maxPerTarget, "max-requests-per-target", 1000, "per-target bütçe")
 	cmd.Flags().Int64Var(&maxTotal, "max-requests-total", 10000, "global bütçe")
 	cmd.Flags().StringVar(&pluginTimeout, "plugin-timeout", "30s", "per-plugin timeout")

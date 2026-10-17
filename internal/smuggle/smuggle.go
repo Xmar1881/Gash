@@ -17,10 +17,12 @@
 // statü farkı) bulgu üretmez — çift kanıt zorunludur.
 //
 // Güvenlik sınırları (bilerek YOK / kapalı):
-//   - Kapsam: prob GÖNDERMEDEN ÖNCE AllowHost preflight; kapsam-dışı veya
-//     kararsız (nil) → ErrScopeViolation, soket AÇILMADAN (fail-closed).
-//   - Lab-only: literal loopback dışı hedefe ham soket YOK (127.0.0.0/8,
-//     ::1, localhost); dış hedef → sessiz değil, denetim izli skip.
+//   - Hedef: kullanıcının verdiği host (Nuclei/Burp smuggler modeli); lab-only
+//     loopback kilidi YOK. Yazılımsal hedef-engeli bırakıldı; operatör
+//     sorumluluğu geçerlidir (yalnızca yetkili sistemlerde koşun).
+//   - Kapsam: AllowHost preflight yalnızca --scope verilmişse uygulanır
+//     (nil Allow = open mod, blok yok); kapsam-dışı → ErrScopeViolation,
+//     soket AÇILMADAN (fail-closed).
 //   - Kapı: --active + agresif profil dışında ÇALIŞMAZ (safe/standard/deep
 //     dahil); skip + raporda sebep, bulgu YOK.
 //   - Hacim: en fazla MaxProbes (10) istek, prob başına 5s tavan; gövdeler
@@ -91,21 +93,23 @@ const (
 // ProbeKinds deneme sırasındaki türlerdir.
 func ProbeKinds() []string { return []string{KindCLTE, KindTECL, KindTETE} }
 
-// AllowHost kapsam kararıdır (host → izinli mi). Nil = kapalı (fail-closed).
+// AllowHost kapsam kararıdır (host → izinli mi). Nil = --scope verilmemiş
+// (open mod, blok yok; operatör sorumluluğu).
 type AllowHost func(host string) bool
 
 // Options prob sınırlarıdır.
 type Options struct {
 	// Timeout prob başına tavan (0 ise 5s).
 	Timeout time.Duration
-	// Allow kapsam kararı; nil ise prob çalışmaz (fail-closed).
+	// Allow kapsam kararı; nil ise --scope yok → open mod (fail-closed DEĞİL).
 	Allow AllowHost
 	// Active --active bayrağıdır.
 	Active bool
 	// Aggressive agresif profil onayıdır (--aggressive → active+profil).
 	Aggressive bool
-	// DialHook dial öncesi kancadır (test soket sayacı; canlıda nil).
-	DialHook func()
+	// Dialer ham TCP dialer'ıdır (test enjeksiyonu: sahte dialer/sayaç);
+	// nil ise net.DialTimeout kullanılır.
+	Dialer func(ctx context.Context, network, address string) (net.Conn, error)
 }
 
 func (o Options) timeout() time.Duration {
@@ -123,31 +127,23 @@ func (o Options) gate() (string, bool) {
 	return "", true
 }
 
-// checkAllowed kapsamı doğrular (fail-closed; soket öncesi).
+// checkAllowed kapsamı doğrular (fail-closed yalnızca --scope verilmişse;
+// soket öncesi).
+// What: Allow == nil → open mod, hiçbir host bloklanmaz; Allow dolu →
+// deny kararı ErrScopeViolation üretir, soket açılmaz.
+// Why: Kapsam opt-in sıkı moddur (Nuclei/Burp smuggler modeli).
 func (o Options) checkAllowed(host string) error {
 	h := strings.ToLower(strings.TrimSpace(host))
 	if h == "" {
 		return fmt.Errorf("smuggle: boş host: %w", plugin.ErrScopeViolation)
 	}
 	if o.Allow == nil {
-		return fmt.Errorf("smuggle: kapsam kararı yok (fail-closed): %w", plugin.ErrScopeViolation)
+		return nil // open mod: --scope yok, blok yok
 	}
 	if !o.Allow(h) {
 		return fmt.Errorf("smuggle: host %s kapsam-dışı: %w", h, plugin.ErrScopeViolation)
 	}
 	return nil
-}
-
-// isLoopbackHost lab-only kilididir: literal loopback dışı → ham soket yok.
-func isLoopbackHost(host string) bool {
-	h := strings.ToLower(strings.TrimSpace(host))
-	if h == "localhost" {
-		return true
-	}
-	if ip := net.ParseIP(h); ip != nil {
-		return ip.IsLoopback()
-	}
-	return false
 }
 
 // errHTTP2 h2 negotiate sentinelidir (smuggling geçersiz → skip).
@@ -202,12 +198,16 @@ func (o Options) dial(ctx context.Context, dt dialTarget) (net.Conn, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if o.DialHook != nil {
-		o.DialHook()
+	addr := net.JoinHostPort(dt.host, dt.port)
+	var conn net.Conn
+	var err error
+	if o.Dialer != nil {
+		conn, err = o.Dialer(ctx, "tcp", addr)
+	} else {
+		conn, err = net.DialTimeout("tcp", addr, o.timeout())
 	}
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(dt.host, dt.port), o.timeout())
 	if err != nil {
-		return nil, fmt.Errorf("smuggle dial %s:%s: %w", dt.host, dt.port, err)
+		return nil, fmt.Errorf("smuggle dial %s: %w", addr, err)
 	}
 	if !dt.useTLS {
 		return conn, nil
@@ -532,9 +532,10 @@ func truncate(s string, n int) string {
 }
 
 // Scan hedefte smuggling diferansiyel taraması koşar.
-// What: Kapı → lab-only/host → kapsam preflight → kontrol çifti + 3 tür probu
-// (≤10 istek) → çift-kanıt kararı → en fazla firm bulgu.
-// Why: Tek canlı döngü; kapsam-dışı/lab-dışı istek YOK, yıkıcı gövde YOK.
+// What: Kapı → kapsam preflight (yalnızca --scope verilmişse) → kontrol çifti
+// + 3 tür probu (≤10 istek) → çift-kanıt kararı → en fazla firm bulgu.
+// Why: Tek canlı döngü; open modda kullanıcı hedefine soket açılır (operatör
+// sorumluluğu), --scope verilmişse kapsam-dışı istek YOK, yıkıcı gövde YOK.
 func Scan(ctx context.Context, target string, opts Options) (*ScanResult, error) {
 	res := &ScanResult{Detail: map[string]string{}}
 	if reason, ok := opts.gate(); !ok {
@@ -545,11 +546,8 @@ func Scan(ctx context.Context, target string, opts Options) (*ScanResult, error)
 	if err != nil {
 		return nil, err
 	}
-	if !isLoopbackHost(dt.host) {
-		res.Skipped = "skipped (smuggle-probe lab-only: loopback dışı hedefe ham soket yok)"
-		return res, nil
-	}
-	// Kapsam preflight: SOKETTEN ÖNCE (scope-dışı → ErrScopeViolation).
+	// Kapsam preflight: yalnızca --scope verilmişse (Allow != nil);
+	// kapsam-dışı → ErrScopeViolation, SOKET AÇILMADAN.
 	if err := opts.checkAllowed(dt.host); err != nil {
 		return nil, err
 	}

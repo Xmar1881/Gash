@@ -20,7 +20,10 @@ request first, then the byte-identical harmless follow-up GET. Control and
 probe follow-ups are compared for status/body divergence (differential) and
 follow-up latency delta (timing). Emits **GASH-033 request-smuggling
 (CWE-444, severity high)** at most at `firm`. `--active` + `--aggressive`
-gated; anything else is an auditable skip, never a finding.
+gated; anything else is an auditable skip, never a finding. Scope
+enforcement is opt-in: without `--scope` the probe dials the user-supplied
+host (operator responsibility); with `--scope` the target must be in scope
+or the probe skips with `ErrScopeViolation` and zero sockets.
 
 ## Evidence Standard
 
@@ -33,7 +36,7 @@ follow-up is delayed (>=500 ms delta) or times out. Ladder:
   This is the ceiling; `confirmed` NEVER fires from this discipline alone.
 - reject (no finding): single-channel signal only (delay without divergence
   or divergence without delay), broken control pair (timeout/5xx), WAF/block
-  first response (`Untrusted` -> axis dropped), scope/lab/gate skip.
+  first response (`Untrusted` -> axis dropped), scope/gate skip.
 
 Oracle choice rationale: smuggling proof is a framing-interpretation
 difference plus a queuing delay on the same connection. The existing
@@ -57,8 +60,11 @@ açamaz):
 
 Unit mocks are localhost raw-TCP servers in `internal/smuggle/smuggle_test.go`
 (no external traffic): TP on vulnerable mock, TN on consistent mock,
-`ErrScopeViolation` + zero dials on scope-denied/nil-Allow, skip + zero
-dials on gate-off and on non-loopback (documentation IP, never dialed).
+`ErrScopeViolation` + zero dials on scope-denied, skip + zero dials on
+gate-off. Open mode (nil `Allow`) is dial-proofed without network via a
+fake injected dialer: non-loopback targets (documentation IP) reach the
+dial attempt instead of being refused, and the error surfaces without a
+finding.
 
 ## Corpus Result
 
@@ -100,8 +106,10 @@ by construction.
 
 - Requires `--active` + `--aggressive` (aggressive profile); safe/standard/deep
   scans record an auditable skip, never a finding.
-- Lab-only loopback: non-loopback targets get no raw socket (skip), even when
-  scope would allow; external desync measurement is out of scope.
+- Dials the user-supplied target (Nuclei/Burp smuggler model; written
+  authorization required). With `--scope` set, an out-of-scope target gets
+  `ErrScopeViolation` and zero raw sockets; external desync measurement is
+  the operator's responsibility under authorization.
 - HTTPS verifies SNI/hostname (no skip); self-signed lab TLS without a valid
   chain fails closed (no finding, scan continues).
 - HTTP/2 negotiated via ALPN -> skip (smuggling invalid over h2); probe forces

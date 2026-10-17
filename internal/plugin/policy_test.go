@@ -33,11 +33,11 @@ func ipList(vals ...string) []net.IP {
 	return ips
 }
 
-// newImplicitScopeManager builds an implicit-scope manager with resolved IPs
-// pre-seeded so tests never depend on real DNS.
-func newImplicitScopeManager(t *testing.T, original string, resolved map[string][]net.IP) *scopeManager {
+// newScopedManager builds a manager with explicit --scope entries and seeded
+// resolved IPs so tests never depend on real DNS.
+func newScopedManager(t *testing.T, original string, scope []string, resolved map[string][]net.IP) *scopeManager {
 	t.Helper()
-	sm := newScopeManager(nil)
+	sm := newScopeManager(scope)
 	for host, ips := range resolved {
 		sm.resolvedIPs[host] = ips
 	}
@@ -45,109 +45,155 @@ func newImplicitScopeManager(t *testing.T, original string, resolved map[string]
 	return sm
 }
 
-func TestImplicitScope_HTTPToHTTPSUpgradeAllowed(t *testing.T) {
-	sm := newImplicitScopeManager(t, "http://example.com", map[string][]net.IP{
-		"example.com": ipList("93.184.216.34"),
-	})
-	if err := sm.check(context.Background(), mustParseScopeURL(t, "https://example.com/")); err != nil {
-		t.Fatalf("http→https upgrade must be allowed: %v", err)
-	}
-}
-
-func TestImplicitScope_ApexWWWVariantAllowed(t *testing.T) {
-	httpSM := newImplicitScopeManager(t, "http://example.com", map[string][]net.IP{
-		"example.com":     ipList("93.184.216.34"),
-		"www.example.com": ipList("93.184.216.34"),
-	})
-	for _, candidate := range []string{"https://www.example.com/", "http://www.example.com/"} {
-		if err := httpSM.check(context.Background(), mustParseScopeURL(t, candidate)); err != nil {
-			t.Fatalf("apex↔www variant %s must be in implicit scope: %v", candidate, err)
+// TestOpenMode_NoScopeAllowsAnyHost proves that without --scope no host is
+// blocked (operator-responsibility model; old implicit scope is gone).
+func TestOpenMode_NoScopeAllowsAnyHost(t *testing.T) {
+	sm := newScopeManager(nil)
+	sm.setOriginalTarget("https://example.com")
+	for _, raw := range []string{
+		"https://example.com/",
+		"https://www.example.com/",
+		"https://api.example.com/",
+		"https://evil-example.com/",
+		"https://example.org/",
+		"http://example.com/", // cross-scheme variant: still allowed in open mode
+		"http://93.184.216.34/",
+	} {
+		if err := sm.check(context.Background(), mustParseScopeURL(t, raw)); err != nil {
+			t.Fatalf("open mode (no --scope) must not block %s: %v", raw, err)
 		}
 	}
+}
 
-	httpsSM := newImplicitScopeManager(t, "https://example.com", map[string][]net.IP{
-		"example.com":     ipList("93.184.216.34"),
-		"www.example.com": ipList("93.184.216.34"),
-	})
-	if err := httpsSM.check(context.Background(), mustParseScopeURL(t, "https://www.example.com/")); err != nil {
-		t.Fatalf("https apex→www variant must be in implicit scope: %v", err)
+// TestOpenMode_CrossHostRedirectFollowed locks open-mode redirect following
+// (cross-host, cross-scheme, cross-registrable-domain).
+func TestOpenMode_CrossHostRedirectFollowed(t *testing.T) {
+	policy, rt := newTestPolicySession(t, "https://example.com", map[string][]net.IP{
+		"example.com": ipList("93.184.216.34"),
+	}, scriptedRedirect("https://cdn.other-domain.net/home"))
+
+	resp, err := doRedirectRequest(t, policy, "https://example.com/")
+	if err != nil {
+		t.Fatalf("open mode must follow cross-host redirects: %v", err)
 	}
-	// https apex → http www is a downgrade: still out of implicit scope.
-	if err := httpsSM.check(context.Background(), mustParseScopeURL(t, "http://www.example.com/")); err == nil {
-		t.Fatal("http www variant under https apex must be rejected (downgrade)")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 after cross-host redirect, got %d", resp.StatusCode)
+	}
+	seen := rt.seen()
+	if len(seen) != 2 || seen[0] != "https://example.com/" || seen[1] != "https://cdn.other-domain.net/home" {
+		t.Fatalf("unexpected request chain: %v", seen)
 	}
 }
 
-func TestImplicitScope_OutOfScopeHostsRejected(t *testing.T) {
-	sm := newImplicitScopeManager(t, "https://example.com", map[string][]net.IP{
+// TestOpenMode_CrossSchemeDowngradeFollowed proves open mode follows
+// https→http redirects (scheme difference included; strict mode never does).
+func TestOpenMode_CrossSchemeDowngradeFollowed(t *testing.T) {
+	policy, rt := newTestPolicySession(t, "https://example.com", map[string][]net.IP{
 		"example.com": ipList("93.184.216.34"),
+	}, scriptedRedirect("http://example.com/plain"))
+
+	resp, err := doRedirectRequest(t, policy, "https://example.com/")
+	if err != nil {
+		t.Fatalf("open mode must follow cross-scheme redirects: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 after cross-scheme redirect, got %d", resp.StatusCode)
+	}
+	if got := rt.seen(); len(got) != 2 {
+		t.Fatalf("expected the downgrade hop to be requested, saw %v", got)
+	}
+}
+
+// TestScope_ExternalHostsRejected keeps the strict --scope behavior:
+// external registrable domains and suffix tricks stay rejected.
+func TestScope_ExternalHostsRejected(t *testing.T) {
+	sm := newScopedManager(t, "https://example.com", []string{"example.com"}, map[string][]net.IP{
+		"example.com":     ipList("93.184.216.34"),
+		"www.example.com": ipList("93.184.216.34"),
+		"api.example.com": ipList("93.184.216.34"),
 	})
 	for _, candidate := range []string{
 		"https://evil-example.com/",
-		"https://api.example.com/",         // arbitrary subdomain: NOT widened
 		"https://www.example.com.evil.com/", // suffix trick
 		"https://example.org/",
 	} {
 		err := sm.check(context.Background(), mustParseScopeURL(t, candidate))
 		if err == nil {
-			t.Fatalf("candidate %s must be rejected", candidate)
+			t.Fatalf("candidate %s must be rejected with --scope", candidate)
 		}
 		if !errors.Is(err, ErrScopeViolation) {
 			t.Fatalf("candidate %s: expected ErrScopeViolation, got %v", candidate, err)
 		}
 	}
+	// Domain entries stay wide: apex↔www variant and subdomains are in scope.
+	for _, candidate := range []string{"https://www.example.com/", "https://api.example.com/"} {
+		if err := sm.check(context.Background(), mustParseScopeURL(t, candidate)); err != nil {
+			t.Fatalf("candidate %s must be in scope: %v", candidate, err)
+		}
+	}
 }
 
-func TestImplicitScope_HTTPSDowngradeRejected(t *testing.T) {
-	sm := newImplicitScopeManager(t, "https://example.com", map[string][]net.IP{
+// TestScope_HTTPToHTTPSUpgradeAllowed http→https hop stays allowed under scope.
+func TestScope_HTTPToHTTPSUpgradeAllowed(t *testing.T) {
+	sm := newScopedManager(t, "http://example.com", []string{"example.com"}, map[string][]net.IP{
 		"example.com": ipList("93.184.216.34"),
 	})
-	err := sm.check(context.Background(), mustParseScopeURL(t, "http://example.com/"))
+	if err := sm.check(context.Background(), mustParseScopeURL(t, "https://example.com/")); err != nil {
+		t.Fatalf("http→https upgrade must be allowed under --scope: %v", err)
+	}
+}
+
+// TestScope_DNSRebindingWWWDifferentIPRejected rebinding pinning stays on
+// with --scope: a www variant resolving to a new IP is rejected.
+func TestScope_DNSRebindingWWWDifferentIPRejected(t *testing.T) {
+	policy, rt := newTestPolicySessionScoped(t, "https://example.com", []string{"example.com"}, map[string][]net.IP{
+		"example.com":     ipList("93.184.216.34"),
+		"www.example.com": ipList("203.0.113.9"), // rebinding: different IP
+	}, scriptedRedirect("https://www.example.com/home"))
+
+	_, err := doRedirectRequest(t, policy, "https://example.com/")
 	if err == nil {
-		t.Fatal("https→http downgrade must be rejected")
+		t.Fatal("www variant resolving to a different IP must be rejected (DNS rebinding)")
+	}
+	var perr *PolicyError
+	if !errors.As(err, &perr) || perr.Op != "redirect-scope" {
+		t.Fatalf("expected redirect-scope PolicyError, got %v", err)
 	}
 	if !errors.Is(err, ErrScopeViolation) {
 		t.Fatalf("expected ErrScopeViolation, got %v", err)
 	}
+	if got := rt.seen(); len(got) != 1 {
+		t.Fatalf("rebinding target must not be requested, saw %v", got)
+	}
+
+	// One extra IP alongside the original is still rebinding.
+	policy2, rt2 := newTestPolicySessionScoped(t, "https://example.com", []string{"example.com"}, map[string][]net.IP{
+		"example.com":     ipList("93.184.216.34"),
+		"www.example.com": ipList("93.184.216.34", "203.0.113.9"),
+	}, scriptedRedirect("https://www.example.com/home"))
+	if _, err := doRedirectRequest(t, policy2, "https://example.com/"); err == nil {
+		t.Fatalf("www variant with an additional unknown IP must be rejected (saw %v)", rt2.seen())
+	}
 }
 
-func TestImplicitScope_IPHostExactMatchOnly(t *testing.T) {
-	sm := newImplicitScopeManager(t, "http://127.0.0.1:8080", nil)
+// TestScope_IPHostExactMatchOnly exact IP+port scope entry stays strict.
+func TestScope_IPHostExactMatchOnly(t *testing.T) {
+	sm := newScopedManager(t, "http://127.0.0.1:8080", []string{"127.0.0.1:8080"}, map[string][]net.IP{
+		"127.0.0.1": ipList("127.0.0.1"),
+	})
 
 	if err := sm.check(context.Background(), mustParseScopeURL(t, "http://127.0.0.1:8080/scan")); err != nil {
 		t.Fatalf("exact IP+port match must be allowed: %v", err)
 	}
 	for _, candidate := range []string{
-		"http://www.127.0.0.1:8080/", // no www expansion for IP targets
-		"http://127.0.0.2:8080/",     // different IP
-		"http://127.0.0.1:9090/",     // different port
+		"http://127.0.0.2:8080/", // different IP
+		"http://127.0.0.1:9090/", // different port
 	} {
 		if err := sm.check(context.Background(), mustParseScopeURL(t, candidate)); err == nil {
-			t.Fatalf("candidate %s must be rejected for IP target", candidate)
+			t.Fatalf("candidate %s must be rejected for exact IP scope entry", candidate)
 		}
-	}
-}
-
-func TestImplicitScope_DNSRebindingWWWDifferentIPRejected(t *testing.T) {
-	sm := newImplicitScopeManager(t, "https://example.com", map[string][]net.IP{
-		"example.com":     ipList("93.184.216.34"),
-		"www.example.com": ipList("203.0.113.9"), // rebinding: different IP
-	})
-	err := sm.check(context.Background(), mustParseScopeURL(t, "https://www.example.com/"))
-	if err == nil {
-		t.Fatal("www variant resolving to a different IP must be rejected (DNS rebinding)")
-	}
-	if !errors.Is(err, ErrScopeViolation) {
-		t.Fatalf("expected ErrScopeViolation, got %v", err)
-	}
-
-	// One extra IP alongside the original is still rebinding.
-	sm2 := newImplicitScopeManager(t, "https://example.com", map[string][]net.IP{
-		"example.com":     ipList("93.184.216.34"),
-		"www.example.com": ipList("93.184.216.34", "203.0.113.9"),
-	})
-	if err := sm2.check(context.Background(), mustParseScopeURL(t, "https://www.example.com/")); err == nil {
-		t.Fatal("www variant with an additional unknown IP must be rejected")
 	}
 }
 
@@ -156,14 +202,17 @@ func TestDefaultRedirectPolicy_UpgradeOnly(t *testing.T) {
 	if !cfg.RedirectPolicy.AllowCrossScheme {
 		t.Fatal("AllowCrossScheme default must allow the http→https upgrade")
 	}
-	if !schemeAllowed("http", "https") {
-		t.Fatal("http→https must be allowed")
+	if !isSchemeUpgrade("http", "https") {
+		t.Fatal("http→https must be the allowed upgrade axis")
 	}
-	if schemeAllowed("https", "http") {
-		t.Fatal("https→http must never be allowed")
+	if isSchemeUpgrade("https", "http") {
+		t.Fatal("https→http must never be an upgrade")
 	}
-	if schemeAllowed("http", "ftp") || schemeAllowed("http", "ws") {
-		t.Fatal("non-http(s) scheme transitions must not be allowed")
+	if !isSchemeDowngrade("https", "http") {
+		t.Fatal("https→http must be the downgrade axis")
+	}
+	if isSchemeUpgrade("http", "ftp") || isSchemeUpgrade("http", "ws") {
+		t.Fatal("non-http(s) scheme transitions must not be treated as upgrades")
 	}
 }
 
@@ -208,8 +257,17 @@ func scriptedRedirect(location string) func(*http.Request) *http.Response {
 
 func newTestPolicySession(t *testing.T, original string, resolved map[string][]net.IP, handler func(*http.Request) *http.Response) (*PolicySession, *scriptedRoundTripper) {
 	t.Helper()
+	return newTestPolicySessionScoped(t, original, nil, resolved, handler)
+}
+
+// newTestPolicySessionScoped builds an open-mode (scope == nil) or strict-mode
+// (scope != nil) session with pre-seeded DNS to avoid real lookups in tests.
+func newTestPolicySessionScoped(t *testing.T, original string, scope []string, resolved map[string][]net.IP, handler func(*http.Request) *http.Response) (*PolicySession, *scriptedRoundTripper) {
+	t.Helper()
 	rt := &scriptedRoundTripper{handler: handler}
-	policy := NewPolicySession(DefaultPolicyConfig(), rt)
+	cfg := DefaultPolicyConfig()
+	cfg.Scope = scope
+	policy := NewPolicySession(cfg, rt)
 	for host, ips := range resolved {
 		policy.scopeManager.resolvedIPs[host] = ips
 	}
@@ -245,6 +303,26 @@ func TestRedirectPolicy_HTTPToHTTPSUpgradeFollowed(t *testing.T) {
 	}
 }
 
+// TestScope_HTTPToHTTPSUpgradeRedirectFollowed strict mode keeps the
+// upgrade-only cross-scheme redirect rule.
+func TestScope_HTTPToHTTPSUpgradeRedirectFollowed(t *testing.T) {
+	policy, rt := newTestPolicySessionScoped(t, "http://example.com", []string{"example.com"}, map[string][]net.IP{
+		"example.com": ipList("93.184.216.34"),
+	}, scriptedRedirect("https://example.com/home"))
+
+	resp, err := doRedirectRequest(t, policy, "http://example.com/")
+	if err != nil {
+		t.Fatalf("http→https upgrade must be followed under --scope: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 after upgrade redirect, got %d", resp.StatusCode)
+	}
+	if got := rt.seen(); len(got) != 2 {
+		t.Fatalf("expected 2 requests (http + https), saw %v", got)
+	}
+}
+
 func TestRedirectPolicy_UpgradeRejectedWhenFlagDisabled(t *testing.T) {
 	rt := &scriptedRoundTripper{handler: scriptedRedirect("https://example.com/home")}
 	cfg := DefaultPolicyConfig()
@@ -262,14 +340,16 @@ func TestRedirectPolicy_UpgradeRejectedWhenFlagDisabled(t *testing.T) {
 	}
 }
 
-func TestRedirectPolicy_HTTPSDowngradeRejected(t *testing.T) {
-	policy, rt := newTestPolicySession(t, "https://example.com", map[string][]net.IP{
+// TestScope_HTTPSDowngradeRedirectRejected strict mode never follows
+// https→http downgrades (open mode follows them; see the open-mode test).
+func TestScope_HTTPSDowngradeRedirectRejected(t *testing.T) {
+	policy, rt := newTestPolicySessionScoped(t, "https://example.com", []string{"example.com"}, map[string][]net.IP{
 		"example.com": ipList("93.184.216.34"),
 	}, scriptedRedirect("http://example.com/plain"))
 
 	_, err := doRedirectRequest(t, policy, "https://example.com/")
 	if err == nil {
-		t.Fatal("https→http downgrade must be rejected even with AllowCrossScheme=true")
+		t.Fatal("https→http downgrade must be rejected under --scope")
 	}
 	var perr *PolicyError
 	if !errors.As(err, &perr) || perr.Op != "redirect" {
@@ -302,36 +382,35 @@ func TestRedirectPolicy_WWWVariantFollowed(t *testing.T) {
 	}
 }
 
-func TestRedirectPolicy_WWWRebindingRejected(t *testing.T) {
-	policy, rt := newTestPolicySession(t, "https://example.com", map[string][]net.IP{
+// TestScope_WWWVariantRedirectFollowed strict mode keeps apex↔www redirects
+// (domain entries cover the variant; rebinding pinning still applies).
+func TestScope_WWWVariantRedirectFollowed(t *testing.T) {
+	policy, rt := newTestPolicySessionScoped(t, "https://example.com", []string{"example.com"}, map[string][]net.IP{
 		"example.com":     ipList("93.184.216.34"),
-		"www.example.com": ipList("203.0.113.9"), // different IP: rebinding
+		"www.example.com": ipList("93.184.216.34"),
 	}, scriptedRedirect("https://www.example.com/home"))
 
-	_, err := doRedirectRequest(t, policy, "https://example.com/")
-	if err == nil {
-		t.Fatal("www redirect resolving to a different IP must be rejected")
+	resp, err := doRedirectRequest(t, policy, "https://example.com/")
+	if err != nil {
+		t.Fatalf("apex→www redirect must be followed under --scope: %v", err)
 	}
-	var perr *PolicyError
-	if !errors.As(err, &perr) || perr.Op != "redirect-scope" {
-		t.Fatalf("expected redirect-scope PolicyError, got %v", err)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 after www redirect, got %d", resp.StatusCode)
 	}
-	if !errors.Is(err, ErrScopeViolation) {
-		t.Fatalf("expected ErrScopeViolation, got %v", err)
-	}
-	if got := rt.seen(); len(got) != 1 {
-		t.Fatalf("rebinding target must not be requested, saw %v", got)
+	if got := rt.seen(); len(got) != 2 {
+		t.Fatalf("expected 2 requests (apex + www), saw %v", got)
 	}
 }
 
-func TestRedirectPolicy_EvilDomainRejected(t *testing.T) {
-	policy, rt := newTestPolicySession(t, "https://example.com", map[string][]net.IP{
+func TestScope_EvilDomainRedirectRejected(t *testing.T) {
+	policy, rt := newTestPolicySessionScoped(t, "https://example.com", []string{"example.com"}, map[string][]net.IP{
 		"example.com": ipList("93.184.216.34"),
 	}, scriptedRedirect("https://evil-example.com/home"))
 
 	_, err := doRedirectRequest(t, policy, "https://example.com/")
 	if err == nil {
-		t.Fatal("redirect to a different registrable domain must be rejected")
+		t.Fatal("redirect to a different registrable domain must be rejected with --scope")
 	}
 	var perr *PolicyError
 	if !errors.As(err, &perr) || perr.Op != "redirect-scope" {

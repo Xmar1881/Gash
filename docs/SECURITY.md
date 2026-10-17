@@ -22,9 +22,12 @@ contributors alike.
   with written permission. Bug-bounty targets must stay inside the program
   scope; corporate targets need engagement paperwork; CI targets must be
   ephemeral preview environments.
-- **Scope allowlist.** Pass `--scope` with CIDR or domain entries for every
-  non-local scan. The engine enforces the allowlist plus DNS resolution at
-  the proxy; out-of-scope requests fail closed with `ErrScopeViolation`.
+- **Scope allowlist (opt-in strict mode).** Without `--scope` the engine runs
+  in open mode: nothing is blocked, cross-host redirects and crawl links are
+  followed, and the operator alone owns authorization. For every non-local
+  scan pass `--scope` with CIDR or domain entries; the engine then enforces
+  the allowlist (plus DNS-rebinding pinning) at the proxy, and out-of-scope
+  requests fail closed with `ErrScopeViolation`.
 - **OOB opt-in.** Out-of-band payloads force the target to call back over
   DNS or HTTP. OOB stays disabled unless `--oob-server` points at a
   self-hosted interaction server you control. Public interactsh endpoints

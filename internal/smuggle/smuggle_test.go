@@ -235,18 +235,31 @@ func TestSmuggleScopeViolationNoSocket(t *testing.T) {
 	}
 }
 
-// TestSmuggleNilAllowFailClosed kapsam kararı yoksa fail-closed, soket YOK.
-func TestSmuggleNilAllowFailClosed(t *testing.T) {
+// TestSmuggleNilAllowOpenModeDials nil Allow = --scope verilmemiş (open mod):
+// prob fail-closed DEĞİLDİR; sahte dialer sayacıyla dial denenir, kapsam
+// ihlali üretilmez.
+func TestSmuggleNilAllowOpenModeDials(t *testing.T) {
 	var dials int32
-	target := startMock(t, mockConfig{vulnerable: true, delay: time.Second, dials: &dials})
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	_, err := Scan(ctx, target, Options{Active: true, Aggressive: true})
-	if !errors.Is(err, plugin.ErrScopeViolation) {
-		t.Fatalf("nil Allow → ErrScopeViolation beklenir (got %v)", err)
+	fakeErr := errors.New("fake dial refused")
+	_, err := Scan(context.Background(), "http://203.0.113.7/", Options{
+		Active:     true,
+		Aggressive: true,
+		Dialer: func(context.Context, string, string) (net.Conn, error) {
+			atomic.AddInt32(&dials, 1)
+			return nil, fakeErr
+		},
+	})
+	if err == nil {
+		t.Fatal("sahte dialer hatası yüzeye çıkmalı")
 	}
-	if n := atomic.LoadInt32(&dials); n != 0 {
-		t.Fatalf("fail-closed: soket AÇILMAMALI (dials=%d)", n)
+	if errors.Is(err, plugin.ErrScopeViolation) {
+		t.Fatalf("open modda kapsam ihlali üretilmemeli (got %v)", err)
+	}
+	if !errors.Is(err, fakeErr) {
+		t.Fatalf("dial hatası taşınmalı (got %v)", err)
+	}
+	if n := atomic.LoadInt32(&dials); n == 0 {
+		t.Fatal("open modda dial denenmeli (fake dialer sayacı 0)")
 	}
 }
 
@@ -277,27 +290,36 @@ func TestSmuggleGateSkips(t *testing.T) {
 	}
 }
 
-// TestSmuggleExternalRefused dış hedefe ham soket YOK (dokümantasyon IP'si,
-// dial öncesi ret; ağa ÇIKILMAZ).
-func TestSmuggleExternalRefused(t *testing.T) {
+// TestSmuggleOpenModeDialsNonLoopback open modda (--scope yok) loopback dışı
+// kullanıcı hedefine dial EDİLİR (Nuclei/Burp smuggler modeli; eski lab-only
+// kilidi kaldırıldı). Sahte dialer sayacı ağa çıkmadan kanıtlar.
+func TestSmuggleOpenModeDialsNonLoopback(t *testing.T) {
 	var dials int32
+	fakeErr := errors.New("fake dial refused (no network)")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	res, err := Scan(ctx, "http://203.0.113.7/", Options{
-		Allow: allowAll, Active: true, Aggressive: true,
-		DialHook: func() { atomic.AddInt32(&dials, 1) },
+		Active:     true,
+		Aggressive: true,
+		Dialer: func(_ context.Context, network, address string) (net.Conn, error) {
+			atomic.AddInt32(&dials, 1)
+			if network != "tcp" || !strings.HasSuffix(address, ":80") {
+				t.Errorf("beklenmeyen dial hedefi: %s %s", network, address)
+			}
+			return nil, fakeErr
+		},
 	})
-	if err != nil {
-		t.Fatalf("lab-only ret hata üretmemeli (got %v)", err)
+	if err == nil {
+		t.Fatal("dial hatası yüzeye çıkmalı")
 	}
-	if res.Skipped == "" {
-		t.Fatalf("dış hedef → skip beklenir")
+	if errors.Is(err, plugin.ErrScopeViolation) {
+		t.Fatalf("open modda kapsam ihlali YOK (got %v)", err)
 	}
-	if res.Finding != nil {
-		t.Fatalf("dış hedef → bulgu YOK")
+	if res != nil {
+		t.Fatalf("dial hatasında sonuç dönmemeli (got %+v)", res)
 	}
-	if n := atomic.LoadInt32(&dials); n != 0 {
-		t.Fatalf("dış hedefe ham soket YOK (dials=%d)", n)
+	if n := atomic.LoadInt32(&dials); n == 0 {
+		t.Fatal("loopback dışı hedefe dial denenmeli (dials=0)")
 	}
 }
 

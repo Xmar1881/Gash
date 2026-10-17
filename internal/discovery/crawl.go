@@ -35,7 +35,7 @@ type CrawlPage struct {
 type CrawlOptions struct {
 	MaxPages    int      // Maximum pages to crawl. Default 50.
 	MaxDepth    int      // Maximum BFS traversal depth from target. Default 3.
-	Scope       []string // Scope allowlist (domains/CIDRs). Empty = implicit scope (same target host).
+	Scope       []string // Scope allowlist (domains/CIDRs). Empty = open mod: yazılımsal host engeli yok.
 	ReadRobots  bool     // Whether to read robots.txt for seed URLs.
 	ReadSitemap bool     // Whether to read sitemap.xml for seed URLs.
 }
@@ -260,7 +260,10 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 }
 
 // isURLInScope checks whether candidate is permitted under the policy session
-// or explicit/implicit scope constraints.
+// or explicit scope constraints.
+// What: policy session (or explicit entries) decides; neither configured =
+// open mode: any http(s) host is crawlable, no host filtering.
+// Why: Scope is opt-in (--scope); without it the operator owns authorization.
 func isURLInScope(ctx context.Context, u *url.URL, target *url.URL, policy *plugin.PolicySession, explicitScope []string) bool {
 	scheme := strings.ToLower(u.Scheme)
 	if scheme != "http" && scheme != "https" {
@@ -299,8 +302,8 @@ func isURLInScope(ctx context.Context, u *url.URL, target *url.URL, policy *plug
 		}
 		return false
 	}
-	// Implicit scope: target host
-	return strings.EqualFold(u.Hostname(), target.Hostname())
+	// Open mode: no policy session and no --scope entries -> no host filtering.
+	return true
 }
 
 // normalizeURL removes fragment and redundant trailing slash.
