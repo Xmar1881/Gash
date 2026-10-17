@@ -1,0 +1,1 @@
+{"body": "Warning: DOMXPath::query(): Invalid expression in /srv/app/report.php on line 42", "expected_confidence": "firm", "expected_verdict": "accept", "headers": {"Content-Type": "text/html"}, "name": "php domxpath parse error without control", "status": 500, "target": "http://example.com/report?id=1"}

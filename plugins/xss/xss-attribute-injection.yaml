@@ -28,6 +28,9 @@ request:
   method: GET
   param_names: [q, query, search, name, input, value, title]
   payload: '" onfocus="alert(1)'
+  payloads:
+    - '" onmouseover="alert(1)'
+    - '"><svg onload="alert(1)" x="'
 oracle:
   name: reflection
   params:

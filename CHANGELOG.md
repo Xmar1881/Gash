@@ -47,6 +47,25 @@ Dates are UTC.
 - Request-smuggling differential probe (GASH-033, CWE-444): raw-TCP CL.TE/
   TE.CL/TE.TE engine recon with dual-channel proof (divergence + delay) and
   a `firm` ceiling (`internal/smuggle`).
+- New vulnerability detectors: XPath injection error-based (GASH-034, CWE-643),
+  host header injection reflection (GASH-035, CWE-644), verb tampering auth
+  bypass (GASH-036, CWE-650, new `verb-tamper` oracle), backup and state file
+  exposure (GASH-037, CWE-538, fixed 12-path list with soft-404 control),
+  GraphQL introspection enabled (GASH-038, CWE-200), and NoSQL auth bypass
+  differential (GASH-039, CWE-943, `firm` ceiling, session never reused).
+- Tier 1 YAML requests gained `payloads` (ordered list with per-param
+  short-circuit), `paths` (payload-free path probes), `headers`, and `body`
+  support; the reflection oracle gained `canary_by_payload` and the
+  differential oracle gained `false_body`.
+- Error signature library extended: MariaDB/MySqlException, PG::/psql:,
+  mssql syntax/quoting/column errors, OCI-/DPI-, SQLite.Exception, plus new
+  `access`, `firebird`, `hql`, `xpath`, and `backup_file` sets; deserialization
+  set gained .NET BinaryFormatter, Python pickle protocol, Ruby Marshal, and
+  Psych::SyntaxError markers.
+- Query payload variants added to path-traversal-error, command-injection-error,
+  open-redirect-param, ldap-injection-differential, xss-attribute-injection,
+  and reflected XSS (JS templates); ssrf-cloud-metadata now covers AWS (IMDSv1),
+  Alibaba Cloud, and Azure IMDS payloads with per-payload canaries.
 
 ### Changed
 

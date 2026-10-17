@@ -205,6 +205,8 @@ func Evaluate(ctx context.Context, oracleName string, f Fixture, oobEnabled bool
 			RequestHeaders: reqHeaders,
 			Body:           f.Body,
 			Status:         f.Status,
+			CanaryHost:     getStringParam(oracleParams, "canary_host", canary),
+			ControlBody:    f.ControlBody,
 		})
 	case "redirect":
 		var o oracle.RedirectOracle
@@ -308,6 +310,14 @@ func Evaluate(ctx context.Context, oracleName string, f Fixture, oobEnabled bool
 	case "cookie":
 		var o oracle.CookieOracle
 		return o.Verify(ctx, cls, false, oracle.CookieParams{Headers: toHeader(f.Headers), Target: f.Target})
+	case "verb-tamper", "verbtamper", "verb_tamper":
+		var o oracle.VerbTamperOracle
+		return o.Verify(ctx, cls, false, oracle.VerbTamperParams{
+			BaselineStatus: f.ControlStatus,
+			BaselineBody:   f.ControlBody,
+			VariantStatus:  f.Status,
+			VariantBody:    f.Body,
+		})
 	case "cors":
 		var o oracle.CORSOracle
 		requestOrigin := getStringParam(oracleParams, "request_origin", "")

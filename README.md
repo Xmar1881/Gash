@@ -53,7 +53,7 @@ permission to test (`--scope` opts into a strict allowlist; see Legal).
 
 ## What's New / Highlights
 
-- **45 detectors** — verify with `go run ./cmd/gash plugins list`
+- **51 detectors** — verify with `go run ./cmd/gash plugins list`
   (37 YAML, 7 sandboxed JS, 1 native PoC; see Detector Summary below).
 - **Request-smuggling probe (GASH-033)** — raw-TCP CL.TE/TE.CL/TE.TE
   differential with dual-channel proof (follow-up divergence *and* delay),
@@ -106,7 +106,7 @@ remain tracked work in [`docs/known-limits.md`](docs/known-limits.md).
 
 ## How It Differs
 
-Honest comparison — Gash is experimental (`v0.1.0-dev`, 45 reference
+Honest comparison — Gash is experimental (`v0.1.0-dev`, 51 reference
 plugins) and competes on verification discipline, not on maturity or library
 size. No Gash-versus-Nuclei benchmark has been run (not compared); see
 `docs/metrics/nuclei-comparison-2026-10-14.md`.
@@ -220,26 +220,27 @@ only shows help and waits for `Enter`; run it from a terminal instead:
 
 ## Detector Summary
 
-45 detectors via `go run ./cmd/gash plugins list`
-(37 Tier 1 YAML, 7 Tier 2 sandboxed JS, 1 Tier 3 native PoC).
+51 detectors via `go run ./cmd/gash plugins list`
+(43 Tier 1 YAML, 7 Tier 2 sandboxed JS, 1 Tier 3 native PoC).
 Full oracle/plugin catalog: `docs/detector-inventory.md`.
 
 | Class | Count | Examples |
 |---|---:|---|
 | Cross-site scripting (reflected, stored, DOM) | 5 | `xss-reflected-basic`, `xss-attribute-injection`, `xss-stored-basic`, `xss-stored-two-step`, `dom-sink-basic` |
 | SQL injection (error, boolean, time, stacked, auth-bypass, OOB) | 6 | `sqli-error-based`, `sqli-boolean-differential`, `sqli-time-based`, `sqli-stacked-time`, `sqli-auth-bypass`, `blind-sqli-oob` |
-| NoSQL injection (error-based) | 1 | `nosql-injection-error` |
+| XPath injection (error) | 1 | `xpath-injection-error` |
+| NoSQL injection (error, auth-bypass differential) | 2 | `nosql-injection-error`, `nosql-auth-bypass-differential` |
 | Command injection (error, timing) | 2 | `command-injection-error`, `command-injection-timing` |
 | SSRF (blind OOB, cloud metadata) | 2 | `ssrf-blind-oob`, `ssrf-cloud-metadata` |
 | XXE (OOB, reflected) | 2 | `xxe-oob`, `xxe-reflected-basic` |
 | Template injection (SSTI) | 1 | `template-injection-reflection` |
-| File / path (RFI, traversal, upload) | 3 | `rfi-remote-include`, `path-traversal-error`, `file-upload-unrestricted` |
-| Access control and logic (IDOR, LDAP, HPP x2, mass assignment) | 5 | `idor-differential`, `ldap-injection-differential`, `hpp-parameter-pollution`, `hpp-duplicate-emission`, `mass-assignment-basic` |
-| Misconfig and headers (security headers, cookie, CORS, CRLF, CSRF, clickjacking, JWT x2, version, GraphQL, error disclosure, redirect, CVE, cache poisoning, rate limit) | 15 | `missing-security-headers`, `cookie-flags`, `cors-misconfig`, `crlf-header-injection`, `csrf-token-absence`, `clickjacking-frameable`, `jwt-token-exposure`, `jwt-alg-confusion`, `server-version-disclosure`, `graphql-endpoint-discovery`, `error-message-disclosure`, `open-redirect-param`, `cve-dependency-scan`, `web-cache-poisoning-basic`, `missing-rate-limit` |
+| File / path (RFI, traversal, upload, backup exposure) | 4 | `rfi-remote-include`, `path-traversal-error`, `file-upload-unrestricted`, `backup-file-exposure` |
+| Access control and logic (IDOR, LDAP, HPP x2, mass assignment, verb tampering) | 6 | `idor-differential`, `ldap-injection-differential`, `hpp-parameter-pollution`, `hpp-duplicate-emission`, `mass-assignment-basic`, `verb-tampering-bypass` |
+| Misconfig and headers (security headers, cookie, CORS, CRLF, CSRF, clickjacking, JWT x2, version, GraphQL, host header, error disclosure, redirect, CVE, cache poisoning, rate limit) | 17 | `missing-security-headers`, `cookie-flags`, `cors-misconfig`, `crlf-header-injection`, `csrf-token-absence`, `clickjacking-frameable`, `jwt-token-exposure`, `jwt-alg-confusion`, `server-version-disclosure`, `graphql-endpoint-discovery`, `graphql-introspection-enabled`, `host-header-injection`, `error-message-disclosure`, `open-redirect-param`, `cve-dependency-scan`, `web-cache-poisoning-basic`, `missing-rate-limit` |
 | Insecure deserialization (error signature) | 1 | `insecure-deserialization-error` |
 | Subdomain takeover (unclaimed-service bodies) | 1 | `subdomain-takeover-basic` |
 | Native PoC (Tier 3, explicit trust) | 1 | `poc-native-header-check` |
-| **Total** | **45** | `go run ./cmd/gash plugins list` |
+| **Total** | **51** | `go run ./cmd/gash plugins list` |
 
 Engine-recon probes ship outside the plugin set: request smuggling
 (GASH-033, `internal/smuggle`) and content discovery (GASH-028,

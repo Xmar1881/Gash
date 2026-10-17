@@ -65,6 +65,12 @@ The gate is enforced by `TestMetricGate` in `tests/plugins`, not by review conve
 | subdomain-takeover-basic | [subdomain-takeover-basic.md](subdomain-takeover-basic.md) |
 | mass-assignment-basic | [mass-assignment-basic.md](mass-assignment-basic.md) |
 | missing-rate-limit | [missing-rate-limit.md](missing-rate-limit.md) |
+| xpath-injection-error | [xpath-injection-error.md](xpath-injection-error.md) |
+| host-header-injection | [host-header-injection.md](host-header-injection.md) |
+| verb-tampering-bypass | [verb-tampering-bypass.md](verb-tampering-bypass.md) |
+| backup-file-exposure | [backup-file-exposure.md](backup-file-exposure.md) |
+| graphql-introspection-enabled | [graphql-introspection-enabled.md](graphql-introspection-enabled.md) |
+| nosql-auth-bypass-differential | [nosql-auth-bypass-differential.md](nosql-auth-bypass-differential.md) |
 | caa-dns-check (proto GASH-027, unit-scoped) | [caa-dns-check.md](caa-dns-check.md) |
 | content-discovery (engine-recon GASH-028, mock-fixture scoped) | [content-discovery-2026-10-16.md](content-discovery-2026-10-16.md) |
 | smuggle-differential (engine-recon GASH-033, mock-fixture scoped) | [smuggle-differential.md](smuggle-differential.md) |

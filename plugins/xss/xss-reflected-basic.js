@@ -29,11 +29,19 @@ function run(probe, ctx) {
   const candidates = [];
   for (const point of points) {
     const canary = probe.canary();
-    const payload = "alert(" + canary + ")";
-    const resp = probe.send(point.withValue(payload));
-    const ev = host.oracles.reflection(resp, canary, ["html", "attr-executable", "script", "url", "url-executable"]);
-    if (ev) {
-      candidates.push(host.candidate(point, "reflected-xss", ev));
+    const templates = [
+      "alert(" + canary + ")",
+      "<script>alert(" + canary + ")</script>",
+      "\"><img src=x onerror=alert(" + canary + ")>",
+      "javascript:alert(" + canary + ")"
+    ];
+    for (const payload of templates) {
+      const resp = probe.send(point.withValue(payload));
+      const ev = host.oracles.reflection(resp, canary, ["html", "attr-executable", "script", "url", "url-executable"]);
+      if (ev) {
+        candidates.push(host.candidate(point, "reflected-xss", ev));
+        break;
+      }
     }
   }
   return candidates;

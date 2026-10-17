@@ -1,0 +1,1 @@
+{"body": "<html><body><p>No products found for your query.</p></body></html>", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "clean no-results page", "status": 200, "target": "http://example.com/search?q=test"}

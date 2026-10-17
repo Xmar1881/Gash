@@ -71,6 +71,33 @@ stable application responses and must not look like authentication rejection,
 soft-404, challenge, error, or dynamic noise. The repository has hermetic
 regression tests for these cases, but no real-WAF success rate is claimed.
 
+## Lab-batch detectors (GASH-034..039): honest boundaries
+
+- Host header injection (GASH-035): only Host, X-Forwarded-Host, and Forwarded
+  header vectors are sent. The absolute-URI request-line variant cannot be
+  emitted through Go's `net/http` (the transport rewrites the request line
+  from parsed URL fields); it is out of scope, not covered. Cache-poisoning
+  impact is never claimed (no cache probing).
+- CRLF header injection stays passive: response-header and reflected-request-
+  header checks only, no CRLF payload is injected into query parameters.
+  Header-values containing raw CR/LF are rare precisely because Go's client
+  and server both sanitize them; the check keeps a documented, honest ceiling
+  instead of a blind-split claim.
+- Backup file exposure (GASH-037) uses a fixed 12-path list, not a wordlist,
+  and can therefore collide with engine content discovery (GASH-028) on the
+  same paths; both pin their own gates, but an operator running `--active`
+  content discovery may see both findings for one file.
+- Verb tampering (GASH-036) sends only idempotent read variants (HEAD, OPTIONS,
+  X-HTTP-Method-Override, X-Original-URL, X-Rewrite-URL) and only against the
+  plugin's `paths` list (`/admin`, `/api/admin` by default). PUT/DELETE/PATCH
+  are never sent (destructive-method red line), and login-redirect responses
+  are not bypass evidence by design.
+- GraphQL introspection (GASH-038) probes three fixed endpoint paths
+  anonymously; introspection behind authentication is out of scope.
+- NoSQL auth bypass (GASH-039) sends two JSON bodies three times each and
+  never reuses a session; query-string (non-JSON) NoSQL bypass variants and
+  lockout-protected logins are out of scope.
+
 ## CAA DNS checks: supported (miekg/dns, pinned)
 
 Protocol checks cover TLS observation (GASH-024), SPF/DMARC reads (GASH-025),

@@ -1,0 +1,1 @@
+{"body": "<html><body><h1>Welcome</h1></body></html>", "control_body": "<html><body>404 not found</body></html>", "control_status": 404, "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "custom 404 catch-all page", "status": 200, "target": "http://example.com/.env"}

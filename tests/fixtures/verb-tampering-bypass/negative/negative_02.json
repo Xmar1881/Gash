@@ -1,0 +1,1 @@
+{"body": "Unauthorized: authentication required to access this resource", "control_body": "Unauthorized: authentication required to access this resource", "control_status": 401, "expected_verdict": "reject", "headers": {"Content-Type": "text/plain"}, "name": "status changed only, same body", "status": 200, "target": "http://example.com/admin"}

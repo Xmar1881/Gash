@@ -1,0 +1,1 @@
+{"body": "<a href=\"http://gash-host-canary.example/login\">x</a>", "control_body": "<a href=\"http://gash-host-canary.example/login\">x</a>", "control_status": 200, "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "canary already present in control", "status": 200, "target": "http://example.com/"}

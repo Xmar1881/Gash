@@ -1,0 +1,1 @@
+{"false_bodies": ["login failed", "login failed", "login failed"], "expected_verdict": "reject", "headers": {"Content-Type": "text/plain"}, "name": "same body both branches", "status": 200, "target": "http://example.com/api/login", "true_bodies": ["login failed", "login failed", "login failed"]}

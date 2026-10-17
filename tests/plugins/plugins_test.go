@@ -9,6 +9,7 @@
 package plugins
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -260,6 +261,24 @@ func vulnerableResponder(tier1 *loader.Tier1File) http.HandlerFunc {
 		case "error":
 			// What: Error signature oracle needs a 500 with error signature in body.
 			// Why: generic_error mode matches stack traces, exceptions, etc.
+			mode := ""
+			if m, ok := tier1.Oracle.Params["mode"].(string); ok {
+				mode = strings.ToLower(m)
+			}
+			if mode == "backup_file" {
+				// GASH-037 drop-in: bildirilen yollardan biri yedek imzası döner;
+				// soft-404 kontrol yolu imzasız 404 döner (kanıt ayrışması).
+				for _, p := range tier1.Request.Paths {
+					if strings.HasSuffix(r.URL.Path, p) {
+						w.WriteHeader(http.StatusOK)
+						_, _ = w.Write([]byte("APP_KEY=base64:Z2FzaC1kcm9wLWluLXRlc3Qtb25seQ==\nDB_HOST=127.0.0.1\n"))
+						return
+					}
+				}
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte("<html><body>not found</body></html>"))
+				return
+			}
 			payload := tier1.Request.Payload
 			hit := false
 			for _, p := range tier1.Request.ParamNames {
@@ -318,10 +337,17 @@ func TestB1Tier1DropIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := newTestServer(t, vulnerableResponder(file))
-	sender := func(ctx context.Context, method, rawURL string) (int, http.Header, string, error) {
-		req, err := http.NewRequestWithContext(ctx, method, rawURL, nil)
+	sender := func(ctx context.Context, method, rawURL string, reqHeaders map[string]string, reqBody []byte) (int, http.Header, string, error) {
+		req, err := http.NewRequestWithContext(ctx, method, rawURL, bytesReader(reqBody))
 		if err != nil {
 			return 0, nil, "", err
+		}
+		for k, v := range reqHeaders {
+			if strings.EqualFold(k, "Host") {
+				req.Host = v
+				continue
+			}
+			req.Header.Set(k, v)
 		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -649,6 +675,16 @@ func TestTier3TrustSpawnKill(t *testing.T) {
 	if _, err := client.Run(context.Background(), "sleep://hung", 500*time.Millisecond); err == nil {
 		t.Fatal("hung run must time out")
 	}
+}
+
+// bytesReader nil gövdeyi reader'a çevirir (test sender yardımcısı).
+// What: Boş gövde nil döner; aksi halde bytes.Reader.
+// Why: Sender sözleşmesi gövdeyi opsiyonel taşır.
+func bytesReader(b []byte) io.Reader {
+	if len(b) == 0 {
+		return nil
+	}
+	return bytes.NewReader(b)
 }
 
 // ruleFor maps oracle names to GASH rule IDs for e2e finding builds.

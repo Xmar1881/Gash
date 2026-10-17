@@ -17,6 +17,7 @@ safe: true
 deep: false
 active: false
 requires_auth: false
+max_requests: 30
 phase: probe
 order: 30
 api_version: "1.0"
@@ -25,6 +26,9 @@ request:
   method: GET
   param_names: [redirect, url, next, return_to]
   payload: "https://gash-canary.example/"
+  payloads:
+    - "https://gash-canary.example/landing"
+    - "https://gash-canary.example/%2f%2fgash-canary.example/"
 oracle:
   name: redirect
   params:

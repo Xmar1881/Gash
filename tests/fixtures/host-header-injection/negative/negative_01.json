@@ -1,0 +1,1 @@
+{"body": "<html><body><p>password reset email sent</p></body></html>", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "no host reflection in body", "status": 200, "target": "http://example.com/reset"}

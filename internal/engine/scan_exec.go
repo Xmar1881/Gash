@@ -471,8 +471,8 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 			if err != nil {
 				return nil, err
 			}
-			sender := func(c context.Context, method, rawURL string) (int, http.Header, string, error) {
-				resp, err := client.Send(c, method, rawURL, nil, nil)
+			sender := func(c context.Context, method, rawURL string, reqHeaders map[string]string, reqBody []byte) (int, http.Header, string, error) {
+				resp, err := client.Send(c, method, rawURL, reqHeaders, reqBody)
 				if err != nil {
 					return 0, nil, "", err
 				}

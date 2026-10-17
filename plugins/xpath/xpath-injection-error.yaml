@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/xpath/xpath-injection-error.yaml
+# What: Tier 1 XPath injection plugin backed by ErrorSignatureOracle (xpath mode, GASH-034).
+# Why: XPath parser/compiler error signatures plus absent-in-control proof detect
+#   injection into XML query sinks; the probe is a syntax-error close attempt
+#   (no file read, no DOS, no data extraction), firm ceiling by design.
+
+id: xpath-injection-error
+name: XPath Injection Error-Based
+description: Detects XPath injection via XML parser error signature match plus absent-in-control proof using a harmless predicate-closing syntax probe.
+author: GASH contributors
+severity: high
+tags: [xpath, injection, error-signature, error]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 24
+phase: probe
+order: 72
+api_version: "1.0"
+tests: tests/fixtures/xpath-injection-error/
+request:
+  method: GET
+  param_names: [query, search, q, user, username, id]
+  payloads:
+    - "x'] | //* | a['"
+    - "1' or '1'='1"
+oracle:
+  name: error
+  params:
+    mode: "xpath"
+    signature_set: ["xpath"]

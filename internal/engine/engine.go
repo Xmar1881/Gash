@@ -292,7 +292,7 @@ func (e *Engine) oracleForPlugin(s plugin.PluginSpec) string {
 	// Check if plugin has explicit oracle tag
 	for _, tag := range s.Tags {
 		switch tag {
-		case "header", "redirect", "reflection", "error", "differential", "timing", "execution", "oob", "cookie", "cors", "version", "tls", "dns", "tcp":
+		case "header", "redirect", "reflection", "error", "differential", "timing", "execution", "oob", "cookie", "cors", "version", "tls", "dns", "tcp", "verb-tamper":
 			return tag
 		}
 	}

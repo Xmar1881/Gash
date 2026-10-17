@@ -1,0 +1,1 @@
+{"body": "{\"data\":{\"__schema\":{\"queryType\":{\"name\":\"Query\"},\"types\":[{\"name\":\"User\"},{\"name\":\"Post\"}]}}}", "expected_confidence": "firm", "expected_verdict": "accept", "headers": {"Content-Type": "application/json"}, "name": "fuller introspection response", "status": 200, "target": "http://example.com/api/graphql"}
