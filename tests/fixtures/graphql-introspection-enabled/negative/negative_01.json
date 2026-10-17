@@ -1,0 +1,1 @@
+{"body": "{\"errors\":[{\"message\":\"Introspection is not allowed\"}],\"data\":{\"__schema\":{\"queryType\":{\"name\":\"Query\"}}}}", "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "errors envelope present", "status": 200, "target": "http://example.com/graphql"}

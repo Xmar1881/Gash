@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/backup-file/backup-file-exposure.yaml
+# What: Tier 1 backup/state file exposure screen via ErrorSignatureOracle backup_file mode (GASH-037, CWE-538).
+# Why: Canonical backup markers (APP_KEY=, git HEAD, svn wc-entries, dump banners,
+#   SQLite/zip magic) on well-known paths plus soft-404 control absence is firm
+#   exposure evidence. GET only, no directory brute force: the 12-path list is
+#   fixed and bounded; overlap with GASH-028 content discovery is documented.
+
+id: backup-file-exposure
+name: Backup and State File Exposure
+description: Detects exposed backup and state files (.env, .git/HEAD, dumps, archives) via canonical content marker match plus soft-404 control absence on a fixed path list.
+author: GASH contributors
+severity: medium
+tags: [backup-file, exposure, misconfig, error]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 30
+phase: probe
+order: 75
+api_version: "1.0"
+tests: tests/fixtures/backup-file-exposure/
+request:
+  method: GET
+  paths:
+    - "/.env"
+    - "/.git/HEAD"
+    - "/.svn/entries"
+    - "/.DS_Store"
+    - "/backup.sql"
+    - "/www.zip"
+    - "/web.config.bak"
+    - "/appsettings.json"
+    - "/config.php.bak"
+    - "/save.sql"
+    - "/dump.sql"
+    - "/.hg/store"
+oracle:
+  name: error
+  params:
+    mode: "backup_file"
+    signature_set: ["backup_file"]

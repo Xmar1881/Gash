@@ -1,0 +1,1 @@
+{"body": "javax.xml.xpath.XPathExpressionException: Invalid XPath expression", "control_body": "javax.xml.xpath.XPathExpressionException: Invalid XPath expression", "control_status": 500, "expected_verdict": "reject", "headers": {"Content-Type": "text/plain"}, "name": "same xpath signature present in control", "status": 500, "target": "http://example.com/search?q=test"}

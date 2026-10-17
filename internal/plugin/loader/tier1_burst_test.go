@@ -72,7 +72,7 @@ func TestTier1RateLimitBurst(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	var calls atomic.Int64
-	sender := func(ctx context.Context, method, rawURL string) (int, http.Header, string, error) {
+	sender := func(ctx context.Context, method, rawURL string, reqHeaders map[string]string, reqBody []byte) (int, http.Header, string, error) {
 		calls.Add(1)
 		return 200, http.Header{"Content-Type": []string{"text/html"}}, `<p>hi</p>`, nil
 	}
@@ -94,7 +94,7 @@ func TestTier1RateLimitBurst(t *testing.T) {
 	}
 	// Üçüncü istekte 429 → korumalı, bulgu YOK.
 	var calls2 atomic.Int64
-	sender429 := func(ctx context.Context, method, rawURL string) (int, http.Header, string, error) {
+	sender429 := func(ctx context.Context, method, rawURL string, reqHeaders map[string]string, reqBody []byte) (int, http.Header, string, error) {
 		n := calls2.Add(1)
 		if n == 3 {
 			return 429, http.Header{"Retry-After": []string{"60"}}, `<p>Too Many Requests</p>`, nil
@@ -119,7 +119,7 @@ func TestTier1DifferentialCeiling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	sender := func(ctx context.Context, method, rawURL string) (int, http.Header, string, error) {
+	sender := func(ctx context.Context, method, rawURL string, reqHeaders map[string]string, reqBody []byte) (int, http.Header, string, error) {
 		h := http.Header{"Content-Type": []string{"application/json"}}
 		switch {
 		case strings.Contains(rawURL, "role=0"):

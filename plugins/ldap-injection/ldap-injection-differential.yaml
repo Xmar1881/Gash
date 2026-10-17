@@ -16,6 +16,7 @@ safe: false
 deep: false
 active: true
 requires_auth: false
+max_requests: 120
 phase: probe
 order: 70
 api_version: "1.0"
@@ -24,6 +25,8 @@ request:
   method: GET
   param_names: [user, username, uid, filter, search, dn, cn]
   payload: "*)(|(userPassword=*"
+  payloads:
+    - "*)(uid=*))(|(uid=*"
 oracle:
   name: differential
   params:

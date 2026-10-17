@@ -31,17 +31,28 @@ type ErrorSignatureParams struct {
 }
 
 var errorSignatures = map[string]*regexp.Regexp{
-	"mysql":          regexp.MustCompile(`(?i)(you have an error in your sql syntax|mysql.*error|mysqld|SQLSTATE\[42)`),
-	"postgres":       regexp.MustCompile(`(?i)(pg_query\(\)|pg_exec\(\)|postgresql.*error|ERROR:\s+syntax error at)`),
-	"mssql":          regexp.MustCompile(`(?i)(SQLServer|SqlException|conversion failed|ODBC SQL Server Driver|mssql)`),
-	"oracle":         regexp.MustCompile(`(?i)(ORA-[0-9]{5}|Oracle error|PL/SQL)`),
-	"sqlite":         regexp.MustCompile(`(?i)(SQLite3::|sqlite.*error|near ".*": syntax error)`),
+	"mysql":          regexp.MustCompile(`(?i)(you have an error in your sql syntax|mysql.*error|mysqld|SQLSTATE\[42|MariaDB|MySqlException)`),
+	"postgres":       regexp.MustCompile(`(?i)(pg_query\(\)|pg_exec\(\)|postgresql.*error|ERROR:\s+syntax error at|PG::\w*Error|psql:)`),
+	"mssql":          regexp.MustCompile(`(?i)(SQLServer|SqlException|conversion failed|ODBC SQL Server Driver|mssql|Incorrect syntax near|Unclosed quotation mark|Invalid column name)`),
+	"oracle":         regexp.MustCompile(`(?i)(ORA-[0-9]{5}|Oracle error|PL/SQL|OCI-\d+|DPI-\d+)`),
+	"sqlite":         regexp.MustCompile(`(?i)(SQLite3::|sqlite.*error|near ".*": syntax error|SQLite\.Exception)`),
+	"access":         regexp.MustCompile(`(?i)(Microsoft Access|JET Database Engine|Access Database Engine|ODBC.*Access Driver|ADODB\.)`),
+	"firebird":       regexp.MustCompile(`(?i)(GDS Exception|isc_attach_database|Firebird.*error|dynamic SQL Error|violation of FOREIGN KEY)`),
+	"hql":            regexp.MustCompile(`(?i)(org\.hibernate|HibernateException|QuerySyntaxException|hql\.|unexpected token: )`),
 	"path_traversal": regexp.MustCompile(`(?i)(no such file or directory|file not found|path traversal|open .* failed|access denied|permission denied|is a directory|not a directory|invalid path|directory traversal|\.\./|\.\.\\|etc/passwd|boot\.ini|windows/win\.ini)`),
 	"generic_error":  regexp.MustCompile(`(?i)(stack trace|exception|traceback|at \w+\.\w+\(|line \d+|error:|fatal error|uncaught exception|internal server error|500 error|debug information|syntax error|runtime error|null pointer|index out of bounds|division by zero)`),
+	// xpath: XPath motoru hata imzaları (GASH-034, CWE-643).
+	// Yalnızca parser/derleyici hata dizeleri eşleşir; enjeksiyon payload'ı
+	// zararsız bir XPath kapanış denemesidir (dosya okuma/DOS YOK).
+	"xpath": regexp.MustCompile(`(?i)(XPathExpressionException|XPathException|XPathEvalError|DOMXPath|xmlXPathEval|invalid XPath|XPath syntax|failed to evaluate xpath|could not compile xpath|xpath.*(parse|compile).*error|SimpleXMLElement.*xpath)`),
+	// backup_file: yedek/durum dosyası ifşa imzaları (GASH-037, CWE-538).
+	// Yalnızca kanonik dosya başlık/marker'ları eşleşir; soft-404 kontrolü
+	// zorunlu tutulur (plugin/runner), jenerik yanıt FP'sini dışlar.
+	"backup_file": regexp.MustCompile(`(?i)(APP_KEY=|ref: refs/|repositoryformatversion|<wc-entries|phpMyAdmin SQL Dump|-- MySQL dump|-- PostgreSQL database dump|SQLite format 3|"ConnectionStrings"\s*:|system\.web|PK\x03\x04|\x00\x00\x00\x01Bud1)`),
 	// deserialization: Java/Python/PHP unmarshal hata imzaları (GASH-029).
 	// Yalnızca parse-hata dizeleri eşleşir; gadget/chain üretimi YOKTUR.
 	// "access denied" bilerek YOKTUR (baseline Untrusted ile çakışır, WAF gürültüsü olur).
-	"deserialization": regexp.MustCompile(`(?i)(InvalidClassException|StreamCorruptedException|NotSerializableException|OptionalDataException|UnpicklingError|pickle\.loads|cPickle|__wakeup|__destruct|__unserialize|unserialize\(\)|serialVersionUID|ObjectInputStream|readObject\(|resolveClass\(|SnakeYAML|yaml\.load|ysoserial|commons-collections)`),
+	"deserialization": regexp.MustCompile(`(?i)(InvalidClassException|StreamCorruptedException|NotSerializableException|OptionalDataException|UnpicklingError|pickle\.loads|cPickle|__wakeup|__destruct|__unserialize|unserialize\(\)|serialVersionUID|ObjectInputStream|readObject\(|resolveClass\(|SnakeYAML|yaml\.load|ysoserial|commons-collections|AAEAAAD/////|O:\d+:"|Ruby/Marshal|Psych::SyntaxError|!ruby/object)`),
 	// takeover: bilinen unclaimed-servis gövde imzaları (GASH-030, CWE-693).
 	// DNS CNAME önkoşulu plugin/lab prosedüründedir; bu imza yalnızca HTTP yarısını kanıtlar.
 	// "access denied"/"cloudflare"/"challenge" bilerek YOKTUR (baseline Untrusted, FP olur).
@@ -79,9 +90,17 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 			set = []string{"deserialization"}
 		case "takeover":
 			set = []string{"takeover"}
+		case "xpath":
+			set = []string{"xpath"}
+		case "backup_file":
+			set = []string{"backup_file"}
 		default: // sqli
 			for k := range errorSignatures {
-				if strings.HasPrefix(k, "mysql") || strings.HasPrefix(k, "postgres") || strings.HasPrefix(k, "mssql") || strings.HasPrefix(k, "oracle") || strings.HasPrefix(k, "sqlite") {
+				switch {
+				case strings.HasPrefix(k, "mysql") || strings.HasPrefix(k, "postgres") ||
+					strings.HasPrefix(k, "mssql") || strings.HasPrefix(k, "oracle") ||
+					strings.HasPrefix(k, "sqlite") || strings.HasPrefix(k, "access") ||
+					strings.HasPrefix(k, "firebird") || strings.HasPrefix(k, "hql"):
 					set = append(set, k)
 				}
 			}
@@ -121,6 +140,12 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 	case "takeover":
 		confidence = plugin.ConfidenceFirm // HTTP imzası tek başına devralma kanıtı değildir; DNS önkoşullu (GASH-030 tavan)
 		note = "olası subdomain takeover imzası tespit edildi"
+	case "xpath":
+		confidence = plugin.ConfidenceFirm // Parser hata dizesi tek başına enjeksiyon kanıtı değildir (GASH-034 tavan)
+		note = "XPath hata imzası tespit edildi"
+	case "backup_file":
+		confidence = plugin.ConfidenceFirm // Yedek dosya içeriği tek-kanallı gözlemdir (GASH-037 tavan)
+		note = "yedek/durum dosyası ifşası imzası tespit edildi"
 	default: // SQLi signatures
 		confidence = plugin.ConfidenceConfirmed
 		note = "DB imzası tespit edildi"
@@ -142,9 +167,9 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 	}
 
 	// Without control: path_traversal and generic_error are firm (need control for confirmed)
-	// SQLi without control is firm. deserialization/takeover are firm by ceiling
-	// with or without control (single-channel signal, never confirmed).
-	if hit == "path_traversal" || hit == "generic_error" || hit == "deserialization" || hit == "takeover" {
+	// SQLi without control is firm. deserialization/takeover/xpath/backup_file are
+	// firm by ceiling with or without control (single-channel signal, never confirmed).
+	if hit == "path_traversal" || hit == "generic_error" || hit == "deserialization" || hit == "takeover" || hit == "xpath" || hit == "backup_file" {
 		confidence = plugin.ConfidenceFirm
 	}
 	return &Evidence{
@@ -165,11 +190,16 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 // tentative because a single probe/burst cannot prove server-side policy.
 type HeaderParams struct {
 	Headers        http.Header
-	Mode           string      // "security" (default), "crlf", "jwt", "jwt_alg", "csrf", "frame", "ratelimit"
+	Mode           string      // "security" (default), "crlf", "jwt", "jwt_alg", "csrf", "frame", "ratelimit", "host_header"
 	RequestHeaders http.Header // For CRLF: check if request headers were reflected
-	Body           string      // Response body (form analysis for csrf mode; ignored otherwise)
+	Body           string      // Response body (form analysis for csrf mode; host_header reflection)
 	Status         int         // Representative response status (ratelimit mode: 429 check)
 	Burst          []int       // Burst status series (ratelimit mode: any 429 means protected)
+	// CanaryHost host_header mode: injected Host/X-Forwarded-Host kanaryası (GASH-035).
+	CanaryHost string
+	// ControlBody host_header mode: başlıksız kontrol yanıtı; kanarya burada
+	// geçiyorsa yansıma zaten sayfada var demektir → reject.
+	ControlBody string
 }
 
 // HeaderOracle sözleşmesi: security/crlf/jwt/jwt_alg/csrf/frame modları
@@ -209,9 +239,36 @@ func (HeaderOracle) Verify(ctx context.Context, cls baseline.Classification, tai
 		return verifyFrameable(p.Headers)
 	case "ratelimit":
 		return verifyRateLimit(p.Status, p.Headers, p.Body, p.Burst)
+	case "host_header":
+		return verifyHostHeaderReflection(p.CanaryHost, p.Body, p.ControlBody)
 	default:
 		return verifySecurityHeaders(p.Headers)
 	}
+}
+
+// verifyHostHeaderReflection Host başlığı gövdeye yansımasını doğrular (GASH-035, CWE-644).
+// What: Kanarya gövdede + kontrolde yok → firm; kontrolde de varsa veya kanarya
+// yoksa reject.
+// Why: Host/X-Forwarded-Host yansıması önbellek zehirlenmesi/parola sıfırlama
+// bağlantı zehirlenmesi için öncüdür; tek-kanallı gözlem olduğundan tavan firm'dır
+// (confirmed YOK). Kanarya rastgele/deterministik yönetici tarafından seçilir,
+// hedefe özgü olmayan bir rezerve alan adıdır (.example).
+func verifyHostHeaderReflection(canaryHost, body, controlBody string) (*Evidence, error) {
+	if strings.TrimSpace(canaryHost) == "" {
+		return &Evidence{Verdict: VerdictReject, Note: "kanarya host tanımsız"}, nil
+	}
+	if !strings.Contains(body, canaryHost) {
+		return &Evidence{Verdict: VerdictReject, Note: "Host kanaryası gövdeye yansımadı"}, nil
+	}
+	if controlBody != "" && strings.Contains(controlBody, canaryHost) {
+		return &Evidence{Verdict: VerdictReject, Note: "kanarya kontrolde de var — yansıma Host'tan gelmiyor"}, nil
+	}
+	return &Evidence{
+		Verdict:                VerdictAccept,
+		ConfidenceContribution: plugin.ConfidenceFirm,
+		Artifacts:              map[string]string{"canary_host": canaryHost, "vector": "body-reflection"},
+		Note:                   "Host başlığı gövdeye yansıdı + kontrolde yok → firm (GASH-035 tavan)",
+	}, nil
 }
 
 func verifySecurityHeaders(h http.Header) (*Evidence, error) {
@@ -526,6 +583,9 @@ func (VersionOracle) Verify(ctx context.Context, cls baseline.Classification, ta
 	if mode == "graphql" {
 		return verifyGraphQL(ctx, p)
 	}
+	if mode == "graphql_introspection" {
+		return verifyGraphQLIntrospection(p)
+	}
 
 	pat := p.BannerRegex
 	if pat == "" {
@@ -557,9 +617,12 @@ func (VersionOracle) Verify(ctx context.Context, cls baseline.Classification, ta
 	}, nil
 }
 
+// verifyGraphQL endpoint discovery yapar (GASH-021, "graphql" modu).
+// What: Gövdede __schema/__typename/graphql/query{/mutation{ göstergesi veya
+// bilinen endpoint yolu arar.
+// Why: Discovery amaçlı gevşek moddur; introspection davranış kanıtı
+// "graphql_introspection" modunda aranır (GASH-038).
 func verifyGraphQL(ctx context.Context, p VersionParams) (*Evidence, error) {
-	// GraphQL endpoint discovery: check for GraphQL endpoints in response body
-	// Common GraphQL indicators: __schema, __typename, query, mutation, GraphQL endpoint paths
 	graphqlPatterns := []*regexp.Regexp{
 		regexp.MustCompile(`(?i)__schema`),
 		regexp.MustCompile(`(?i)__typename`),
@@ -591,6 +654,30 @@ func verifyGraphQL(ctx context.Context, p VersionParams) (*Evidence, error) {
 		}
 	}
 	return &Evidence{Verdict: VerdictReject, Note: "GraphQL göstergesi tespit edilmedi"}, nil
+}
+
+// verifyGraphQLIntrospection introspection sorgu yanıtını doğrular (GASH-038, CWE-200).
+// What: Gövdede __schema + queryType birlikte varsa ve hata zarfı yoksa firm.
+// Why: Introspection'ın açık olması şema ifşasıdır (low severity); hata yanıtı
+// ("errors"/introspection disabled) kapalı demektir ve reject edilir. Node/npm
+// yığınlarındaki düz "__schema" kelimesi tek başına yetmez (queryType şartı).
+func verifyGraphQLIntrospection(p VersionParams) (*Evidence, error) {
+	body := p.Banner
+	if !strings.Contains(body, "__schema") || !strings.Contains(body, "queryType") {
+		return &Evidence{Verdict: VerdictReject, Note: "introspection yanıtı yok (__schema/queryType)"}, nil
+	}
+	lower := strings.ToLower(body)
+	for _, marker := range []string{"introspection is disabled", "introspection_disabled", `"errors"`} {
+		if strings.Contains(lower, marker) {
+			return &Evidence{Verdict: VerdictReject, Note: "introspection hata yanıtı — kapalı"}, nil
+		}
+	}
+	return &Evidence{
+		Verdict:                VerdictAccept,
+		ConfidenceContribution: plugin.ConfidenceFirm,
+		Artifacts:              map[string]string{"signal": "introspection", "fields": "__schema,queryType"},
+		Note:                   "GraphQL introspection açık (şema ifşası) → firm (GASH-038 tavan)",
+	}, nil
 }
 
 func verifyJWTAlgConfusion(h http.Header) (*Evidence, error) {

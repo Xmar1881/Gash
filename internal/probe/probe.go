@@ -274,6 +274,13 @@ func (c *Client) doSingle(ctx context.Context, method, rawURL string, headers ma
 		return nil, fmt.Errorf("probe new request: %w", err)
 	}
 	for k, v := range headers {
+		// Host özel-case: net/http host'u req.Host'tan okur; Header.Set("Host")
+		// sessizce yok sayılır. Host-header-injection (GASH-035) kanıtı bu
+		// alan üzerinden taşınır.
+		if strings.EqualFold(k, "Host") {
+			req.Host = v
+			continue
+		}
 		req.Header.Set(k, v)
 	}
 	// P2.5: bağlam başlıkları (auth) — açık istek değeri kazanır.

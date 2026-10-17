@@ -1,0 +1,1 @@
+{"body": "ref: refs/heads/main\n", "expected_confidence": "firm", "expected_verdict": "accept", "headers": {"Content-Type": "text/plain"}, "name": "git head exposure without control", "status": 200, "target": "http://example.com/.git/HEAD"}

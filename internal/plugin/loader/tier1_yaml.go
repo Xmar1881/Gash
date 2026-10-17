@@ -14,10 +14,18 @@ import (
 )
 
 // Tier1Request deklaratif istek bloğudur.
+// Extended (GASH-034..039): paths sabit yol listesi (backup-file, graphql,
+// verb-tamper), headers istek başlıkları (host-header injection), body istek
+// gövdesi (graphql introspection, nosql differential), payloads çoklu payload
+// varyantları (ilk kabul eden kanıtta kısa-devre).
 type Tier1Request struct {
-	Method     string   `yaml:"method" json:"method"`
-	ParamNames []string `yaml:"param_names" json:"param_names"`
-	Payload    string   `yaml:"payload" json:"payload"`
+	Method     string            `yaml:"method" json:"method"`
+	ParamNames []string          `yaml:"param_names" json:"param_names"`
+	Payload    string            `yaml:"payload" json:"payload"`
+	Payloads   []string          `yaml:"payloads" json:"payloads"`
+	Paths      []string          `yaml:"paths" json:"paths"`
+	Headers    map[string]string `yaml:"headers" json:"headers"`
+	Body       string            `yaml:"body" json:"body"`
 }
 
 // Tier1Oracle oracle referansıdır (kod bloğu YOK).

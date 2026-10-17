@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/host-header/host-header-injection.yaml
+# What: Tier 1 Host header injection screen via HostOracle host_header mode (GASH-035).
+# Why: A reserved .example canary in Host / X-Forwarded-Host / Forwarded that is
+#   reflected into the body while absent from the header-free control is host
+#   header injection proof (cache poisoning / link injection precursor), firm
+#   ceiling. GET only; the absolute-URI request-line variant is out of Go
+#   std-transport scope and documented as a limitation.
+
+id: host-header-injection
+name: Host Header Injection
+description: Detects Host and X-Forwarded-Host header reflection into the response body via reserved canary host comparison against a header-free control.
+author: GASH contributors
+severity: medium
+tags: [host-header, injection, misconfig, header]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 10
+phase: probe
+order: 73
+api_version: "1.0"
+tests: tests/fixtures/host-header-injection/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: host_header
+    canary_host: "gash-host-canary.example"
+    header_names: ["Host", "X-Forwarded-Host", "Forwarded"]

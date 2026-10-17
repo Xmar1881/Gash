@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/graphql-introspection/graphql-introspection-enabled.yaml
+# What: Tier 1 GraphQL introspection exposure screen via VersionOracle graphql_introspection mode (GASH-038, CWE-200).
+# Why: A minimal introspection query returning __schema plus queryType without an
+#   errors envelope proves the schema is disclosed to anonymous clients, firm
+#   ceiling (low severity). Three fixed endpoint paths, one POST each; the
+#   discovery-only graphql-endpoint-discovery plugin stays separate.
+
+id: graphql-introspection-enabled
+name: GraphQL Introspection Enabled
+description: Detects enabled GraphQL introspection schema disclosure by posting a minimal introspection query to fixed endpoints and validating the schema response envelope.
+author: GASH contributors
+severity: low
+tags: [graphql, introspection, misconfig, version]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 8
+phase: discovery
+order: 76
+api_version: "1.0"
+tests: tests/fixtures/graphql-introspection-enabled/
+request:
+  method: POST
+  headers:
+    Content-Type: application/json
+  body: '{"query":"query{__schema{queryType{name}}}"}'
+  paths: ["/graphql", "/api/graphql", "/v1/graphql"]
+oracle:
+  name: version
+  params:
+    mode: graphql_introspection

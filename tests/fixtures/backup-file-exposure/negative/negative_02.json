@@ -1,0 +1,1 @@
+{"body": "APP_KEY=base64:R0FTSF9GQUtFX0tFWQ==", "control_body": "APP_KEY=base64:R0FTSF9GQUtFX0tFWQ==", "control_status": 200, "expected_verdict": "reject", "headers": {"Content-Type": "text/plain"}, "name": "same backup marker in soft-404 control", "status": 200, "target": "http://example.com/.env"}

@@ -62,6 +62,12 @@ discovers this tree automatically; no enable flag exists.
 | subdomain-takeover-basic | Tier 1 | error (takeover, GASH-030, DNS-dependent firm ceiling) | `takeover/subdomain-takeover-basic.yaml` |
 | mass-assignment-basic | Tier 1 | differential (GASH-031, firm ceiling) | `mass-assignment/mass-assignment-basic.yaml` |
 | missing-rate-limit | Tier 1 | header (ratelimit, GASH-032, tentative ceiling, budgeted burst) | `rate-limit/missing-rate-limit.yaml` |
+| xpath-injection-error | Tier 1 | error (xpath, GASH-034, firm ceiling) | `xpath/xpath-injection-error.yaml` |
+| host-header-injection | Tier 1 | header (host_header, GASH-035, firm ceiling) | `host-header/host-header-injection.yaml` |
+| verb-tampering-bypass | Tier 1 | verb-tamper (GASH-036, firm ceiling) | `verb-tampering/verb-tampering-bypass.yaml` |
+| backup-file-exposure | Tier 1 | error (backup_file, GASH-037, firm ceiling) | `backup-file/backup-file-exposure.yaml` |
+| graphql-introspection-enabled | Tier 1 | version (graphql_introspection, GASH-038, firm ceiling) | `graphql-introspection/graphql-introspection-enabled.yaml` |
+| nosql-auth-bypass-differential | Tier 1 | differential (GASH-039, firm ceiling) | `nosql/nosql-auth-bypass-differential.yaml` |
 | poc-native-header-check | Tier 3 | header | `native/poc-native-header-check.gashplugin.yaml` |
 
 ## Testing

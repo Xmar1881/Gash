@@ -1,0 +1,1 @@
+{"body": "<html><body><h1>GraphQL API</h1><p>POST queries to the endpoint below.</p></body></html>", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "documentation page without schema", "status": 200, "target": "http://example.com/graphql"}

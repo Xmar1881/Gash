@@ -1,0 +1,1 @@
+{"body": "{\"users\":[{\"id\":1,\"email\":\"admin@example.com\"}]}", "control_body": "Forbidden: insufficient privileges for this path", "control_status": 403, "expected_confidence": "firm", "expected_verdict": "accept", "headers": {"Content-Type": "application/json"}, "name": "override header returns protected json", "status": 200, "target": "http://example.com/api/admin"}

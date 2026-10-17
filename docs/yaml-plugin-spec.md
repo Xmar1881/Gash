@@ -56,31 +56,40 @@ keys are forbidden (code blocks are never accepted in Tier 1).
 | `method` | No (default GET) | `safe: true` allows only GET/HEAD/OPTIONS |
 | `param_names` | No | Empty means one request against the bare target |
 | `payload` | No | Injected value per listed parameter |
+| `payloads` | No | Extra ordered payloads tried per parameter; the first accepted evidence stops that parameter early (short-circuit) |
+| `paths` | No | Payload-free path probes (e.g. `/admin`); runs once per path instead of query injection |
+| `headers` | No | Static request headers sent with the probe (used by host-header style checks) |
+| `body` | No | Raw request body for POST probes (e.g. JSON login bodies) |
 
 The engine issues one request per `param_names` entry with `payload` as the
-value, then verifies each response. Keep `payload` a canary host or marker
+value, then retries the remaining `payloads` until one produces evidence,
+then verifies each response. Keep every payload a canary host or marker
 owned by the scan; never point it at third-party infrastructure.
 
 ## Oracle Block
 
 ```yaml
 oracle:
-  name: header      # reflection|differential|error|header|redirect|oob|version
+  name: header      # reflection|differential|error|header|redirect|oob|version|timing|stored|verb-tamper|cookie|cors
   params: {}        # oracle-specific, see below
 ```
 
 Supported oracles and their params:
 
-- `header` (`mode: absent|weak|malformed`): passive security-header check.
-  Logic-based, needs no control, never emits tentative. Example:
-  `plugins/headers/missing-security-headers.yaml`.
+- `header` (`mode: absent|weak|malformed|crlf|jwt|jwt_alg|ratelimit|csrf|frame|host_header`):
+  header logic checks; passive modes need no control, mode-specific params
+  mirror the engine oracle (e.g. `ratelimit` burst budget, `host_header`
+  canary). Examples: `plugins/headers/missing-security-headers.yaml`,
+  `plugins/host-header/host-header-injection.yaml`.
 - `redirect` (`expect_external_host: true`): parses the real `Location`
   header and compares hosts, with a neutral control request. Example:
   `plugins/redirect/open-redirect-param.yaml`.
-- `reflection`, `differential`, `error`: Tier 1 executes only `header` and
-  `redirect` live; other names validate but need Tier 2 for execution.
-  Declare them only when the fixture oracle matches and execution stays in
-  Tier 2.
+- `reflection`, `differential`, `error`, `timing`, `stored`, `verb-tamper`,
+  `cookie`, `cors`, `version`: Tier 1 executes these engine oracles directly
+  through the shared runner; params mirror the engine oracle params
+  (`contexts`, `canary_by_payload`, `false_body`, `mode`, `repeats`,
+  `confidence_ceiling`, ...). See `docs/detector-inventory.md` for the full
+  oracle matrix.
 - `oob`: declare `oob: required|optional` in metadata; without
   `--oob-server` the plugin skips (`required`) or degrades (`optional`).
 - `version`: banner check; without behavioral proof the finding stays

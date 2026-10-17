@@ -1,0 +1,1 @@
+{"body": "{\"status\":\"ok\",\"items\":[]}", "control_body": "{\"status\":\"ok\",\"items\":[]}", "control_status": 200, "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "baseline not protected", "status": 200, "target": "http://example.com/api/public"}

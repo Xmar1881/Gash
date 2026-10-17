@@ -155,7 +155,7 @@ func CheckRequires(s PluginSpec, providesSet map[string]bool) error {
 // sınıf-bazlı "OOB geçersiz sınıfta required" kontrolü Tier1 oracle adı üzerinden yapılır.
 var oobInvalidOracles = map[string]bool{
 	"reflection": true, "stored": true, "header": true, "redirect": true, "version": true, "execution": true,
-	"cookie": true, "cors": true,
+	"cookie": true, "cors": true, "verb-tamper": true,
 }
 
 // CheckOOBOracle kuralı: OOB geçersiz oracle'da oob=required validasyon hatasıdır (G-03).

@@ -16,6 +16,7 @@ safe: false
 deep: false
 active: true
 requires_auth: false
+max_requests: 60
 phase: probe
 order: 60
 api_version: "1.0"
@@ -24,6 +25,9 @@ request:
   method: GET
   param_names: [cmd, exec, command, ip, host, target, arg]
   payload: "; cat /etc/passwd"
+  payloads:
+    - "| cat /etc/passwd"
+    - "'; cat /etc/passwd"
 oracle:
   name: error
   params:
