@@ -10,9 +10,7 @@ and fixture reliability.
 
 # Technical Audit: Priority Findings
 
-## Scope
-
-This report records the priority work requested for the current checkout. It
+## Scope\n\nThis report records the priority work requested for the current checkout (last refreshed 2026-10-17, 63 detectors, GASH-001..051). It
 does not turn design-document claims into implementation claims. The full
 detector catalog remains in `docs/detector-inventory.md`; unresolved limits are
 in `docs/known-limits.md`.
@@ -33,8 +31,8 @@ in `docs/known-limits.md`.
 | Vulnerability / behavior | Current status | Honest boundary |
 |---|---|---|
 | Reflected XSS, basic HTML/JS contexts | partial | Static response proof only; active payload, control, CSP, and context rules are implemented. Findings are `static-execution-evidence`; browser execution is not performed. |
-| Stored XSS | unsupported | No write-then-render workflow is wired into the current reflection API. |
-| DOM XSS | partial / blocked confirmation | Static source-sink analysis is available; browser confirmation is blocked by the missing pinned headless dependency. |
+| Stored XSS | supported (two-step oracle) | `internal/oracle/stored.go` implements write-then-render with control; static-execution-evidence max without headless, browser-confirmed with controlled run. |
+| DOM XSS | supported (static firm + browser-confirmed) | Static source-sink caps at firm; `internal/headless` (chromedp v0.21.0, `-tags deep`) lifts to confirmed on trigger + clean control. |
 | WAF detection | implemented | Baseline markers and block classification are separate from evidence. |
 | WAF bypass measurement | partial | Only opt-in, scope-checked, bounded, stable-response verification is implemented. No real-WAF general rate is measured. |
 | Fixture TP/FP/TN/FN accounting | implemented | `plugintest.Summary` computes fixed fixture-set metrics; fixture results are not lab recall. |
@@ -81,7 +79,4 @@ race result is therefore `blocked`, not silently treated as passed.
 
 ## Remaining Work
 
-Stored-XSS two-request orchestration, browser-backed DOM confirmation, real
-authorized WAF lab measurements, pinned compose-lab recall, and a parity
-Nuclei benchmark remain open. They must stay `unsupported`, `blocked`, or
-`unmeasured` until their required test harnesses actually run.
+Stored-XSS two-request orchestration and browser-backed DOM confirmation are now implemented (`internal/oracle/stored.go`, `internal/headless`, `--browser-verify`). Real authorized WAF lab measurements, pinned compose-lab recall, and a parity Nuclei benchmark remain open and must stay `unmeasured` until their required test harnesses actually run.
