@@ -93,9 +93,9 @@ Report: `docs/metrics/content-discovery-2026-10-16.md`.
 GASH-033, CWE-444) ships as engine-recon, not as Tier 1 YAML — Tier 1 runs
 single requests through `net/http`, which owns chunk framing and cannot emit
 ambiguous CL+TE bytes; the probe needs raw-TCP dials, paired keep-alive
-exchanges (ambiguous + byte-identical follow-up), an `AllowHost` preflight
-before any socket, and a loopback-only lock, none of which the YAML runner
-expresses. Evidence is engine-built (`smuggling-differential` dual-channel
+exchanges (ambiguous + byte-identical follow-up), and scope-preflight/gate
+logic (`AllowHost` only when `--scope` is set) that the YAML runner cannot
+express. Evidence is engine-built (`smuggling-differential` dual-channel
 discipline, firm ceiling, confirmed never). Test with:
 
 ```sh

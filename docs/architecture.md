@@ -385,7 +385,7 @@ Tüm `probe.Send()` bu proxy'den geçer:
 
 - `safe=true` + `POST/PUT/PATCH/DELETE` → `ErrPolicyViolation` (`PluginResult{PolicyError}`, tarama durmaz).
 - Sayaçlar: per-plugin (`MaxRequests`), per-target, total — `atomic.Int64`. Aşım → `ErrBudgetExceeded` (skip, hata değil).
-- Scope: `--scope` CIDR/domain allowlist; dışı → `ErrScopeViolation`. DNS rebinding'e karşı: resolve edilen IP de allowlist'te olmalı (çift kontrol).
+- Scope: `--scope` CIDR/domain allowlist opsiyonel opt-in sıkı moddur; verilirse dışı → `ErrScopeViolation`, DNS rebinding'e karşı resolve edilen IP de allowlist'te olmalı. Verilmezse open mod: yazılımsal host engeli yok (redirect/crawl takibi serbest, operatör sorumluluğu).
 - Rate-limit: `x/time/rate` token-bucket (per-target). `--rate-limit` (req/s, default 10).
 - Auth: `requires_auth` Cookie/header jar yalnızca auth'lu session'da enjekte edilir; auth'suz plugin jar'ı göremez.
 - Boyut/timeout: response cap (`--max-response-bytes`, default 5MB), per-request timeout (default 15s), redirect limiti (max 5, `Location` zinciri loglanır).
@@ -582,8 +582,8 @@ gash
 | `--deep` | scan | `false` | Deep faz + ExecutionOracle kapısı. |
 | `--active` | scan | `false` | State-changing/OOB payload kapısı. |
 | `--auth-session <file>` | scan | — | Cookie/header jar; `requires_auth` plugin'ler için zorunlu. |
-| `--scope <cidr/domain,...>` | scan | — | Allowlist; yoksa tek hedef implicit scope (pentestte zorunlu öneri). |
-| (implicit scope, `--scope` yokken) | scan | — | Hedef host + yalnızca bilinen apex↔www varyantı; http→https upgrade izinli, https→http downgrade asla ve www farklı IP'ye çözülürse DNS-rebinding reddi. Gerekçe/etki: upgrade gizliliği korur, downgrade MITM'e açacağı için yasak; kapsam yalnızca tanımlı varyantta genişler, rastgele alt alanlar açılmaz. |
+| `--scope <cidr/domain,...>` | scan | — | Opsiyonel opt-in sıkı allowlist; verilmezse open mod (host engeli yok, operatör sorumluluğu; redirect/crawl any-host izlenir). |
+| (`--scope` verilince strict) | scan | — | Allowlist + DNS-rebinding reddi; http→https upgrade izinli, https→http downgrade asla, kapsam-dışı subdomain/registrable-domain reddi. Gerekçe/etki: strict modda upgrade gizliliği korunur, downgrade MITM'e açacağı için yasak; open modda hiçbiri bloklanmaz. |
 | `--max-requests-per-target` | scan | 1000 | Per-target bütçe. |
 | `--max-requests-total` | scan | 10000 | Global bütçe. |
 | `--plugin-timeout` | scan | 30s | Per-plugin timeout (Tier 2 Interrupt, Tier 3 kill). |

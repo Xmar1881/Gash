@@ -119,3 +119,54 @@ func TestProbeProxyScopeEnforcement(t *testing.T) {
 	}
 	mu.Unlock()
 }
+
+// TestProbeOpenModeNoScopeAllowsCrossHost proxy preflight --scope yokken
+// (open mod) hiçbir host'u bloklamaz; cross-host istek proxy'e ulaşır.
+func TestProbeOpenModeNoScopeAllowsCrossHost(t *testing.T) {
+	var mu sync.Mutex
+	var receivedHosts []string
+
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		receivedHosts = append(receivedHosts, r.Host)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"proxy": "ok"}`))
+	}))
+	defer proxyServer.Close()
+
+	proxyURL, err := url.Parse(proxyServer.URL)
+	if err != nil {
+		t.Fatalf("parse proxy url: %v", err)
+	}
+
+	// Scope YOK → open mod (operatör sorumluluğu; yazılımsal host engeli yok).
+	policyCfg := plugin.PolicyConfig{
+		MaxRequestsPerTarget: 100,
+		MaxRequestsTotal:     100,
+		RatePerSecond:        0,
+		MaxResponseBytes:     1024 * 1024,
+	}
+	policy := plugin.NewPolicySession(policyCfg, nil)
+
+	client := NewClient(Options{
+		Policy:         policy,
+		RequestTimeout: 5 * time.Second,
+		ProxyURL:       proxyURL,
+	})
+
+	ctx := plugin.WithPlugin(context.Background(), "test-plugin", true, nil)
+	resp, err := client.Send(ctx, http.MethodGet, "http://cross.host.local/api", nil, nil)
+	if err != nil {
+		t.Fatalf("open modda cross-host istek bloklanmamalı (proxy'e ulaşmalı): %v", err)
+	}
+	if resp.Status != http.StatusOK {
+		t.Errorf("expected 200 OK from proxy, got %d", resp.Status)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(receivedHosts) != 1 || receivedHosts[0] != "cross.host.local" {
+		t.Errorf("expected proxy to receive 1 request for cross.host.local, got: %v", receivedHosts)
+	}
+}

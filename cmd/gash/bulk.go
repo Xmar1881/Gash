@@ -157,6 +157,9 @@ func runBulkScan(
 			return fmt.Errorf("scan: geçersiz proxy URL %q: %w", cfg.ProxyURL, err)
 		}
 	}
+	if len(cfg.Scope) == 0 {
+		fmt.Fprintln(cmd.ErrOrStderr(), "notice: no --scope set: redirects and crawl links on any host will be followed; scan only systems you are authorized to test.")
+	}
 
 	// Shared policy session: global budget (MaxRequestsTotal) is strictly shared across all targets
 	sharedPolicy := plugin.NewPolicySession(plugin.PolicyConfig{

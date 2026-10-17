@@ -41,6 +41,25 @@ Dates are UTC.
 - Headless Chrome Deep XSS automated testing (`-tags deep`) wired into CI.
 - New vulnerability detectors: CAA DNS verification, NoSQL injection error-based,
   and Web Cache Poisoning basic checks.
+- New vulnerability detectors: insecure deserialization (GASH-029), subdomain
+  takeover (GASH-030), mass assignment (GASH-031), and missing rate limit
+  (GASH-032), each with fixtures and metric reports.
+- Request-smuggling differential probe (GASH-033, CWE-444): raw-TCP CL.TE/
+  TE.CL/TE.TE engine recon with dual-channel proof (divergence + delay) and
+  a `firm` ceiling (`internal/smuggle`).
+
+### Changed
+
+- Scope enforcement is now opt-in (Nuclei/ZAP-style operator responsibility).
+  Without `--scope` the scan runs in open mode: no host is blocked, cross-host
+  and cross-scheme redirects (including https→http) are followed, crawl links
+  on any host are attempted, and DNS decides (no rebinding pinning). A startup
+  notice on stderr states this. With `--scope`, the previous strict behavior
+  is unchanged (allowlist, DNS-rebinding pinning, upgrade-only http→https,
+  https→http never). The request-smuggling probe (GASH-033) now targets the
+  user-supplied host instead of refusing non-loopback targets; its scope
+  preflight applies only when `--scope` is set, and the `--active`
+  `--aggressive` gate plus the 10-request/5s caps are unchanged.
 
 ## [v0.1.0-dev] - 2026-10-13
 

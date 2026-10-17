@@ -32,7 +32,7 @@ become findings.
 
 Module `github.com/Xmar1881/Gash`, toolchain `go1.27.2`, license
 `AGPL-3.0-only`. Scan only targets you own or have explicit written
-permission to test; `--scope` keeps the allowlist tight.
+permission to test (`--scope` opts into a strict allowlist; see Legal).
 
 ## Why Gash
 
@@ -44,7 +44,8 @@ permission to test; `--scope` keeps the allowlist tight.
   automatically. No `--load-plugin` or `--enable` flags exist.
 - **Safe by default.** Default scans stay `safe` (GET/HEAD/OPTIONS only).
   `deep`, `active`, `aggressive`, and OOB behavior are explicit opt-ins;
-  `PolicySession` enforces methods, budgets, scope, and rate limits.
+  `PolicySession` enforces methods, budgets, and rate limits (plus scope
+  when `--scope` is set).
 - **Evidence levels you can audit.** Findings carry `tentative`, `firm`,
   `static-execution-evidence`, or `confirmed` confidence with control plus
   repeat rules, baseline gating (soft-404, WAF, dynamic masking), and a
@@ -52,11 +53,21 @@ permission to test; `--scope` keeps the allowlist tight.
 
 ## What's New / Highlights
 
-- **39 detectors** — verify with `go run ./cmd/gash plugins list`
-  (31 YAML, 7 sandboxed JS, 1 native PoC; see Detector Summary below).
+- **45 detectors** — verify with `go run ./cmd/gash plugins list`
+  (37 YAML, 7 sandboxed JS, 1 native PoC; see Detector Summary below).
+- **Request-smuggling probe (GASH-033)** — raw-TCP CL.TE/TE.CL/TE.TE
+  differential with dual-channel proof (follow-up divergence *and* delay),
+  `firm` ceiling, aggressive-gated, bounded to 10 requests on one keep-alive
+  connection.
+- **Operator-responsibility scope (Nuclei/ZAP-style)** — scans run open by
+  default with a one-line authorization notice; `--scope` opts into a strict
+  allowlist with DNS-rebinding pinning and upgrade-only http→https.
+- **Fleet and surface tooling** — bulk `--target-file`/`--resume` runs with
+  shared budgets, BFS crawler (`--max-pages`, `--depth`), content discovery
+  with soft-404 learning, `gash diff` regression tracking, and `--proxy` for
+  Burp/ZAP integration.
 - **Aggressive profile** — full offensive opt-in: all detectors, all
-  methods, 50k req/target, 100 req/s. Lab-only unless you hold written
-  authorization.
+  methods, 50k req/target, 100 req/s. Use only with written authorization.
 - **WAF-aware, not stealthy** — WAF blocks become `WAFDetected` stats, never
   silent drops. Aggressive mode retries at most 5 scoped variants
   (header/HPP/encode/comment/case); block pages never count as evidence.
@@ -89,12 +100,13 @@ The current fixture corpus is measured and reproducible: the reflected XSS
 dataset reports `TP=2 FP=0 TN=8 FN=0` at `static-execution-evidence`. That is a
 corpus result, not a claim of real-world recall across every framework,
 browser, WAF, or application shape.
-Real headless execution, a compose lab, and a Nuclei comparison remain tracked
-work in [`docs/known-limits.md`](docs/known-limits.md).
+Headless execution is implemented behind `-tags deep` (chromedp, verified
+against real Chrome); a compose-lab recall run and a Nuclei comparison
+remain tracked work in [`docs/known-limits.md`](docs/known-limits.md).
 
 ## How It Differs
 
-Honest comparison — Gash is experimental (`v0.1.0-dev`, 39 reference
+Honest comparison — Gash is experimental (`v0.1.0-dev`, 45 reference
 plugins) and competes on verification discipline, not on maturity or library
 size. No Gash-versus-Nuclei benchmark has been run (not compared); see
 `docs/metrics/nuclei-comparison-2026-10-14.md`.
@@ -208,23 +220,30 @@ only shows help and waits for `Enter`; run it from a terminal instead:
 
 ## Detector Summary
 
-39 detectors via `go run ./cmd/gash plugins list`
-(31 Tier 1 YAML, 7 Tier 2 sandboxed JS, 1 Tier 3 native PoC).
+45 detectors via `go run ./cmd/gash plugins list`
+(37 Tier 1 YAML, 7 Tier 2 sandboxed JS, 1 Tier 3 native PoC).
 Full oracle/plugin catalog: `docs/detector-inventory.md`.
 
 | Class | Count | Examples |
 |---|---:|---|
 | Cross-site scripting (reflected, stored, DOM) | 5 | `xss-reflected-basic`, `xss-attribute-injection`, `xss-stored-basic`, `xss-stored-two-step`, `dom-sink-basic` |
 | SQL injection (error, boolean, time, stacked, auth-bypass, OOB) | 6 | `sqli-error-based`, `sqli-boolean-differential`, `sqli-time-based`, `sqli-stacked-time`, `sqli-auth-bypass`, `blind-sqli-oob` |
+| NoSQL injection (error-based) | 1 | `nosql-injection-error` |
 | Command injection (error, timing) | 2 | `command-injection-error`, `command-injection-timing` |
 | SSRF (blind OOB, cloud metadata) | 2 | `ssrf-blind-oob`, `ssrf-cloud-metadata` |
 | XXE (OOB, reflected) | 2 | `xxe-oob`, `xxe-reflected-basic` |
 | Template injection (SSTI) | 1 | `template-injection-reflection` |
 | File / path (RFI, traversal, upload) | 3 | `rfi-remote-include`, `path-traversal-error`, `file-upload-unrestricted` |
-| Access control and logic (IDOR, LDAP, HPP x2) | 4 | `idor-differential`, `ldap-injection-differential`, `hpp-parameter-pollution`, `hpp-duplicate-emission` |
-| Misconfig and headers (security headers, cookie, CORS, CRLF, CSRF, clickjacking, JWT x2, version, GraphQL, error disclosure, redirect, CVE) | 13 | `missing-security-headers`, `cookie-flags`, `cors-misconfig`, `crlf-header-injection`, `csrf-token-absence`, `clickjacking-frameable`, `jwt-token-exposure`, `jwt-alg-confusion`, `server-version-disclosure`, `graphql-endpoint-discovery`, `error-message-disclosure`, `open-redirect-param`, `cve-dependency-scan` |
+| Access control and logic (IDOR, LDAP, HPP x2, mass assignment) | 5 | `idor-differential`, `ldap-injection-differential`, `hpp-parameter-pollution`, `hpp-duplicate-emission`, `mass-assignment-basic` |
+| Misconfig and headers (security headers, cookie, CORS, CRLF, CSRF, clickjacking, JWT x2, version, GraphQL, error disclosure, redirect, CVE, cache poisoning, rate limit) | 15 | `missing-security-headers`, `cookie-flags`, `cors-misconfig`, `crlf-header-injection`, `csrf-token-absence`, `clickjacking-frameable`, `jwt-token-exposure`, `jwt-alg-confusion`, `server-version-disclosure`, `graphql-endpoint-discovery`, `error-message-disclosure`, `open-redirect-param`, `cve-dependency-scan`, `web-cache-poisoning-basic`, `missing-rate-limit` |
+| Insecure deserialization (error signature) | 1 | `insecure-deserialization-error` |
+| Subdomain takeover (unclaimed-service bodies) | 1 | `subdomain-takeover-basic` |
 | Native PoC (Tier 3, explicit trust) | 1 | `poc-native-header-check` |
-| **Total** | **39** | `go run ./cmd/gash plugins list` |
+| **Total** | **45** | `go run ./cmd/gash plugins list` |
+
+Engine-recon probes ship outside the plugin set: request smuggling
+(GASH-033, `internal/smuggle`) and content discovery (GASH-028,
+`internal/discovery`).
 
 Evidence ladder: `tentative` -> `firm` / `static-execution-evidence` ->
 `confirmed`. Timing caps at `firm`; browser `confirmed` needs the headless
@@ -248,7 +267,7 @@ match. Counts above are plugin inventory, not real-target recall.
 | `docs/auth.md` | Auth contexts and dual-user BOLA matrix |
 | `docs/api-discovery.md` | OpenAPI test-plan flow |
 | `docs/proto-checks.md` | DNS/TLS/TCP checks and CAA gap |
-| `docs/known-limits.md` | BLOCKED register (chunked-TE, CAA, headless, benchmark) |
+| `docs/known-limits.md` | BLOCKED and gap register (lab recall, benchmark, browser limits) |
 | `docs/technical-audit-2026-10-14.md` | Latest technical audit, priorities, and measured status |
 | `docs/report-formats.md` | JSON/SARIF/text/HTML/JUnit contracts |
 | `docs/ci-integration.md` | CI gates (`--fail-on`, corpus, bench) |
@@ -282,13 +301,26 @@ is explicitly not compared
 
 ## Responsible Use
 
-Scan only targets with explicit written permission. Keep `--scope` tight,
-leave OOB disabled unless you run the interaction server, and stay on the
-`safe` default in CI and production. Never point active probes, timing loops,
-or OOB payloads at third-party systems. Aggressive mode is lab-only unless
-you hold written authorization. See `docs/SECURITY.md` for the full
+Scope enforcement is opt-in (Nuclei/ZAP-style operator responsibility).
+Without `--scope` the scan runs in open mode: nothing is blocked and
+cross-host and cross-scheme redirects and crawl links are followed, so only
+scan systems you own or have explicit written permission to test. Pass
+`--scope <cidr/domain,...>` to lock a strict allowlist (redirect
+re-validation, upgrade-only http→https, downgrade never, DNS-rebinding
+pinning). Leave OOB disabled unless you run the interaction server, and
+stay on the `safe` default in CI and production. Never point active
+probes, timing loops, or OOB payloads at third-party systems. Aggressive
+mode requires written authorization. See `docs/SECURITY.md` for the full
 policy (authorized target, scope allowlist, OOB opt-in, safe default);
 review rejects any change that encourages unauthorized scanning.
+
+## Legal
+
+Gash is a testing tool for authorized security assessments only. You are
+solely responsible for the targets you select and the payloads you enable;
+using Gash against systems without prior written authorization may violate
+computer-misuse laws (e.g. CFAA, UK CMA, TCK 243/244) and is prohibited by
+this project. The authors accept no liability for misuse or damage.
 
 ## Credits
 
