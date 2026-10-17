@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -27,6 +28,7 @@ import (
 	"github.com/Xmar1881/Gash/internal/plugin/loader"
 	"github.com/Xmar1881/Gash/internal/probe"
 	"github.com/Xmar1881/Gash/internal/proto"
+	"github.com/Xmar1881/Gash/internal/smuggle"
 )
 
 // parseTarget validates a scan target URL.
@@ -83,6 +85,8 @@ func ruleAndCWE(oracleName string) (string, string) {
 		return "GASH-025", "CWE-693"
 	case "tcp":
 		return "GASH-026", "CWE-200"
+	case "smuggle", "smuggling-differential", "smugglingdifferential":
+		return "GASH-033", "CWE-444"
 	default:
 		return "GASH-000", "CWE-693"
 	}
@@ -103,6 +107,15 @@ func ruleForPlugin(pluginID, oracleName string) (string, string) {
 		return "GASH-028", "CWE-200"
 	case strings.Contains(id, "idor") || strings.Contains(id, "bola"):
 		return "GASH-005", "CWE-639"
+	// Lab-batch dedektörleri (çakışma yok; yeni ID'ler 029-032):
+	case strings.Contains(id, "deserial"):
+		return "GASH-029", "CWE-502"
+	case strings.Contains(id, "takeover") || strings.Contains(id, "subdomain"):
+		return "GASH-030", "CWE-693"
+	case strings.Contains(id, "mass-assignment") || strings.Contains(id, "massassignment"):
+		return "GASH-031", "CWE-915"
+	case strings.Contains(id, "rate-limit") || strings.Contains(id, "ratelimit"):
+		return "GASH-032", "CWE-770"
 	default:
 		return ruleAndCWE(oracleName)
 	}
@@ -307,6 +320,44 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		allFindings = append(allFindings, matrixFindings...)
 	}
 
+	// Request smuggling (CL.TE/TE.CL/TE.TE): --active + --aggressive kapılı
+	// engine-recon (GASH-033, CWE-444). Tier1-YAML değil, engine-recon —
+	// gerekçe: net/http chunk çerçevelemeyi denetlemez; ham-TCP dial +
+	// keep-alive çift-isabet (muğlak+takip) + AllowHost preflight + lab-only
+	// kilidi tek-istekli YAML kalıbına sığmaz; kanıt motor-içidir
+	// (finding.Build bypass — proto/content-discovery recon disiplini).
+	// Kapı dışı (safe/standard/deep dahil) sessiz değil, denetim izli
+	// skip'tir; kapsam-dışı/lab-dışı soket AÇILMAZ (≤10 istek, 5s tavan).
+	var smuggleRequests int
+	if smuggleGateOK(e) {
+		if targetURL, perr := url.Parse(target); perr == nil {
+			allow := e.protoAllow(targetURL)
+			sres, serr := smuggle.Scan(ctx, target, smuggle.Options{
+				Timeout:    5 * time.Second,
+				Allow:      smuggle.AllowHost(allow),
+				Active:     e.cfg.Active,
+				Aggressive: e.cfg.Profile == config.ProfileAggressive,
+			})
+			switch {
+			case serr != nil && errors.Is(serr, plugin.ErrScopeViolation):
+				execSkipped = append(execSkipped, plugin.SkippedPlugin{PluginID: smuggle.PluginID, Reason: "skipped (smuggle-probe scope violation, no socket opened)"})
+			case serr != nil:
+				// Ölçülemeyen hedef sessiz geçilir (TCP banner recon disiplini);
+				// tarama durmaz, sahte bulgu YOK.
+			case sres != nil:
+				smuggleRequests = sres.Requests
+				if sres.Finding != nil {
+					allFindings = append(allFindings, sres.Finding)
+				}
+				if sres.Skipped != "" {
+					execSkipped = append(execSkipped, plugin.SkippedPlugin{PluginID: smuggle.PluginID, Reason: sres.Skipped})
+				}
+			}
+		}
+	} else {
+		execSkipped = append(execSkipped, plugin.SkippedPlugin{PluginID: smuggle.PluginID, Reason: "skipped (smuggle-probe requires --active --aggressive)"})
+	}
+
 	for _, spec := range ordered {
 		wg.Add(1)
 		go func(s plugin.PluginSpec) {
@@ -357,6 +408,7 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 			"matrix_requests":  int(matrixRequests),
 			"content_requests": contentRequests + contentFollowRequests,
 			"content_findings": contentFindingCount,
+			"smuggle_requests": smuggleRequests,
 			"detected_tech":    len(e.detectedTech),
 			"detected_caps":    len(e.detectedCaps),
 		},
@@ -783,6 +835,18 @@ func (e *Engine) runProtoRecon(ctx context.Context, target string) ([]*finding.F
 		}
 	}
 	return out, skipped
+}
+
+// smuggleGateOK smuggle recon kapısıdır: --active + agresif profil +
+// profilde smuggle dedektörü (hepsi şart; dışı → denetim izli skip).
+func smuggleGateOK(e *Engine) bool {
+	if e == nil || !e.cfg.Active {
+		return false
+	}
+	if e.cfg.Profile != config.ProfileAggressive {
+		return false
+	}
+	return e.detectorEnabled("smuggle")
 }
 
 // protoAllow proto kontrollerinin kapsam kararıdır.

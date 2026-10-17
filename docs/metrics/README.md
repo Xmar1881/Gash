@@ -61,8 +61,13 @@ The gate is enforced by `TestMetricGate` in `tests/plugins`, not by review conve
 | sqli-time-based | [sqli-time-based.md](sqli-time-based.md) |
 | nosql-injection-error | [nosql-injection-error.md](nosql-injection-error.md) |
 | web-cache-poisoning-basic | [web-cache-poisoning-basic.md](web-cache-poisoning-basic.md) |
+| insecure-deserialization-error | [insecure-deserialization-error.md](insecure-deserialization-error.md) |
+| subdomain-takeover-basic | [subdomain-takeover-basic.md](subdomain-takeover-basic.md) |
+| mass-assignment-basic | [mass-assignment-basic.md](mass-assignment-basic.md) |
+| missing-rate-limit | [missing-rate-limit.md](missing-rate-limit.md) |
 | caa-dns-check (proto GASH-027, unit-scoped) | [caa-dns-check.md](caa-dns-check.md) |
 | content-discovery (engine-recon GASH-028, mock-fixture scoped) | [content-discovery-2026-10-16.md](content-discovery-2026-10-16.md) |
+| smuggle-differential (engine-recon GASH-033, mock-fixture scoped) | [smuggle-differential.md](smuggle-differential.md) |
 
 ## Lab Reports
 

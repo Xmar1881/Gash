@@ -1,0 +1,1 @@
+{"body": "<html><body><h1>Too Many Requests</h1><p>Slow down and try again later.</p></body></html>", "control_body": "<html><body><h1>Sign in</h1></body></html>", "control_status": 200, "expected_verdict": "reject", "headers": {"Content-Type": "text/html", "Retry-After": "60"}, "name": "429 lockout means protected", "status": 429, "target": "http://example.com/login"}

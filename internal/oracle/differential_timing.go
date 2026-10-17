@@ -13,11 +13,16 @@ import (
 )
 
 // DifferentialParams true/false/kontrol üçlüsüdür (GASH-005).
+// ConfidenceCeiling kabul kararına tavan koyar ("" = yok; "firm"/"tentative"/
+// "static-execution-evidence" alta indirir, asla yükseltmez). Mass assignment
+// (GASH-031) gibi tek-kanallı bağlanma sinyallerinde confirmed şişmesini
+// önler; plugin YAML'dan `confidence_ceiling` ile beyan edilir.
 type DifferentialParams struct {
-	TrueBodies  []string
-	FalseBodies []string
-	ControlBody string
-	Repeats     int // default 3
+	TrueBodies        []string
+	FalseBodies       []string
+	ControlBody       string
+	Repeats           int // default 3
+	ConfidenceCeiling string
 }
 
 // DifferentialOracle maskeleme-sonrası karşılaştırma yapar; tutarsız = ret.
@@ -68,14 +73,21 @@ func (DifferentialOracle) Verify(ctx context.Context, cls baseline.Classificatio
 		_ = cb
 	}
 	art := map[string]string{"true_hash": tb[0][:min(16, len(tb[0]))], "false_hash": fb[0][:min(16, len(fb[0]))]}
-	// Tam tutarlılık + ayrışma → confirmed (3/3).
+	// Tam tutarlılık + ayrışma → confirmed (3/3); beyanlı tavan varsa indirilir.
+	conf := plugin.ConfidenceConfirmed
+	note := "3/3 tutarlı differential + kontrol"
+	if ceil, ok := confidenceCeiling(p.ConfidenceCeiling); ok && confidenceRank(conf) > confidenceRank(ceil) {
+		conf = ceil
+		art["ceiling"] = string(ceil)
+		note += " (tavan: " + string(ceil) + ")"
+	}
 	return &Evidence{
 		Verdict:                VerdictAccept,
-		ConfidenceContribution: plugin.ConfidenceConfirmed,
+		ConfidenceContribution: conf,
 		Artifacts:              art,
 		Repeats:                n,
 		ControlResult:          "stable",
-		Note:                   "3/3 tutarlı differential + kontrol",
+		Note:                   note,
 	}, nil
 }
 
@@ -94,6 +106,32 @@ func allEqual(in []string) bool {
 		}
 	}
 	return true
+}
+
+// confidenceRank güven sırasıdır (tavan karşılaştırması için).
+func confidenceRank(c plugin.Confidence) int {
+	switch c {
+	case plugin.ConfidenceTentative:
+		return 0
+	case plugin.ConfidenceStaticExecution:
+		return 1
+	case plugin.ConfidenceFirm:
+		return 2
+	case plugin.ConfidenceConfirmed:
+		return 3
+	default:
+		return -1
+	}
+}
+
+// confidenceCeiling tavan dizesini doğrular (bilinmeyeni yok sayar, fail-open değil fail-keep).
+func confidenceCeiling(s string) (plugin.Confidence, bool) {
+	switch plugin.Confidence(s) {
+	case plugin.ConfidenceTentative, plugin.ConfidenceStaticExecution, plugin.ConfidenceFirm, plugin.ConfidenceConfirmed:
+		return plugin.Confidence(s), true
+	default:
+		return "", false
+	}
 }
 
 // TimingParams istatistiksel ayrışmadır (GASH-006/010).

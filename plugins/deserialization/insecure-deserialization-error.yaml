@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/deserialization/insecure-deserialization-error.yaml
+# What: Tier 1 insecure deserialization plugin backed by ErrorSignatureOracle
+#   (deserialization mode, GASH-029, CWE-502).
+# Why: Java/Python/PHP unmarshal hata imzaları + kontrolde yokluk, firm tavan.
+# Red lines: payload bozuk-serileştirme başlık parçasıdır (gadget/class YOK,
+#   RCE denemesi YOK); yalnızca error-oracle sinyali. Yetkili lab hedefinde
+#   --active + --scope ile çalışır.
+# Tier gerekçesi: tek-istekli hata-imzası kontrolü; dal/çok-adım yok → Tier 2
+# katma değer sağlamaz (sandbox'ta ek oracle ilkeli yok, fixture parametre
+# akışı Tier 1'e özgüdür).
+
+id: insecure-deserialization-error
+name: Insecure Deserialization Error-Based
+description: Detects insecure deserialization via Java/Python/PHP unmarshal error signature match plus absent-in-control proof using a malformed serialization header fragment probe with no gadget chain.
+author: GASH contributors
+severity: high
+tags: [deserialization, injection, error-signature, error]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 50
+phase: probe
+order: 67
+api_version: "1.0"
+tests: tests/fixtures/insecure-deserialization-error/
+request:
+  method: GET
+  param_names: [data, object, payload, input, state]
+  payload: "rO0ABkdBU0hfUFJPQkU"
+oracle:
+  name: error
+  params:
+    mode: "deserialization"
+    signature_set: ["deserialization"]

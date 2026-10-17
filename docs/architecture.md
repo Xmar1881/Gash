@@ -583,6 +583,7 @@ gash
 | `--active` | scan | `false` | State-changing/OOB payload kapısı. |
 | `--auth-session <file>` | scan | — | Cookie/header jar; `requires_auth` plugin'ler için zorunlu. |
 | `--scope <cidr/domain,...>` | scan | — | Allowlist; yoksa tek hedef implicit scope (pentestte zorunlu öneri). |
+| (implicit scope, `--scope` yokken) | scan | — | Hedef host + yalnızca bilinen apex↔www varyantı; http→https upgrade izinli, https→http downgrade asla ve www farklı IP'ye çözülürse DNS-rebinding reddi. Gerekçe/etki: upgrade gizliliği korur, downgrade MITM'e açacağı için yasak; kapsam yalnızca tanımlı varyantta genişler, rastgele alt alanlar açılmaz. |
 | `--max-requests-per-target` | scan | 1000 | Per-target bütçe. |
 | `--max-requests-total` | scan | 10000 | Global bütçe. |
 | `--plugin-timeout` | scan | 30s | Per-plugin timeout (Tier 2 Interrupt, Tier 3 kill). |

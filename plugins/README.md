@@ -58,6 +58,10 @@ discovers this tree automatically; no enable flag exists.
 | server-version-disclosure | Tier 1 | version | `version-disclosure/server-version-disclosure.yaml` |
 | nosql-injection-error | Tier 1 | error | `nosql/nosql-injection-error.yaml` |
 | web-cache-poisoning-basic | Tier 1 | differential | `web-cache/web-cache-poisoning-basic.yaml` |
+| insecure-deserialization-error | Tier 1 | error (deserialization, GASH-029, firm ceiling) | `deserialization/insecure-deserialization-error.yaml` |
+| subdomain-takeover-basic | Tier 1 | error (takeover, GASH-030, DNS-dependent firm ceiling) | `takeover/subdomain-takeover-basic.yaml` |
+| mass-assignment-basic | Tier 1 | differential (GASH-031, firm ceiling) | `mass-assignment/mass-assignment-basic.yaml` |
+| missing-rate-limit | Tier 1 | header (ratelimit, GASH-032, tentative ceiling, budgeted burst) | `rate-limit/missing-rate-limit.yaml` |
 | poc-native-header-check | Tier 3 | header | `native/poc-native-header-check.gashplugin.yaml` |
 
 ## Testing
@@ -84,6 +88,21 @@ go test ./internal/discovery/ -run 'TestContentDiscovery|TestWordlist' -v
 ```
 
 Report: `docs/metrics/content-discovery-2026-10-16.md`.
+
+`internal/smuggle/smuggle.go` (request-smuggling differential probe,
+GASH-033, CWE-444) ships as engine-recon, not as Tier 1 YAML — Tier 1 runs
+single requests through `net/http`, which owns chunk framing and cannot emit
+ambiguous CL+TE bytes; the probe needs raw-TCP dials, paired keep-alive
+exchanges (ambiguous + byte-identical follow-up), an `AllowHost` preflight
+before any socket, and a loopback-only lock, none of which the YAML runner
+expresses. Evidence is engine-built (`smuggling-differential` dual-channel
+discipline, firm ceiling, confirmed never). Test with:
+
+```sh
+go test ./internal/smuggle/ -v
+```
+
+Report: `docs/metrics/smuggle-differential.md`.
 
 ## Adding a Plugin
 

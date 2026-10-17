@@ -1,0 +1,13 @@
+# smuggle-differential fixture: NEGATIVE (tutarlı sunucu, TN → bulgu YOK)
+#
+# Aynı muğlak istek (CL + chunked bir arada) + aynı zararsız takip, ancak
+# sunucu çerçevelemeyi tutarlı yorumlar: her yanıt hızlı 200/OK-clean.
+# Ne timing (gecikme ~0ms < 500ms eşiği) ne differential (statü/gövde aynı)
+# sinyali → decide reject → bulgu YOK.
+#
+# --- istek 1 (muğlak) → yanıt 1: 200/OK-clean (hızlı) ---
+# --- istek 2 (takip)  → yanıt 2: 200/OK-clean (hızlı, kontrole eş) ---
+#
+# Kontrol çifti: yanıt 1 = 200/OK-clean, yanıt 2 = 200/OK-clean.
+# Beklenen: bulgu YOK, requests <= 10, skip YOK.
+NEGATIVE-consistent-no-divergence

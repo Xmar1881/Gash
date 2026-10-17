@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/net/publicsuffix"
 	"golang.org/x/time/rate"
 )
 
@@ -138,10 +139,12 @@ type RetryConfig struct {
 
 // RedirectPolicy controls redirect behavior and scope re-validation.
 type RedirectPolicy struct {
-	MaxRedirects     int
-	FollowRedirects  bool
-	RevalidateScope  bool // Re-validate scope after each redirect
-	AllowCrossScheme bool // Allow http→https or https→http redirects
+	MaxRedirects    int
+	FollowRedirects bool
+	RevalidateScope bool // Re-validate scope after each redirect
+	// AllowCrossScheme allows http→https upgrade redirects only.
+	// https→http downgrades are never allowed, regardless of this flag.
+	AllowCrossScheme bool
 }
 
 // DefaultPolicyConfig bayrak default'larıdır (architecture.md §14.1).
@@ -164,7 +167,7 @@ func DefaultPolicyConfig() PolicyConfig {
 			MaxRedirects:     5,
 			FollowRedirects:  true,
 			RevalidateScope:  true,
-			AllowCrossScheme: false,
+			AllowCrossScheme: true,
 		},
 		MaxRequestBytes:   1024 * 1024, // 1MB
 		BackpressureLimit: 100,
@@ -370,7 +373,14 @@ func (sm *scopeManager) check(ctx context.Context, u *url.URL) error {
 	if len(entries) == 0 {
 		if originalTarget != "" {
 			origU, _ := url.Parse(originalTarget)
-			if origU != nil && sm.sameTarget(u, origU) {
+			if origU != nil && sm.sameTarget(origU, u) {
+				// Apex↔www variant: the variant host must resolve to IPs already
+				// seen for the original target; different IPs are DNS rebinding.
+				if !strings.EqualFold(origU.Hostname(), u.Hostname()) {
+					if err := sm.checkIPRebinding(ctx, strings.ToLower(u.Hostname()), strings.ToLower(origU.Hostname())); err != nil {
+						return err
+					}
+				}
 				return nil
 			}
 			return fmt.Errorf("%w: target %s not in implicit scope (original: %s)", ErrScopeViolation, u.String(), originalTarget)
@@ -469,10 +479,56 @@ func (sm *scopeManager) checkIPRebinding(ctx context.Context, host, allowedDomai
 	return nil
 }
 
-func (sm *scopeManager) sameTarget(a, b *url.URL) bool {
-	return strings.EqualFold(a.Scheme, b.Scheme) &&
-		strings.EqualFold(a.Hostname(), b.Hostname()) &&
-		a.Port() == b.Port()
+// sameTarget reports whether candidate is allowed under the implicit scope of
+// the original target: same port, same host (or its apex↔www variant), and the
+// same scheme or an http→https upgrade. https→http downgrades are rejected.
+func (sm *scopeManager) sameTarget(original, candidate *url.URL) bool {
+	if !schemeAllowed(original.Scheme, candidate.Scheme) {
+		return false
+	}
+	if original.Port() != candidate.Port() {
+		return false
+	}
+	return sameSiteVariant(original.Hostname(), candidate.Hostname())
+}
+
+// schemeAllowed accepts an unchanged scheme or an http→https upgrade.
+// What: Cross-scheme implicit-scope decision for a single hop.
+// Why: Upgrade keeps confidentiality; downgrade must never be followed.
+func schemeAllowed(from, to string) bool {
+	return strings.EqualFold(from, to) || isSchemeUpgrade(from, to)
+}
+
+func isSchemeUpgrade(from, to string) bool {
+	return strings.EqualFold(from, "http") && strings.EqualFold(to, "https")
+}
+
+func isSchemeDowngrade(from, to string) bool {
+	return strings.EqualFold(from, "https") && strings.EqualFold(to, "http")
+}
+
+// sameSiteVariant reports whether two hostnames are the same host or its
+// apex↔www variant within one registrable domain (publicsuffix). Arbitrary
+// subdomains are NOT included; IP literals require an exact match.
+func sameSiteVariant(a, b string) bool {
+	a = strings.ToLower(strings.TrimSuffix(a, "."))
+	b = strings.ToLower(strings.TrimSuffix(b, "."))
+	if a == b {
+		return true
+	}
+	if a == "" || b == "" || net.ParseIP(a) != nil || net.ParseIP(b) != nil {
+		return false
+	}
+	regA, errA := publicsuffix.EffectiveTLDPlusOne(a)
+	regB, errB := publicsuffix.EffectiveTLDPlusOne(b)
+	if errA != nil || errB != nil || regA != regB {
+		return false
+	}
+	return isApexOrWWW(a, regA) && isApexOrWWW(b, regB)
+}
+
+func isApexOrWWW(host, registrable string) bool {
+	return host == registrable || host == "www."+registrable
 }
 
 // scanBudget tracks total scan budget to prevent unlimited scans (P1.3).
@@ -859,10 +915,21 @@ func (p *PolicySession) RoundTripWithRetry(req *http.Request) (*http.Response, e
 					Err: fmt.Errorf("%w: invalid redirect location %q: %v", ErrPolicyViolation, location, err)}
 			}
 
-			// Cross-scheme check
-			if !p.cfg.RedirectPolicy.AllowCrossScheme && nextURL.Scheme != req.URL.Scheme {
-				return nil, &PolicyError{PluginID: pc.ID, Op: "redirect",
-					Err: fmt.Errorf("%w: cross-scheme redirect %s→%s not allowed", ErrPolicyViolation, req.URL.Scheme, nextURL.Scheme)}
+			// Cross-scheme check: http→https upgrades only, downgrades never.
+			if !strings.EqualFold(nextURL.Scheme, req.URL.Scheme) {
+				switch {
+				case isSchemeDowngrade(req.URL.Scheme, nextURL.Scheme):
+					return nil, &PolicyError{PluginID: pc.ID, Op: "redirect",
+						Err: fmt.Errorf("%w: scheme downgrade %s→%s never allowed", ErrPolicyViolation, req.URL.Scheme, nextURL.Scheme)}
+				case isSchemeUpgrade(req.URL.Scheme, nextURL.Scheme):
+					if !p.cfg.RedirectPolicy.AllowCrossScheme {
+						return nil, &PolicyError{PluginID: pc.ID, Op: "redirect",
+							Err: fmt.Errorf("%w: cross-scheme redirect %s→%s not allowed", ErrPolicyViolation, req.URL.Scheme, nextURL.Scheme)}
+					}
+				default:
+					return nil, &PolicyError{PluginID: pc.ID, Op: "redirect",
+						Err: fmt.Errorf("%w: cross-scheme redirect %s→%s not allowed", ErrPolicyViolation, req.URL.Scheme, nextURL.Scheme)}
+				}
 			}
 
 			// Scope re-validation after redirect (uses new scopeManager with rebinding detection)

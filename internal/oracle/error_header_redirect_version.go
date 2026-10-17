@@ -6,6 +6,7 @@ package oracle
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -17,11 +18,16 @@ import (
 
 // ErrorSignatureParams DB imza kütüphanesidir (GASH-004).
 // Extended for P1.4: supports "sqli" (default), "path_traversal", "generic_error" modes.
+// Extended for lab-batch: "deserialization" (GASH-029 insecure deserialization,
+// Java/Python/PHP error signatures, firm ceiling) and "takeover" (GASH-030
+// subdomain takeover, unclaimed-service body signatures, firm ceiling) modes.
+// Both new modes are error-signature matches plus absent-in-control proof;
+// neither sends a gadget, RCE chain, or out-of-scope request.
 type ErrorSignatureParams struct {
 	Body         string
 	ControlBody  string
 	SignatureSet []string // boşsa tümü
-	Mode         string   // "sqli" (default), "path_traversal", "generic_error"
+	Mode         string   // "sqli" (default), "path_traversal", "generic_error", "deserialization", "takeover"
 }
 
 var errorSignatures = map[string]*regexp.Regexp{
@@ -32,6 +38,14 @@ var errorSignatures = map[string]*regexp.Regexp{
 	"sqlite":         regexp.MustCompile(`(?i)(SQLite3::|sqlite.*error|near ".*": syntax error)`),
 	"path_traversal": regexp.MustCompile(`(?i)(no such file or directory|file not found|path traversal|open .* failed|access denied|permission denied|is a directory|not a directory|invalid path|directory traversal|\.\./|\.\.\\|etc/passwd|boot\.ini|windows/win\.ini)`),
 	"generic_error":  regexp.MustCompile(`(?i)(stack trace|exception|traceback|at \w+\.\w+\(|line \d+|error:|fatal error|uncaught exception|internal server error|500 error|debug information|syntax error|runtime error|null pointer|index out of bounds|division by zero)`),
+	// deserialization: Java/Python/PHP unmarshal hata imzaları (GASH-029).
+	// Yalnızca parse-hata dizeleri eşleşir; gadget/chain üretimi YOKTUR.
+	// "access denied" bilerek YOKTUR (baseline Untrusted ile çakışır, WAF gürültüsü olur).
+	"deserialization": regexp.MustCompile(`(?i)(InvalidClassException|StreamCorruptedException|NotSerializableException|OptionalDataException|UnpicklingError|pickle\.loads|cPickle|__wakeup|__destruct|__unserialize|unserialize\(\)|serialVersionUID|ObjectInputStream|readObject\(|resolveClass\(|SnakeYAML|yaml\.load|ysoserial|commons-collections)`),
+	// takeover: bilinen unclaimed-servis gövde imzaları (GASH-030, CWE-693).
+	// DNS CNAME önkoşulu plugin/lab prosedüründedir; bu imza yalnızca HTTP yarısını kanıtlar.
+	// "access denied"/"cloudflare"/"challenge" bilerek YOKTUR (baseline Untrusted, FP olur).
+	"takeover": regexp.MustCompile(`(?i)(NoSuchBucket|The specified bucket does not exist|NoSuchWebsiteConfiguration|There isn't a GitHub Pages site here|There is no app configured at that hostname|No such app|Do you want to claim this (website|domain)|Sorry, this shop is currently unavailable|Whatever you were looking for doesn't currently exist|This domain is not configured for|Unrecognized domain|project not found)`),
 }
 
 // ErrorSignatureOracle kontrolde imza yokluğunu zorunlu kılar.
@@ -61,6 +75,10 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 			set = []string{"path_traversal"}
 		case "generic_error":
 			set = []string{"generic_error"}
+		case "deserialization":
+			set = []string{"deserialization"}
+		case "takeover":
+			set = []string{"takeover"}
 		default: // sqli
 			for k := range errorSignatures {
 				if strings.HasPrefix(k, "mysql") || strings.HasPrefix(k, "postgres") || strings.HasPrefix(k, "mssql") || strings.HasPrefix(k, "oracle") || strings.HasPrefix(k, "sqlite") {
@@ -97,6 +115,12 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 	case "generic_error":
 		confidence = plugin.ConfidenceFirm // Generic error disclosure is firm (informational)
 		note = "hata mesajı ifşası tespit edildi"
+	case "deserialization":
+		confidence = plugin.ConfidenceFirm // Hata dizesi tek başına RCE kanıtı değildir (GASH-029 tavan)
+		note = "güvensiz deserializasyon hata imzası tespit edildi"
+	case "takeover":
+		confidence = plugin.ConfidenceFirm // HTTP imzası tek başına devralma kanıtı değildir; DNS önkoşullu (GASH-030 tavan)
+		note = "olası subdomain takeover imzası tespit edildi"
 	default: // SQLi signatures
 		confidence = plugin.ConfidenceConfirmed
 		note = "DB imzası tespit edildi"
@@ -118,8 +142,9 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 	}
 
 	// Without control: path_traversal and generic_error are firm (need control for confirmed)
-	// SQLi without control is firm
-	if hit == "path_traversal" || hit == "generic_error" {
+	// SQLi without control is firm. deserialization/takeover are firm by ceiling
+	// with or without control (single-channel signal, never confirmed).
+	if hit == "path_traversal" || hit == "generic_error" || hit == "deserialization" || hit == "takeover" {
 		confidence = plugin.ConfidenceFirm
 	}
 	return &Evidence{
@@ -134,16 +159,25 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 // Extended for P1.4: CRLF injection, JWT exposure, and JWT algorithm confusion detection modes.
 // Extended for deep-research report: csrf (GASH-020 passive form-token screen) and
 // frame (GASH-019 clickjacking framing screen) modes; both need Body for form analysis.
+// Extended for lab-batch: ratelimit (GASH-032 missing-rate-limit screen, tentative
+// ceiling). Needs Status (representative response status) plus optional Burst
+// (burst status series collected by the Tier 1 runner); absent signals stay
+// tentative because a single probe/burst cannot prove server-side policy.
 type HeaderParams struct {
 	Headers        http.Header
-	Mode           string      // "security" (default), "crlf", "jwt", "jwt_alg", "csrf", "frame"
+	Mode           string      // "security" (default), "crlf", "jwt", "jwt_alg", "csrf", "frame", "ratelimit"
 	RequestHeaders http.Header // For CRLF: check if request headers were reflected
 	Body           string      // Response body (form analysis for csrf mode; ignored otherwise)
+	Status         int         // Representative response status (ratelimit mode: 429 check)
+	Burst          []int       // Burst status series (ratelimit mode: any 429 means protected)
 }
 
-// HeaderOracle mantık-tabanlıdır; tentative YOKTUR (ya var ya yok; zayıf → firm).
+// HeaderOracle sözleşmesi: security/crlf/jwt/jwt_alg/csrf/frame modları
+// mantık-tabanlıdır ve tentative ÜRETMEZ (ya var ya yok; zayıf → firm).
 // Extended for P1.4: supports "security" (default), "crlf", "jwt", "jwt_alg" modes.
 // Extended for deep-research report: "csrf" (GASH-020) and "frame" (GASH-019 clickjacking) modes.
+// Extended for lab-batch: "ratelimit" (GASH-032) — bu modun tavanı tentative'tir:
+// sinyal yokluğu politika yokluğunu kanıtlamaz, yalnızca gözlemsel bulgudur.
 type HeaderOracle struct{}
 
 func (HeaderOracle) Name() string { return "header" }
@@ -173,6 +207,8 @@ func (HeaderOracle) Verify(ctx context.Context, cls baseline.Classification, tai
 		return verifyCSRFTokenAbsence(p.Headers, p.Body)
 	case "frame":
 		return verifyFrameable(p.Headers)
+	case "ratelimit":
+		return verifyRateLimit(p.Status, p.Headers, p.Body, p.Burst)
 	default:
 		return verifySecurityHeaders(p.Headers)
 	}
@@ -293,6 +329,56 @@ func verifyFrameable(h http.Header) (*Evidence, error) {
 		ConfidenceContribution: plugin.ConfidenceConfirmed,
 		Artifacts:              map[string]string{"missing": "x-frame-options,frame-ancestors"},
 		Note:                   "çerçeve koruması yok → confirmed (clickjacking)",
+	}, nil
+}
+
+// verifyRateLimit eksik rate-limit ekranıdır (GASH-032, CWE-770).
+// What: 429/lockout sinyali + rate-limit başlıkları yoksa tentative bulgu.
+// Why: Sinyal yokluğu politika yokluğunu kanıtlamaz (gözlemsel tavan tentative);
+// korumalı endpoint (429, Retry-After/X-RateLimit-*) reject alır. Credential
+// stuffing YOKTUR: isimsiz aynı-endpoint GET burst'ü, hesap kilitleme riski YOK.
+// Burst serisi Tier 1 runner tarafından toplanır (params burst, tavan 50);
+// fixture/offline yolda Burst boşken Status tek-örneklem sayılır.
+func verifyRateLimit(status int, h http.Header, body string, burst []int) (*Evidence, error) {
+	n := len(burst)
+	if n == 0 {
+		n = 1
+		burst = []int{status}
+	}
+	seen429 := 0
+	for _, s := range burst {
+		if s == http.StatusTooManyRequests {
+			seen429++
+		}
+	}
+	if status == http.StatusTooManyRequests || seen429 > 0 {
+		return &Evidence{Verdict: VerdictReject, Note: "429 gözlendi — rate limiting mevcut, korumalı"}, nil
+	}
+	var rlHeaders []string
+	for name := range h {
+		lower := strings.ToLower(name)
+		switch {
+		case lower == "retry-after",
+			lower == "ratelimit-limit", lower == "ratelimit-remaining", lower == "ratelimit-reset", lower == "ratelimit-policy",
+			lower == "x-ratelimit-limit", lower == "x-ratelimit-remaining", lower == "x-ratelimit-reset",
+			strings.HasPrefix(lower, "x-rate-limit"):
+			rlHeaders = append(rlHeaders, name)
+		}
+	}
+	if len(rlHeaders) > 0 {
+		return &Evidence{Verdict: VerdictReject, Note: "rate-limit başlıkları mevcut — korumalı"}, nil
+	}
+	lowerBody := strings.ToLower(body)
+	for _, marker := range []string{"too many requests", "rate limit exceeded", "ratelimit exceeded", "slow down", "request was throttled", "throttlingexception", "exceeded your current quota"} {
+		if strings.Contains(lowerBody, marker) {
+			return &Evidence{Verdict: VerdictReject, Note: "gövdede rate-limit metni — korumalı"}, nil
+		}
+	}
+	return &Evidence{
+		Verdict:                VerdictAccept,
+		ConfidenceContribution: plugin.ConfidenceTentative,
+		Artifacts:              map[string]string{"burst": fmt.Sprintf("%d", len(burst)), "observed_429": fmt.Sprintf("%d", seen429)},
+		Note:                   "429/lockout/rate-limit sinyali yok → tentative missing-rate-limit (gözlemsel tavan)",
 	}, nil
 }
 

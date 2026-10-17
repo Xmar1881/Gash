@@ -1,0 +1,1 @@
+{"body": "{\"users\":[]}", "control_body": "{\"users\":[]}", "control_status": 200, "expected_verdict": "reject", "headers": {"Content-Type": "application/json", "X-RateLimit-Limit": "100", "X-RateLimit-Remaining": "99", "X-RateLimit-Reset": "60"}, "name": "rate-limit headers mean protected", "status": 200, "target": "http://example.com/api/users"}
