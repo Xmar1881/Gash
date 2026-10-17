@@ -5,6 +5,7 @@ go 1.26.0
 toolchain go1.27.2
 
 require (
+	github.com/chromedp/cdproto v0.157.8
 	github.com/chromedp/chromedp v0.21.0
 	github.com/dop251/goja v0.0.0-20261011204819-0c9fae1b959d
 	github.com/go-playground/validator/v10 v10.27.0
@@ -20,7 +21,6 @@ require (
 )
 
 require (
-	github.com/chromedp/cdproto v0.157.8 // indirect
 	github.com/dlclark/regexp2/v2 v2.8.1 // indirect
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
