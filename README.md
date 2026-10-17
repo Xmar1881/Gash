@@ -53,8 +53,8 @@ permission to test (`--scope` opts into a strict allowlist; see Legal).
 
 ## What's New / Highlights
 
-- **51 detectors** — verify with `go run ./cmd/gash plugins list`
-  (37 YAML, 7 sandboxed JS, 1 native PoC; see Detector Summary below).
+- **63 detectors** — verify with `go run ./cmd/gash plugins list`
+  (55 YAML, 7 sandboxed JS, 1 native PoC; see Detector Summary below).
 - **Request-smuggling probe (GASH-033)** — raw-TCP CL.TE/TE.CL/TE.TE
   differential with dual-channel proof (follow-up divergence *and* delay),
   `firm` ceiling, aggressive-gated, bounded to 10 requests on one keep-alive
@@ -110,7 +110,7 @@ remain tracked work in [`docs/known-limits.md`](docs/known-limits.md).
 
 ## How It Differs
 
-Honest comparison — Gash is experimental (`v0.1.0-dev`, 51 reference
+Honest comparison — Gash is experimental (`v0.1.0-dev`, 63 reference
 plugins) and competes on verification discipline, not on maturity or library
 size. No Gash-versus-Nuclei benchmark has been run (not compared); see
 `docs/metrics/nuclei-comparison-2026-10-14.md`.
@@ -224,8 +224,8 @@ only shows help and waits for `Enter`; run it from a terminal instead:
 
 ## Detector Summary
 
-51 detectors via `go run ./cmd/gash plugins list`
-(43 Tier 1 YAML, 7 Tier 2 sandboxed JS, 1 Tier 3 native PoC).
+63 detectors via `go run ./cmd/gash plugins list`
+(55 Tier 1 YAML, 7 Tier 2 sandboxed JS, 1 Tier 3 native PoC).
 Full oracle/plugin catalog: `docs/detector-inventory.md`.
 
 | Class | Count | Examples |
@@ -244,7 +244,7 @@ Full oracle/plugin catalog: `docs/detector-inventory.md`.
 | Insecure deserialization (error signature) | 1 | `insecure-deserialization-error` |
 | Subdomain takeover (unclaimed-service bodies) | 1 | `subdomain-takeover-basic` |
 | Native PoC (Tier 3, explicit trust) | 1 | `poc-native-header-check` |
-| **Total** | **51** | `go run ./cmd/gash plugins list` |
+| **Total** | **63** | `go run ./cmd/gash plugins list` |
 
 Engine-recon probes ship outside the plugin set: request smuggling
 (GASH-033, `internal/smuggle`) and content discovery (GASH-028,
