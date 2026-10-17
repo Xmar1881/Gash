@@ -1,0 +1,1 @@
+{"name": "forwarded host reflected", "target": "http://example.com/", "status": 200, "headers": {"Content-Type": "text/html"}, "body": "<html><body>Host: gash-host-canary.example</body></html>", "control_body": "<html><body>Host: example.com</body></html>", "expected_verdict": "accept", "expected_confidence": "firm"}

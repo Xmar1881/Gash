@@ -1,0 +1,1 @@
+{"name": "ldap timing delay", "target": "http://example.com/search", "status": 200, "headers": {"Content-Type": "text/html"}, "body": "<html><body>OK</body></html>", "delay_samples": [6000.0, 6100.0, 6200.0], "control_samples": [100.0, 110.0, 105.0], "baseline_stddev": 10.0, "expected_verdict": "accept", "expected_confidence": "firm"}

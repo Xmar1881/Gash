@@ -1,0 +1,1 @@
+{"name": "no CRLF", "target": "http://example.com/", "status": 200, "headers": {"Content-Type": "text/html", "X-Custom-Header": "value"}, "body": "<html><body>OK</body></html>", "control_body": "", "expected_verdict": "reject"}

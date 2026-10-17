@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: http-method-override-abuse
+name: HTTP Method Override Abuse
+description: Detects authorization bypass via X-HTTP-Method-Override and related override headers.
+author: GASH contributors
+severity: high
+tags: [http-method-override, access-control, authorization]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 20
+phase: probe
+order: 79
+api_version: "1.0"
+tests: tests/fixtures/http-method-override-abuse/
+request:
+  method: GET
+  paths: ["/admin", "/api/admin"]
+oracle:
+  name: verb-tamper

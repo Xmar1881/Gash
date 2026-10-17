@@ -1,0 +1,1 @@
+{"name": "no callback", "target": "http://example.com/xml", "status": 200, "headers": {"Content-Type": "application/xml"}, "body": "<root/>", "oob_callback": false, "oob_correlation_id": "x3", "oob_namespace": "xxe-blind", "expected_verdict": "reject"}

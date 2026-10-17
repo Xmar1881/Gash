@@ -1,0 +1,1 @@
+{"name": "canary only in control", "target": "http://example.com/page?file=default", "status": 200, "headers": {"Content-Type": "text/html"}, "body": "<html><body><p>default template rendered here</p></body></html>", "canary": "http://127.0.0.1:9/gash-canary.txt", "control_body": "<html><body><p>http://127.0.0.1:9/gash-canary.txt</p></body></html>", "expected_verdict": "reject"}

@@ -1,0 +1,1 @@
+{"name": "no jwt", "target": "http://example.com/api", "status": 200, "headers": {"Content-Type": "application/json"}, "body": "{\"ok\":true}", "expected_verdict": "reject"}

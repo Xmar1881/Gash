@@ -1,0 +1,1 @@
+{"name": "no ACAO header", "target": "http://example.com/", "status": 200, "headers": {"Content-Type": "text/html"}, "body": "<html><body>OK</body></html>", "expected_verdict": "reject"}

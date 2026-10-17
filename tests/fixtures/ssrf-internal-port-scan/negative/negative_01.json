@@ -1,0 +1,1 @@
+{"name": "no delay", "target": "http://example.com/fetch", "status": 200, "headers": {"Content-Type": "text/html"}, "body": "<html><body>OK</body></html>", "delay_samples": [100.0, 110.0, 105.0], "control_samples": [95.0, 100.0, 98.0], "baseline_stddev": 10.0, "expected_verdict": "reject"}

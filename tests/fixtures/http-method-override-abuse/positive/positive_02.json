@@ -1,0 +1,1 @@
+{"name": "override returns protected json", "target": "http://example.com/api/admin", "status": 200, "headers": {"Content-Type": "application/json"}, "body": "{\"users\":[{\"id\":1,\"email\":\"admin@example.com\"}]}", "control_body": "Forbidden", "control_status": 403, "expected_verdict": "accept", "expected_confidence": "firm"}

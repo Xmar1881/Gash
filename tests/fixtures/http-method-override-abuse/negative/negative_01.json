@@ -1,0 +1,1 @@
+{"name": "baseline not protected", "target": "http://example.com/api/public", "status": 200, "headers": {"Content-Type": "application/json"}, "body": "{\"status\":\"ok\"}", "control_body": "{\"status\":\"ok\"}", "control_status": 200, "expected_verdict": "reject"}
