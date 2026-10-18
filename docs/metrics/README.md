@@ -71,6 +71,16 @@ The gate is enforced by `TestMetricGate` in `tests/plugins`, not by review conve
 | backup-file-exposure | [backup-file-exposure.md](backup-file-exposure.md) |
 | graphql-introspection-enabled | [graphql-introspection-enabled.md](graphql-introspection-enabled.md) |
 | nosql-auth-bypass-differential | [nosql-auth-bypass-differential.md](nosql-auth-bypass-differential.md) |
+| phpinfo-exposure | [phpinfo-exposure.md](phpinfo-exposure.md) |
+| management-endpoint-exposure | [management-endpoint-exposure.md](management-endpoint-exposure.md) |
+| directory-listing | [directory-listing.md](directory-listing.md) |
+| log4shell-jndi | [log4shell-jndi.md](log4shell-jndi.md) |
+| expression-language-injection | [expression-language-injection.md](expression-language-injection.md) |
+| jsonp-callback-injection | [jsonp-callback-injection.md](jsonp-callback-injection.md) |
+| oauth-open-redirect | [oauth-open-redirect.md](oauth-open-redirect.md) |
+| ssi-injection | [ssi-injection.md](ssi-injection.md) |
+| webdav-enabled | [webdav-enabled.md](webdav-enabled.md) |
+| source-map-exposure | [source-map-exposure.md](source-map-exposure.md) |
 | caa-dns-check (proto GASH-027, unit-scoped) | [caa-dns-check.md](caa-dns-check.md) |
 | content-discovery (engine-recon GASH-028, mock-fixture scoped) | [content-discovery-2026-10-16.md](content-discovery-2026-10-16.md) |
 | smuggle-differential (engine-recon GASH-033, mock-fixture scoped) | [smuggle-differential.md](smuggle-differential.md) |

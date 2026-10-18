@@ -88,6 +88,11 @@ type pendingOOB struct {
 	value    string
 	corr     string
 	ns       string
+	// header/headerValue: başlık taşıyıcılı OOB denemeleri (GASH-060 Log4Shell).
+	// Kanıt aynı correlation üzerinden gelir; raporlama başlığı önceler çünkü
+	// her denemede gönderilen vektör başlıklardır, param yalnızca eşlik eder.
+	header      string
+	headerValue string
 }
 
 // ExecuteTier1 runs a Tier 1 file against one target URL.
@@ -115,19 +120,42 @@ func ExecuteTier1WithOptions(ctx context.Context, spec *plugin.PluginSpec, file 
 	}
 
 	// Paths: sabit yol listesi (GASH-036/037/038). Declared yollar kök yerine
-	// geçer; her yol tek executeSingle denemesidir (param/payload yok).
+	// geçer. Param/payload beyan edilmemişse her yol tek executeSingle
+	// denemesidir; param/payload varsa her yol kendi enjeksiyon döngüsünü
+	// yürütür (GASH-063 oauth yolu + redirect_uri parametresi).
 	if len(file.Request.Paths) > 0 {
 		var out []Tier1Result
+		injects := len(file.Request.ParamNames) > 0 || len(file.Request.Payloads) > 0 || file.Request.Payload != ""
+		params := file.Request.ParamNames
+		if len(params) == 0 {
+			params = []string{""}
+		}
+		payloads := effectivePayloads(file.Request)
 		for _, p := range file.Request.Paths {
 			pathURL, err := joinTargetPath(target, p)
 			if err != nil {
 				return nil, fmt.Errorf("tier1 execute: bad target %q: %w", target, err)
 			}
-			res, err := executeSingle(ctx, spec, file, pathURL, method, "", "", send, &opts)
-			if err != nil {
-				return nil, err
+			if !injects {
+				res, err := executeSingle(ctx, spec, file, pathURL, method, "", "", send, &opts)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, res...)
+				continue
 			}
-			out = append(out, res...)
+			for _, param := range params {
+				for _, payload := range payloads {
+					res, err := executeSingle(ctx, spec, file, pathURL, method, param, payload, send, &opts)
+					if err != nil {
+						return nil, err
+					}
+					out = append(out, res...)
+					if len(res) > 0 {
+						break // ilk kabul eden payload yeter: istek bütçesi korunur
+					}
+				}
+			}
 		}
 		out = append(out, finishPendingOOB(ctx, &opts)...)
 		return out, nil
@@ -197,12 +225,21 @@ func finishPendingOOB(ctx context.Context, opts *Tier1Options) []Tier1Result {
 		if err != nil || ev.Verdict != oracle.VerdictAccept {
 			continue
 		}
+		inj := plugin.InjectionPoint{URL: p.rawURL, Method: p.method, ParamName: p.param, ParamLocation: "query", Value: p.value}
+		vector := "query"
+		if p.header != "" {
+			inj = plugin.InjectionPoint{URL: p.rawURL, Method: p.method, ParamName: strings.ToLower(p.header), ParamLocation: "header", Value: p.headerValue}
+			vector = "header"
+			if p.param != "" {
+				vector = "query+header"
+			}
+		}
 		out = append(out, Tier1Result{Candidate: plugin.Candidate{
 			PluginID:       p.pluginID,
 			Target:         p.target,
-			InjectionPoint: plugin.InjectionPoint{URL: p.rawURL, Method: p.method, ParamName: p.param, ParamLocation: "query", Value: p.value},
+			InjectionPoint: inj,
 			OracleName:     "oob",
-			OracleParams:   map[string]string{"correlation": p.corr, "namespace": p.ns},
+			OracleParams:   map[string]string{"correlation": p.corr, "namespace": p.ns, "vector": vector},
 		}, Evidence: ev})
 	}
 	opts.pending = nil
@@ -311,17 +348,21 @@ func expandOOBPayload(payload, correlationID, dnsDomain, httpURL string) string 
 	return r.Replace(payload)
 }
 
+// executeSingle runs one request attempt (one param/payload pair) and applies
+// the pinned oracle. OOB templating spans query payload, request headers, and
+// request body so header-vector (Log4Shell) and body-vector (XXE) classes can
+// carry a real single-use token instead of shipping literal placeholders.
 func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File, target, method, param, payload string, send Sender, opts *Tier1Options) ([]Tier1Result, error) {
 	// OOB template expansion: `oracle: oob` payloads carry placeholders that
 	// must point at the operator's self-hosted server before the request is
 	// built. Without a provider the payload is sent verbatim and no callback
 	// can match ([[OOB]] stays inert), so no finding is fabricated.
 	effPayload := payload
-	oobCorr := ""
+	oobCorr, oobDomain, oobCBURL := "", "", ""
 	if strings.EqualFold(file.Oracle.Name, "oob") && opts != nil && opts.OOB != nil {
 		corr, domain, cbURL, gerr := opts.OOB.Generate()
 		if gerr == nil && corr != "" {
-			oobCorr = corr
+			oobCorr, oobDomain, oobCBURL = corr, domain, cbURL
 			effPayload = expandOOBPayload(payload, corr, domain, cbURL)
 		}
 	}
@@ -334,9 +375,25 @@ func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File
 		}
 	}
 	reqHeaders := file.Request.Headers
+	oobHeaderName, oobHeaderValue := "", ""
+	if oobCorr != "" && len(reqHeaders) > 0 {
+		expanded := make(map[string]string, len(reqHeaders))
+		for k, v := range reqHeaders {
+			nv := expandOOBPayload(v, oobCorr, oobDomain, oobCBURL)
+			if nv != v && oobHeaderName == "" {
+				oobHeaderName, oobHeaderValue = k, nv
+			}
+			expanded[k] = nv
+		}
+		reqHeaders = expanded
+	}
 	var reqBody []byte
 	if file.Request.Body != "" {
-		reqBody = []byte(file.Request.Body)
+		body := file.Request.Body
+		if oobCorr != "" {
+			body = expandOOBPayload(body, oobCorr, oobDomain, oobCBURL)
+		}
+		reqBody = []byte(body)
 	}
 	status, headers, body, err := send(ctx, method, rawURL, reqHeaders, reqBody)
 	if err != nil {
@@ -470,9 +527,10 @@ func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File
 					controlBody = cBody
 				}
 			}
-		} else if strings.EqualFold(mode, "backup_file") {
-			// Soft-404 kontrolü (GASH-037): imza genel hata/SPA sayfasından
-			// gelmiyorsa kanıt değeri vardır. Kontrol isteği tek ve isimsizdir.
+		} else if strings.EqualFold(mode, "backup_file") || strings.EqualFold(mode, "content") {
+			// Soft-404 kontrolü (GASH-037/057/058/059/066): imza genel hata/SPA
+			// sayfasından gelmiyorsa kanıt değeri vardır. Kontrol isteği tek
+			// ve isimsizdir; yalnızca 200 gövdesi karşılaştırılır.
 			ctrlURL := rawURL + ".gash-soft404-check"
 			if cStatus, _, cBody, cErr := send(ctx, http.MethodGet, ctrlURL, nil, nil); cErr == nil && cStatus == http.StatusOK {
 				controlBody = cBody
@@ -688,15 +746,17 @@ func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File
 		// ONE bounded callback window (finishPendingOOB). A token that never
 		// fires simply disappears: no finding, no downgraded placeholder.
 		opts.pending = append(opts.pending, pendingOOB{
-			pluginID: spec.ID,
-			target:   target,
-			cls:      cls,
-			method:   method,
-			rawURL:   rawURL,
-			param:    param,
-			value:    effPayload,
-			corr:     oobCorr,
-			ns:       ns,
+			pluginID:    spec.ID,
+			target:      target,
+			cls:         cls,
+			method:      method,
+			rawURL:      rawURL,
+			param:       param,
+			value:       effPayload,
+			corr:        oobCorr,
+			ns:          ns,
+			header:      oobHeaderName,
+			headerValue: oobHeaderValue,
 		})
 		return nil, nil
 	case "stored", "storedexecution", "stored-execution", "stored_execution":

@@ -68,6 +68,16 @@ discovers this tree automatically; no enable flag exists.
 | backup-file-exposure | Tier 1 | error (backup_file, GASH-037, firm ceiling) | `backup-file/backup-file-exposure.yaml` |
 | graphql-introspection-enabled | Tier 1 | version (graphql_introspection, GASH-038, firm ceiling) | `graphql-introspection/graphql-introspection-enabled.yaml` |
 | nosql-auth-bypass-differential | Tier 1 | differential (GASH-039, firm ceiling) | `nosql/nosql-auth-bypass-differential.yaml` |
+| phpinfo-exposure | Tier 1 | error (phpinfo, GASH-057, firm ceiling) | `phpinfo-exposure/phpinfo-exposure.yaml` |
+| management-endpoint-exposure | Tier 1 | error (management_endpoint, GASH-058, firm ceiling) | `management-endpoint-exposure/management-endpoint-exposure.yaml` |
+| directory-listing | Tier 1 | error (directory_listing, GASH-059, firm ceiling) | `directory-listing/directory-listing.yaml` |
+| log4shell-jndi | Tier 1 | oob (required, GASH-060) | `log4shell-jndi/log4shell-jndi.yaml` |
+| expression-language-injection | Tier 1 | reflection (GASH-061, firm ceiling) | `expression-language-injection/expression-language-injection.yaml` |
+| jsonp-callback-injection | Tier 1 | reflection (GASH-062, firm ceiling) | `jsonp-callback-injection/jsonp-callback-injection.yaml` |
+| oauth-open-redirect | Tier 1 | redirect (GASH-063) | `oauth-open-redirect/oauth-open-redirect.yaml` |
+| ssi-injection | Tier 1 | error (ssi, GASH-064, firm ceiling) | `ssi-injection/ssi-injection.yaml` |
+| webdav-enabled | Tier 1 | header (webdav, GASH-065) | `webdav-enabled/webdav-enabled.yaml` |
+| source-map-exposure | Tier 1 | error (source_map, GASH-066, firm ceiling) | `source-map-exposure/source-map-exposure.yaml` |
 | poc-native-header-check | Tier 3 | header | `native/poc-native-header-check.gashplugin.yaml` |
 
 ## Testing

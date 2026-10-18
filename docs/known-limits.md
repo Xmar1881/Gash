@@ -73,10 +73,28 @@ per canary or they reject as indistinguishable; JSON/data blocks, encoded
 renders (at most `tentative`), missing render canary, failed stores, and
 dirty controls reject; async polling/multi-user render flows are unmeasured.
 
-The current reflected-XSS fixture result is TP=2, FP=0, TN=8, FN=0. The two
+The current reflected-XSS fixture result is TP=5, FP=0, TN=10, FN=0. The
 positive cases are reported as `static-execution-evidence`, not `confirmed`,
 because no browser executed them. It must not be generalized to real-target
 recall.
+
+## Full-form replay fuzzing: supported (`--active` only)
+
+Body injection points discovered inside HTML forms carry the other form
+fields (`FormValues`) so the engine replays the complete form — urlencoded or
+multipart — with only the target field replaced; hidden fields and CSRF
+tokens are preserved verbatim and token fields are never fuzzed, only
+refreshed from the source page (at most 2 refreshes per form, one retry on
+403/419/422 with token-wording match). Rejection pages are never treated as
+signal. Limits: at most 5 forms, 10 non-token fields per form, and 12 SQLi
+probes per field per scan; only POST/PUT/PATCH forms with same-origin actions
+run; `text/plain` forms stay single-field; file inputs are never replayed;
+GET forms are skipped by the form fuzzer (their query points are covered by
+the regular active fuzz). Findings are always `tentative` (`form-fuzz-anomaly`,
+RuleID GASH-004/GASH-000) because the mutation corpus is not oracle-specific;
+per-request token rotation beyond the refresh cap may leave later probes
+rejected and therefore unmeasured (false negatives by design). New engine
+stat: `form_requests`.
 
 ## Chunked Transfer-Encoding / request smuggling: supported (raw-TCP, written authorization required)
 
@@ -98,6 +116,35 @@ cap, harmless terminator/marker bodies only (no cache-poisoning/DOS
 impact). HTTPS verifies SNI/hostname (no skip); ALPN forces http/1.1 and a
 negotiated HTTP/2 yields a skip (smuggling is invalid over h2). See
 `docs/metrics/smuggle-differential.md`.
+
+## Passive JavaScript reconnaissance (GASH-067): observe-only boundaries
+
+The crawler fetches same-origin `<script src>` assets and captures inline
+`<script>` bodies (JS types only; JSON data blocks are out of scope). Only
+same-origin URLs are fetched — never third-party/CDN hosts; with `--scope`,
+in-scope hosts are additionally allowed. Caps: 50 external files per crawl,
+256 KB per inline script and 1 MB of inline JS per crawl, 200 endpoint
+literals per file, 2 MB per asset (larger bodies are skipped and counted).
+Endpoints extracted from `fetch`/`axios`/jQuery/`XMLHttpRequest` calls,
+`url:` config objects, route-like string literals, and absolute URLs feed
+the surface: endpoints with query parameters become direct injection points
+(no extra request at discovery time) and parameterless endpoints get a
+one-page, depth-0 follow crawl (at most 25 per scan). Relative URLs are
+resolved against the asset URL and `${...}` template expressions are
+normalized to `1`. WebSocket (`ws(s)://`) endpoints, asset extensions, and
+CDN hosts are ignored.
+
+Hardcoded-secret findings (GASH-067, CWE-798) are static-content matches
+(AWS/GitHub/GitLab/Slack/Google/Stripe/SendGrid/Twilio/PEM/JWT plus a
+generic key-name + Shannon-entropy rule). The confidence ceiling is
+`static-execution-evidence`: the literal is observed in an asset, never
+validated against the live credential. Evidence is masked (`first4…last4`)
+plus a ±20-char masked context; full values are never reported, and matched
+values are scrubbed from endpoint outputs. Placeholder/example values,
+publishable keys, and low-entropy values are filtered (false negatives by
+design). `sourceMappingURL` maps are fetched only same-origin/in-scope (at
+most 5 per scan) and only their `sourcesContent` is scanned for secrets —
+endpoints are not extracted from maps.
 
 ## WAF bypass success rate: unmeasured outside controlled tests
 
@@ -272,6 +319,56 @@ The engine consumes it through the opt-in browser-verify pass
 (`--browser-verify`, `--active` required) for eligible reflected-XSS
 findings and through the stored binding's `controlUrl` option for the
 two-step plugin; without browser evidence both ceilings stay unchanged.
+
+## Lab batch 2 detectors (GASH-057..066): honest boundaries
+
+- phpinfo exposure (GASH-057): signature-only proof (PHP configuration marker
+  plus a second phpinfo marker; soft-404 control of the same path must stay
+  clean). A custom or stripped-down PHP landing page without the marker never
+  matches; no PHP version, `disable_functions`, or secret value is claimed.
+- Management endpoint exposure (GASH-058): fixed actuator/console path list
+  (`/actuator/*`, `/server-status`, `/h2-console`). Consoles on non-listed
+  paths, behind authentication, or renamed are not seen; the finding reports
+  the exposed marker, not the environment contents, and no actuator endpoint
+  is harvested.
+- Directory listing (GASH-059): fixed path list; server-generated indexes
+  (Apache/nginx/IIS title variants) only. Custom listing UIs or web servers
+  with `<h1>`-less indexes stay unseen; file entries are never downloaded.
+- Log4Shell JNDI (GASH-060): OOB-required; a callback proves a JNDI lookup
+  attempt reached the operator's server, not RCE or a log4j version. Header
+  vectors are limited to `User-Agent` and `X-Api-Version`; log4j versions that
+  never evaluate (`1.x`) or WAF-blocked payloads produce no callback
+  (false negatives remain). Without `--oob-server` the plugin skips honestly
+  (`oob-not-configured`).
+- Expression language injection (GASH-061): proof is the arithmetic result
+  `1337*1337 = 1787569` appearing where the expression was injected; string
+  reflection of `${...}` / `#{...}` / `*{...}` / `%{...}` without evaluation
+  never confirms. Sandboxed EL implementations that block arithmetic are
+  invisible, and contexts outside HTML text/attribute are not exercised.
+- JSONP callback injection (GASH-062): proof is the deterministic canary
+  callback name reflected into a JSON/JavaScript wrapper with the expected
+  media type shape; browser execution is not attempted and endpoints that
+  reflect arbitrary callback strings without JSONP context are rejected.
+- OAuth open redirect (GASH-063): tested on fixed authorize paths with
+  `redirect_uri`-family parameters; external Location plus DNS double-check
+  and clean control (same discipline as GASH-016). IdPs that enforce exact
+  redirect-URI allowlists produce no finding; this is not an OAuth flow
+  analysis (no token, client, or scope checks).
+- SSI injection (GASH-064): proof is a two-marker server-side include
+  signature pair (`GATEWAY_INTERFACE` plus one of `SERVER_SOFTWARE`,
+  `DOCUMENT_ROOT`, `SCRIPT_FILENAME`) that is absent in the control; the only
+  payload is a printenv-style directive, no OS command or file include is
+  attempted, and servers that suppress SSI error output stay silent (false
+  negatives).
+- WebDAV enabled (GASH-065): read-only `OPTIONS` only — write verbs are never
+  sent. Proof is `Allow` advertising write methods (PUT/DELETE/MOVE/COPY/
+  MKCOL/PROPPATCH); a missing or scrubbed `Allow` header rejects even when
+  WebDAV is enabled (false negative by design). No lock, property, or
+  directory-write behavior is claimed.
+- Source map exposure (GASH-066): fixed bundle path list; proof is
+  `"version": 3` plus one of `sources`/`mappings`/`names`/`sourcesContent`
+  with a clean soft-404 control. Maps referenced only through `//# sourceMappingURL`
+  comments on paths not in the list, or served behind auth, are not fetched.
 
 ## Compose-lab recall: BLOCKED where docker is absent
 

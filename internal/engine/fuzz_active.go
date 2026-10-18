@@ -202,13 +202,12 @@ func fuzzTargetForPoint(p loader.JSPoint) fuzz.Target {
 	}
 	switch strings.ToLower(strings.TrimSpace(p.ParamLocation)) {
 	case "body":
-		form := url.Values{}
-		form.Set(param, fuzzNeutral)
+		headers, body := formRequestBody(p, param, fuzzNeutral)
 		return fuzz.Target{
 			Method:  method,
 			URL:     rawURL,
-			Headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded"},
-			Body:    []byte(form.Encode()),
+			Headers: headers,
+			Body:    body,
 		}
 	default:
 		built := rawURL

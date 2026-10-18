@@ -1,0 +1,1 @@
+{"body":"<html><body><script>var q='\\u003c/script\\u003ealert(gash_a1b2c3d4)';</script></body></html>","canary":"gash_a1b2c3d4","control_body":"<html><body><p>clean</p></body></html>","expected_verdict":"reject","headers":{"Content-Type":"text/html"},"name":"JS unicode escape stays non-executable","status":200,"target":"http://example.com/search?q=gash_a1b2c3d4"}

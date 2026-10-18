@@ -31,8 +31,8 @@ type ErrorSignatureParams struct {
 }
 
 var errorSignatures = map[string]*regexp.Regexp{
-	"mysql":          regexp.MustCompile(`(?i)(you have an error in your sql syntax|mysql.*error|mysqld|SQLSTATE\[42|MariaDB|MySqlException)`),
-	"postgres":       regexp.MustCompile(`(?i)(pg_query\(\)|pg_exec\(\)|postgresql.*error|ERROR:\s+syntax error at|PG::\w*Error|psql:)`),
+	"mysql":          regexp.MustCompile(`(?i)(you have an error in your sql syntax|mysql.*error|mysqld|SQLSTATE\[42|MariaDB|MySqlException|XPATH syntax error)`),
+	"postgres":       regexp.MustCompile(`(?i)(pg_query\(\)|pg_exec\(\)|postgresql.*error|ERROR:\s+syntax error at|PG::\w*Error|psql:|invalid input syntax)`),
 	"mssql":          regexp.MustCompile(`(?i)(SQLServer|SqlException|conversion failed|ODBC SQL Server Driver|mssql|Incorrect syntax near|Unclosed quotation mark|Invalid column name)`),
 	"oracle":         regexp.MustCompile(`(?i)(ORA-[0-9]{5}|Oracle error|PL/SQL|OCI-\d+|DPI-\d+)`),
 	"sqlite":         regexp.MustCompile(`(?i)(SQLite3::|sqlite.*error|near ".*": syntax error|SQLite\.Exception)`),
@@ -57,6 +57,27 @@ var errorSignatures = map[string]*regexp.Regexp{
 	// DNS CNAME önkoşulu plugin/lab prosedüründedir; bu imza yalnızca HTTP yarısını kanıtlar.
 	// "access denied"/"cloudflare"/"challenge" bilerek YOKTUR (baseline Untrusted, FP olur).
 	"takeover": regexp.MustCompile(`(?i)(NoSuchBucket|The specified bucket does not exist|NoSuchWebsiteConfiguration|There isn't a GitHub Pages site here|There is no app configured at that hostname|No such app|Do you want to claim this (website|domain)|Sorry, this shop is currently unavailable|Whatever you were looking for doesn't currently exist|This domain is not configured for|Unrecognized domain|project not found)`),
+	// phpinfo: PHP yapılandırma sayfası ifşası (GASH-057, CWE-200).
+	// Yalnızca phpinfo tablo başlıkları eşleşir; gövdede "phpinfo" kelimesi
+	// geçen jenerik yanıt FP sayılmaz (soft-404 kontrolü runner'dadır).
+	"phpinfo": regexp.MustCompile(`(?i)(phpinfo\(\)\s*</title>|PHP Version =>|Configuration File \(php\.ini\) Path|Loaded Configuration File|allow_url_fopen\s*=>)`),
+	// management_endpoint: Spring Actuator/operasyon panel ifşası (GASH-058, CWE-200).
+	// Jenerik 200 yeterli DEĞİLDİR: yalnızca yapılandırma/bean/heapdump/server-status
+	// gövde marker'ları eşleşir (tek 200 + boş gövde bulgu üretmez).
+	"management_endpoint": regexp.MustCompile(`(?i)("activeProfiles"\s*:|"propertySources"\s*:|"beans"\s*:\s*\[|"mappings"\s*:\s*\{|"httptrace"\s*:|"traces"\s*:\s*\[|JAVA PROFILE 1\.0\.[12]|Apache Server Status|Tomcat Manager Application|H2 Console)`),
+	// directory_listing: dizin listesi ifşası (GASH-059, CWE-548).
+	// Apache "Index of /" ve Python http.server "Directory listing for /"
+	// başlıkları eşleşir; yalnızca title şartı FP'yi dışlar.
+	"directory_listing": regexp.MustCompile(`(?i)<title>\s*(index of /|directory listing for /)`),
+	// source_map: JavaScript source map ifşası (GASH-066, CWE-540).
+	// Source map zarfı: version 3 + eşleme alanları birlikte; yalnızca
+	// "version":3 içeren jenerik JSON FP sayılmaz.
+	"source_map": regexp.MustCompile(`(?is)"version"\s*:\s*3\s*,.*?"(sources|mappings|names|sourcesContent)"\s*:`),
+	// ssi: SSI direktif yürütme kanıtı (GASH-064, CWE-97).
+	// printenv çıktısındaki CGI değişkenleri yalnızca sunucu direktifi
+	// yorumladığında görünür; iki farklı değişken birlikte aranır ki
+	// jenerik $_SERVER dökümleri FP üretmesin.
+	"ssi": regexp.MustCompile(`(?is)(GATEWAY_INTERFACE=\S+).{0,1000}?(SERVER_SOFTWARE=|DOCUMENT_ROOT=|SCRIPT_FILENAME=)`),
 }
 
 // ErrorSignatureOracle kontrolde imza yokluğunu zorunlu kılar.
@@ -146,6 +167,21 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 	case "backup_file":
 		confidence = plugin.ConfidenceFirm // Yedek dosya içeriği tek-kanallı gözlemdir (GASH-037 tavan)
 		note = "yedek/durum dosyası ifşası imzası tespit edildi"
+	case "phpinfo":
+		confidence = plugin.ConfidenceFirm // Yapılandırma ifşası tek-kanallı gözlemdir (GASH-057 tavan)
+		note = "phpinfo yapılandırma sayfası imzası tespit edildi"
+	case "management_endpoint":
+		confidence = plugin.ConfidenceFirm // Yönetim uç noktası gövde ifşası (GASH-058 tavan)
+		note = "yönetim uç noktası gövde imzası tespit edildi"
+	case "directory_listing":
+		confidence = plugin.ConfidenceFirm // Dizin listesi ifşası (GASH-059 tavan)
+		note = "dizin listesi sayfası imzası tespit edildi"
+	case "source_map":
+		confidence = plugin.ConfidenceFirm // Kaynak haritası ifşası (GASH-066 tavan)
+		note = "source map zarfı imzası tespit edildi"
+	case "ssi":
+		confidence = plugin.ConfidenceFirm // printenv çıktısı yürütme kanıtı ama tek-kanallı (GASH-064 tavan)
+		note = "SSI yürütme çıktısı (printenv) imzası tespit edildi"
 	default: // SQLi signatures
 		confidence = plugin.ConfidenceConfirmed
 		note = "DB imzası tespit edildi"
@@ -190,7 +226,7 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 // tentative because a single probe/burst cannot prove server-side policy.
 type HeaderParams struct {
 	Headers        http.Header
-	Mode           string      // "security" (default), "crlf", "jwt", "jwt_alg", "csrf", "frame", "ratelimit", "host_header"
+	Mode           string      // "security" (default), "crlf", "jwt", "jwt_alg", "csrf", "frame", "ratelimit", "host_header", "webdav"
 	RequestHeaders http.Header // For CRLF: check if request headers were reflected
 	Body           string      // Response body (form analysis for csrf mode; host_header reflection)
 	Status         int         // Representative response status (ratelimit mode: 429 check)
@@ -241,9 +277,51 @@ func (HeaderOracle) Verify(ctx context.Context, cls baseline.Classification, tai
 		return verifyRateLimit(p.Status, p.Headers, p.Body, p.Burst)
 	case "host_header":
 		return verifyHostHeaderReflection(p.CanaryHost, p.Body, p.ControlBody)
+	case "webdav":
+		return verifyWebDAV(p.Headers)
 	default:
 		return verifySecurityHeaders(p.Headers)
 	}
+}
+
+// verifyWebDAV OPTIONS Allow başlığındaki yazma metotlarını doğrular (GASH-065, CWE-650).
+// What: Allow başlığı PUT/DELETE/MOVE/COPY/MKCOL/PROPPATCH ilan ediyorsa confirmed.
+// Why: Allow ilanı deterministik sunucu beyanıdır; salt okuma metotları
+// (GET/HEAD/OPTIONS/PROPFIND) bulgu üretmez, yazma denemesi GÖNDERİLMEZ.
+func verifyWebDAV(h http.Header) (*Evidence, error) {
+	allow := strings.TrimSpace(h.Get("Allow"))
+	if allow == "" {
+		return &Evidence{Verdict: VerdictReject, Note: "Allow başlığı yok — WebDAV yazma beyanı yok"}, nil
+	}
+	writeVerbs := map[string]bool{
+		http.MethodPut: true, http.MethodDelete: true,
+		"MOVE": true, "COPY": true, "MKCOL": true, "PROPPATCH": true,
+	}
+	var writes []string
+	for _, m := range strings.Split(strings.ToUpper(allow), ",") {
+		m = strings.TrimSpace(m)
+		if writeVerbs[m] && !slicesContains(writes, m) {
+			writes = append(writes, m)
+		}
+	}
+	if len(writes) == 0 {
+		return &Evidence{Verdict: VerdictReject, Note: "Allow yazma metodu ilan etmiyor (salt-okuma)"}, nil
+	}
+	return &Evidence{
+		Verdict:                VerdictAccept,
+		ConfidenceContribution: plugin.ConfidenceConfirmed,
+		Artifacts:              map[string]string{"allow": allow, "write_methods": strings.Join(writes, ",")},
+		Note:                   "Allow yazma metodu ilan ediyor → WebDAV etkin (confirmed)",
+	}, nil
+}
+
+func slicesContains(list []string, v string) bool {
+	for _, s := range list {
+		if s == v {
+			return true
+		}
+	}
+	return false
 }
 
 // verifyHostHeaderReflection Host başlığı gövdeye yansımasını doğrular (GASH-035, CWE-644).
