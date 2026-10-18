@@ -1,0 +1,12 @@
+{
+  "name": "callback-reflected-into-script",
+  "target": "http://example.com/api/user?callback=test",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html; charset=utf-8"
+  },
+  "body": "<html><body><script>gash_jsonp_9c1f7e2a({\"ok\":true});</script></body></html>",
+  "canary": "gash_jsonp_9c1f7e2a",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "waf-blocked-probe",
+  "target": "http://example.com/backup/",
+  "status": 403,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body>cf-chl challenge Please verify you are human</body></html>",
+  "expected_verdict": "reject"
+}

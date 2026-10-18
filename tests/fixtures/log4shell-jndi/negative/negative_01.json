@@ -1,0 +1,13 @@
+{
+  "name": "no-callback-no-finding",
+  "target": "http://example.com/search?q=test",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body>Search results</body></html>",
+  "oob_callback": false,
+  "oob_correlation_id": "c_log4shell_miss_01",
+  "oob_namespace": "log4shell",
+  "expected_verdict": "reject"
+}

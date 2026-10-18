@@ -1,0 +1,10 @@
+{
+  "name": "no-allow-header",
+  "target": "http://example.com/dav/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "",
+  "expected_verdict": "reject"
+}

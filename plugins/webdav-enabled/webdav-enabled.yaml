@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/webdav-enabled/webdav-enabled.yaml
+# What: Tier 1 WebDAV write-capability screen via HeaderOracle "webdav"
+#   mode reading the OPTIONS Allow header (GASH-065, CWE-650).
+# Why: An Allow header advertising PUT/DELETE/MOVE/COPY/MKCOL/PROPPATCH
+#   means the server accepts remote file writes on this path; no write
+#   request is ever sent (the claim rests on the server's own
+#   advertisement, a deterministic signal). Read-only exposures
+#   (GET/HEAD/PROPFIND only) are rejected as non-findings.
+
+id: webdav-enabled
+name: WebDAV Write Methods Enabled
+description: Detects WebDAV write capability by checking OPTIONS Allow advertisements for PUT, DELETE, MOVE, COPY, MKCOL, and PROPPATCH.
+author: GASH contributors
+severity: medium
+tags: [webdav, misconfig, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 10
+phase: probe
+order: 96
+api_version: "1.0"
+tests: tests/fixtures/webdav-enabled/
+request:
+  method: OPTIONS
+  paths: ["/", "/dav/", "/webdav/"]
+oracle:
+  name: header
+  params:
+    mode: webdav

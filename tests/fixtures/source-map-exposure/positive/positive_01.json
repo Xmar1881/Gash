@@ -1,0 +1,13 @@
+{
+  "name": "webpack-source-map",
+  "target": "http://example.com/static/js/main.js.map",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": "{\"version\":3,\"file\":\"main.js\",\"sources\":[\"webpack://app/./src/index.ts\"],\"sourcesContent\":[\"import './style.css';\\nconsole.log('boot');\"],\"names\":[\"console\"],\"mappings\":\"AAAA,SAAS\"}",
+  "control_status": 404,
+  "control_body": "<html><body><h1>Not Found</h1></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

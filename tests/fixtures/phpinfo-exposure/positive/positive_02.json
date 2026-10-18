@@ -1,0 +1,11 @@
+{
+  "name": "phpinfo-cli-text-dump",
+  "target": "http://example.com/info.php",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html; charset=UTF-8"
+  },
+  "body": "PHP Version => 8.1.27\nSystem => Linux web01 6.1.0\nBuild Date => Feb 2 2026 10:11:12\nConfiguration File (php.ini) Path => /etc/php/8.1\nLoaded Configuration File => /etc/php/8.1/cli/php.ini",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/source-map-exposure/source-map-exposure.yaml
+# What: Tier 1 JavaScript source map exposure screen via ErrorSignatureOracle
+#   "content" mode with the source_map signature set, fixed path list, and
+#   soft-404 control absence (GASH-066, CWE-540).
+# Why: A served .map file exposes original sources (comments, secrets,
+#   internal APIs). The source map envelope (version 3 plus sources/
+#   mappings/names/sourcesContent) is required, so SPA fallbacks and plain
+#   {"version":3,...} JSON stay clean; the soft-404 control of the same
+#   path must be envelope-free.
+
+id: source-map-exposure
+name: Source Map Exposure
+description: Detects served JavaScript source map files by matching the version 3 source map envelope on common bundle paths with soft-404 control absence.
+author: GASH contributors
+severity: low
+tags: [source-map, exposure, misconfig, error]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 16
+phase: probe
+order: 97
+api_version: "1.0"
+tests: tests/fixtures/source-map-exposure/
+request:
+  method: GET
+  paths: ["/static/js/main.js.map", "/main.js.map", "/app.js.map", "/bundle.js.map"]
+oracle:
+  name: error
+  params:
+    mode: content
+    signature_set: [source_map]

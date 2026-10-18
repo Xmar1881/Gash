@@ -1,0 +1,10 @@
+{
+  "name": "uploads-page-mentions-index",
+  "target": "http://example.com/uploads/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<!DOCTYPE html><html><head><title>Uploads</title></head><body><h1>Uploads</h1><p>Directory index of /uploads is disabled for your account.</p><ul><li>report.pdf</li></ul></body></html>",
+  "expected_verdict": "reject"
+}

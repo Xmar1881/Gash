@@ -1,0 +1,12 @@
+{
+  "name": "relative-login-redirect",
+  "target": "http://example.com/oauth/authorize?redirect_uri=test",
+  "status": 302,
+  "headers": {
+    "Location": "/login",
+    "Content-Type": "text/html"
+  },
+  "body": "",
+  "payload_host": "gash-canary.example",
+  "expected_verdict": "reject"
+}

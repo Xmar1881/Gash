@@ -1,0 +1,12 @@
+{
+  "name": "redirect-to-other-host",
+  "target": "http://example.com/oauth2/authorize?redirect_uri=test",
+  "status": 302,
+  "headers": {
+    "Location": "https://trusted.example/home",
+    "Content-Type": "text/html"
+  },
+  "body": "",
+  "payload_host": "gash-canary.example",
+  "expected_verdict": "reject"
+}

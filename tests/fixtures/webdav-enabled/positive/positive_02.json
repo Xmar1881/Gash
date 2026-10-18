@@ -1,0 +1,12 @@
+{
+  "name": "multistatus-allow-collection-writes",
+  "target": "http://example.com/dav/",
+  "status": 207,
+  "headers": {
+    "Allow": "PROPFIND, OPTIONS, MKCOL, MOVE, COPY",
+    "Content-Type": "application/xml"
+  },
+  "body": "",
+  "expected_verdict": "accept",
+  "expected_confidence": "confirmed"
+}

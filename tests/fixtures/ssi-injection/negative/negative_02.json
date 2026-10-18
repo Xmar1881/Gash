@@ -1,0 +1,10 @@
+{
+  "name": "env-debug-page-without-gateway-marker",
+  "target": "http://example.com/page?name=test",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body><pre>DOCUMENT_ROOT=/var/www/html\nSCRIPT_FILENAME=/var/www/html/index.php\nREQUEST_METHOD=GET</pre></body></html>",
+  "expected_verdict": "reject"
+}

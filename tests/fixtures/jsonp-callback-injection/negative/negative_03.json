@@ -1,0 +1,11 @@
+{
+  "name": "callback-inside-html-comment",
+  "target": "http://example.com/api/user?callback=test",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html; charset=utf-8"
+  },
+  "body": "<html><body><!-- gash_jsonp_9c1f7e2a --><p>ok</p></body></html>",
+  "canary": "gash_jsonp_9c1f7e2a",
+  "expected_verdict": "reject"
+}

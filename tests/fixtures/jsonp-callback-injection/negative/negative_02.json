@@ -1,0 +1,11 @@
+{
+  "name": "callback-inside-js-string",
+  "target": "http://example.com/api/user?callback=test",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html; charset=utf-8"
+  },
+  "body": "<html><body><script>var cb = \"gash_jsonp_9c1f7e2a\";</script></body></html>",
+  "canary": "gash_jsonp_9c1f7e2a",
+  "expected_verdict": "reject"
+}

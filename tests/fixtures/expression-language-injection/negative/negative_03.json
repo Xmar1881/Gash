@@ -1,0 +1,11 @@
+{
+  "name": "json-response-product",
+  "target": "http://example.com/api/calc?q=test",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": "{\"data\":{\"total\":1787569,\"unit\":\"ms\"}}",
+  "canary": "1787569",
+  "expected_verdict": "reject"
+}

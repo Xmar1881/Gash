@@ -1,0 +1,13 @@
+{
+  "name": "evaluated-product-in-text",
+  "target": "http://example.com/greet?name=test",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html; charset=UTF-8"
+  },
+  "body": "<!DOCTYPE html><html><body><h1>Hello, test</h1><p>Computed value: 1787569</p></body></html>",
+  "canary": "1787569",
+  "control_body": "<!DOCTYPE html><html><body><h1>Hello, test</h1><p>Computed value: ${1337*1337}</p></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

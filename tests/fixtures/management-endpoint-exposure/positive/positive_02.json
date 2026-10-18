@@ -1,0 +1,11 @@
+{
+  "name": "actuator-heapdump",
+  "target": "http://example.com/actuator/heapdump",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/octet-stream"
+  },
+  "body": "JAVA PROFILE 1.0.2\n# heap dump excerpt\nHEAPDUMP_ROOT java.lang.Object",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

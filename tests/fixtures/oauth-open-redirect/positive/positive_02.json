@@ -1,0 +1,15 @@
+{
+  "name": "authorize-redirect-host-case-insensitive",
+  "target": "http://example.com/connect/authorize?redirect_url=test",
+  "status": 301,
+  "headers": {
+    "Location": "https://GASH-CANARY.example/consent",
+    "Content-Type": "text/html"
+  },
+  "body": "",
+  "control_status": 200,
+  "control_body": "<html><body><h1>Consent</h1></body></html>",
+  "payload_host": "gash-canary.example",
+  "expected_verdict": "accept",
+  "expected_confidence": "confirmed"
+}
