@@ -161,13 +161,17 @@ func runBulkScan(
 		fmt.Fprintln(cmd.ErrOrStderr(), "notice: no --scope set: redirects and crawl links on any host will be followed; scan only systems you are authorized to test.")
 	}
 
+	maxResponseBytes := cfg.MaxResponseBytes
+	if maxResponseBytes <= 0 {
+		maxResponseBytes = 5 * 1024 * 1024
+	}
 	// Shared policy session: global budget (MaxRequestsTotal) is strictly shared across all targets
 	sharedPolicy := plugin.NewPolicySession(plugin.PolicyConfig{
 		MaxRequestsPerTarget: cfg.MaxRequestsPerTarget,
 		MaxRequestsTotal:     cfg.MaxRequestsTotal,
 		Scope:                cfg.Scope,
 		RatePerSecond:        cfg.RatePerSecond,
-		MaxResponseBytes:     5 * 1024 * 1024,
+		MaxResponseBytes:     maxResponseBytes,
 		ProxyURL:             parsedProxy,
 	}, nil)
 

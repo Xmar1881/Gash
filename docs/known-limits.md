@@ -135,6 +135,102 @@ regression tests for these cases, but no real-WAF success rate is claimed.
   never reuses a session; query-string (non-JSON) NoSQL bypass variants and
   lockout-protected logins are out of scope.
 
+## Infrastructure recon (Faz 0: SSH/DB/TLS-deep): read-only boundaries
+
+- SSH (`--ssh-audit`, GASH-052): the only data read is the RFC 4253 server
+  banner (≤255 bytes, deadline-bounded). No `SSH_MSG_KEXINIT`, no algorithm
+  enumeration, no auth attempt, no write. The banner is the server's own
+  declaration, so findings stay `tentative`; the outdated-software table
+  (`OpenSSH_1`..`OpenSSH_7`, `OpenSSH_8.0`–`8.4`) is a maintenance-hygiene
+  signal with no CVE claims, and non-OpenSSH banners that carry no version
+  mapping produce nothing.
+- DB port inventory (`--db-port-scan`, GASH-053): connect + bounded greeting
+  read (≤256 bytes, ≤500 ms) + close. No login, no commands, no key or
+  database enumeration. Service identity is a greeting heuristic with a
+  port-map fallback, so a non-DB service listening on a known DB port is
+  reported with that port's conventional name, and unmapped silent ports are
+  reported as `unknown`; the finding ceiling is `firm` (the open port is the
+  fact, the name is not proven).
+- TLS legacy-version audit (`--tls-audit-deep`, GASH-024): two separate
+  handshake probes (TLS 1.0, TLS 1.1) against the https target only. A
+  client/environment that cannot attempt legacy versions, a timeout, or any
+  non-protocol error is recorded as `unknown` and never becomes a finding;
+  only an accepted handshake fires (`<tls10|tls11>-supported`). The audit
+  does not enumerate ciphers (the single observed suite is still reported by
+  the regular TLS recon when the endpoint negotiates it).
+- Gating and fan-out: `--ssh-audit`/`--db-port-scan` require `--active`;
+  every flag needs its detector enabled by the profile (Safe skips all
+  three). `--max-infra-ports` truncates the DB list, `--infra-rate-limit`
+  (5/s default) and `--infra-parallelism` (4 default) bound the fan-out, and
+  out-of-scope targets become skips with zero sockets. IPv6 literal
+  handling inherits `net.SplitHostPort` semantics from the CLI validation.
+
+## Infrastructure recon (Faz 1: SSH KEXINIT / DB unauth): observation boundaries
+
+- SSH KEXINIT audit (`--ssh-handshake-audit`, GASH-054): the server banner
+  plus exactly one `SSH_MSG_KEXINIT` packet (≤256 KB, deadline-bounded) are
+  read. Key exchange is never completed, no auth method is attempted, and
+  no channel is opened. Servers that do not send KEXINIT unprompted (some
+  proxies/honeypots) get one fixed minimal client proposal purely to elicit
+  the server's own declaration; the KEXINIT lists are the server's claim and
+  the finding ceiling is `firm` (deterministic observation, CVE claims never
+  made). Algorithm classification is name-family analysis only: unknown or
+  future algorithm names stay silent, and a name containing `sha1` in a
+  KEX is flagged even when the construction is arguably acceptable
+  (`diffie-hellman-group14-sha1`), while `group16-sha512` is explicitly not
+  flagged (`group1-` match). `ssh-rsa` host keys still required by legacy
+  clients will be reported — that is intent, not a false positive.
+- DB unauth (`--db-unauth`, GASH-055): exactly one harmless request per
+  service, always with the fixed dummy identity `gash_probe`; no password
+  is ever transmitted and no data is read or written. Consequences: MongoDB
+  `hello` may answer `ok:1` even when auth is enabled (the command itself is
+  unauthenticated; collection access is not proven), so the finding states
+  what was observed, not actual data access. Redis `PING` is answered even
+  in protected-mode defaults for loopback clients, so `+PONG` proves command
+  reachability, not full data access; the optional `INFO server` read is the
+  only extra request. PostgreSQL trust detection needs a reachable startup
+  path; `pg_hba` rejections produce a note, never a finding. MySQL login is
+  never attempted by design, so MySQL cannot produce a GASH-055 finding.
+  Unsupported ports (anything outside 3306/5432/6379/27017/11211) return a
+  note with zero dials. Service identity is port-keyed, so a non-DB service
+  on a known DB port yields a failed/indeterminate probe, never a finding.
+  TLS-wrapped database ports (e.g. PostgreSQL `sslmode=require` middleware)
+  are not probed in this phase.
+
+## Infrastructure recon (Faz 2: SSH version advisories / TLS certificate depth): heuristic limits
+
+- SSH version→advisory map (`--ssh-audit`, GASH-056): the only input is the
+  same RFC 4253 banner read as GASH-052 (no extra socket, no KEX, no auth).
+  OpenSSH version parsing ignores vendor suffixes (`Debian-2+deb12u2`,
+  `-hpn14v15`); the curated table is deliberately tiny: CVE-2024-6387
+  (OpenSSH 8.5p1–9.7p1 inclusive), CVE-2023-48795 (<9.6), CVE-2021-41617
+  (<8.8p1), CVE-2018-15473 (≤7.7), CVE-2016-10012 (<7.4), CVE-2015-6564
+  (<7.0), CVE-2015-5600 (<7.0). Consequences: vendor backports are invisible
+  to a banner, so a patched distro version still matches (a false positive
+  by design) and a backported fix is indistinguishable from vulnerable;
+  banners are also spoofable by honeypots/proxies. Findings are aggregated
+  per host, capped at `tentative`, and no exploit, version-specific probe, or
+  CVE severity beyond the table is claimed. When GASH-056 fires, the generic
+  `ssh-old-software` signal from GASH-052 is dropped for that banner;
+  protocol 1.x reporting (GASH-052) is unaffected. Only `OpenSSH_` banners
+  are parsed — Dropbear/Cisco/etc. produce nothing here.
+- TLS certificate/chain depth (`--tls-audit-deep`, GASH-024): every fact is
+  derived locally from an observed handshake (reused from TLS recon when it
+  already ran, otherwise one extra local handshake per scan; the two
+  legacy-version probes are unchanged). "untrusted"/"incomplete" chain
+  status comes from verifying the leaf against the host's **local system
+  root store** plus only the intermediates the server sent: environments
+  with custom/private roots may see `tls-untrusted-chain` on certificates
+  their own clients trust, and a skipped AIA intermediate still reads as
+  `incomplete`. No OCSP/CRL/revocation lookup is performed, no certificate
+  is stored, and `InsecureSkipVerify` stays observation-only. Weak-key
+  classification fires only when algorithm and bit length are observable
+  (unknown sizes stay silent); DSA is flagged as a class without claiming
+  exploitability. Broad-wildcard classification flags only TLD-level or
+  single-label wildcards (`*.com`, `*.`), not multi-label (`*.example.com`,
+  `*.co.uk`). The >398-day validity signal follows the browser policy as
+  hygiene, not a compliance verdict.
+
 ## CAA DNS checks: supported (miekg/dns, pinned)
 
 Protocol checks cover TLS observation (GASH-024), SPF/DMARC reads (GASH-025),

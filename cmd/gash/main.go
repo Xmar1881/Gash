@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -116,47 +117,60 @@ func newRoot() *cobra.Command {
 
 func newScanCmd() *cobra.Command {
 	var (
-		target        string
-		targetFile    string
-		resume        bool
-		outputDir     string
-		proxy         string
-		safe          bool
-		deep          bool
-		active        bool
-		aggressive    bool
-		scope         []string
-		maxPerTarget  int64
-		maxTotal      int64
-		pluginTimeout string
-		oobServer     string
-		oobWait       string
-		browserVerify bool
-		showTentative bool
-		format        []string
-		output        string
-		failOn        string
-		noPluginCache bool
-		strictPlugins bool
-		profile       string
-		ignorePlugins []string
-		rateLimit     float64
-		parallelism   int
-		authHeaders   []string
-		cookies       []string
-		basicAuth     string
-		authUserA     []string
-		authUserB     []string
-		techFlags     []string
-		tcpBanners    []string
-		maxPages      int
-		depth         int
-		openapiSpec   string
+		target            string
+		targetFile        string
+		resume            bool
+		outputDir         string
+		proxy             string
+		safe              bool
+		deep              bool
+		active            bool
+		aggressive        bool
+		scope             []string
+		maxPerTarget      int64
+		maxTotal          int64
+		pluginTimeout     string
+		oobServer         string
+		oobWait           string
+		browserVerify     bool
+		showTentative     bool
+		format            []string
+		output            string
+		failOn            string
+		noPluginCache     bool
+		strictPlugins     bool
+		profile           string
+		ignorePlugins     []string
+		rateLimit         float64
+		parallelism       int
+		authHeaders       []string
+		cookies           []string
+		basicAuth         string
+		authUserA         []string
+		authUserB         []string
+		techFlags         []string
+		tcpBanners        []string
+		maxPages          int
+		depth             int
+		openapiSpec       string
+		requestTimeout    string
+		maxResponseBytes  int64
+		sshAudit          bool
+		dbPortScan        bool
+		dbPorts           string
+		tlsAuditDeep      bool
+		sshHandshakeAudit bool
+		dbUnauth          bool
+		infraTargets      []string
+		maxInfraPorts     int
+		infraTimeout      string
+		infraRateLimit    float64
+		infraParallelism  int
 	)
 	cmd := &cobra.Command{
 		Use:   "scan",
 		Short: "Hedefi tara (Candidate→Verify→Finding hattı)",
-		Long:  "Target scanner with live Tier1/Tier2/Tier3 execution and oracle verification.\n\nLegal: authorized testing only; operator responsibility. Scan only targets you own or have\nwritten permission to test; unauthorized scanning may be illegal.\nWithout --scope no host is blocked: redirects and crawl links (any host, any http/https\nscheme) are followed and DNS decides. Pass --scope <cidr/domain,...> to lock a strict\nallowlist (redirect re-validation, upgrade-only, downgrade never, DNS-rebinding pinning).\nKeep --safe unless you understand active payloads.",
+		Long:  "Target scanner with live Tier1/Tier2/Tier3 execution and oracle verification.\n\nLegal: authorized testing only; operator responsibility. Scan only targets you own or have\nwritten permission to test; unauthorized scanning may be illegal.\nWithout --scope no host is blocked: redirects and crawl links (any host, any http/https\nscheme) are followed and DNS decides. Pass --scope <cidr/domain,...> to lock a strict\nallowlist (redirect re-validation, upgrade-only, downgrade never, DNS-rebinding pinning).\nKeep --safe unless you understand active payloads.\nInfra recon is read-only: --ssh-audit (banner) and --db-port-scan (port/salutation) require\n--active; --tls-audit-deep observes legacy TLS 1.0/1.1 acceptance on https targets.\nDeeper infra recon: --ssh-handshake-audit observes the SSH KEXINIT algorithm lists\n(version exchange only; no key exchange, no auth) and --db-unauth probes each supported\ndatabase once with a fixed dummy user (no password, no data read); both require --active.\nScope and rate limits apply to all infra dials.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			if aggressive {
@@ -191,6 +205,25 @@ func newScanCmd() *cobra.Command {
 			if len(tcpBanners) > 0 && !active {
 				return fmt.Errorf("scan: --tcp-banner verildiyse --active zorunlu (banner probu aktiftir)")
 			}
+			// Faz 0: altyapı gözlemleri salt-okumadır ama aktif probdur.
+			if sshAudit && !active {
+				return fmt.Errorf("scan: --ssh-audit verildiyse --active zorunlu (SSH banner probu aktiftir)")
+			}
+			if dbPortScan && !active {
+				return fmt.Errorf("scan: --db-port-scan verildiyse --active zorunlu (port probu aktiftir)")
+			}
+			// Faz 1: KEXINIT/unauth denetimleri de aktif probdur.
+			if sshHandshakeAudit && !active {
+				return fmt.Errorf("scan: --ssh-handshake-audit verildiyse --active zorunlu (KEXINIT probu aktiftir)")
+			}
+			if dbUnauth && !active {
+				return fmt.Errorf("scan: --db-unauth verildiyse --active zorunlu (unauth probu tek istek gönderir)")
+			}
+			for _, tgt := range infraTargets {
+				if h, p, err := net.SplitHostPort(strings.TrimSpace(tgt)); err != nil || strings.TrimSpace(h) == "" || strings.TrimSpace(p) == "" {
+					return fmt.Errorf("scan: --infra-target host:port olmalı (got %q)", tgt)
+				}
+			}
 			// Tarayıcı doğrulaması yalnızca statik XSS kanıtını gerçek tetikleme
 			// + temiz kontrol ile confirmed'a taşır; aktif probdur.
 			if browserVerify && !active {
@@ -207,6 +240,18 @@ func newScanCmd() *cobra.Command {
 			pluginDur, err := time.ParseDuration(strings.TrimSpace(pluginTimeout))
 			if err != nil {
 				return fmt.Errorf("scan: --plugin-timeout geçersiz %q: %w", pluginTimeout, err)
+			}
+			reqDur, err := time.ParseDuration(strings.TrimSpace(requestTimeout))
+			if err != nil {
+				return fmt.Errorf("scan: --request-timeout geçersiz %q: %w", requestTimeout, err)
+			}
+			dbPortsList, err := parseDBPorts(dbPorts)
+			if err != nil {
+				return err
+			}
+			infraDur, err := time.ParseDuration(strings.TrimSpace(infraTimeout))
+			if err != nil {
+				return fmt.Errorf("scan: --infra-timeout geçersiz %q: %w", infraTimeout, err)
 			}
 			if _, err := time.ParseDuration(strings.TrimSpace(oobWait)); err != nil {
 				return fmt.Errorf("scan: --oob-wait geçersiz %q: %w", oobWait, err)
@@ -324,10 +369,23 @@ func newScanCmd() *cobra.Command {
 			cfg.MaxPages = maxPages
 			cfg.Depth = depth
 			cfg.OpenAPISpec = strings.TrimSpace(openapiSpec)
+			cfg.RequestTimeout = reqDur
+			cfg.MaxResponseBytes = maxResponseBytes
+			cfg.SSHAudit = sshAudit
+			cfg.DBPortScan = dbPortScan
+			cfg.DBPorts = dbPortsList
+			cfg.TLSAuditDeep = tlsAuditDeep
+			cfg.SSHHandshakeAudit = sshHandshakeAudit
+			cfg.DBUnauth = dbUnauth
+			cfg.InfraTargets = infraTargets
+			cfg.MaxInfraPorts = maxInfraPorts
+			cfg.InfraTimeout = infraDur
+			cfg.InfraRatePerSecond = infraRateLimit
+			cfg.InfraParallelism = infraParallelism
 			if strings.TrimSpace(proxy) != "" {
 				pu, err := url.Parse(strings.TrimSpace(proxy))
-				if err != nil || pu.Host == "" || (pu.Scheme != "http" && pu.Scheme != "https" && pu.Scheme != "socks5") {
-					return fmt.Errorf("scan: --proxy geçersiz (http, https veya socks5 URL olmalı, got %q)", proxy)
+				if err != nil || pu.Host == "" || (pu.Scheme != "http" && pu.Scheme != "https") {
+					return fmt.Errorf("scan: --proxy geçersiz (http veya https URL olmalı, got %q)", proxy)
 				}
 				cfg.ProxyURL = strings.TrimSpace(proxy)
 			}
@@ -416,6 +474,8 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().Int64Var(&maxPerTarget, "max-requests-per-target", 1000, "per-target bütçe")
 	cmd.Flags().Int64Var(&maxTotal, "max-requests-total", 10000, "global bütçe")
 	cmd.Flags().StringVar(&pluginTimeout, "plugin-timeout", "30s", "per-plugin timeout")
+	cmd.Flags().StringVar(&requestTimeout, "request-timeout", "15s", "per-HTTP-request timeout")
+	cmd.Flags().Int64Var(&maxResponseBytes, "max-response-bytes", 5*1024*1024, "max stored response body bytes")
 	cmd.Flags().StringVar(&oobWait, "oob-wait", "60s", "scan-sonu OOB penceresi")
 	cmd.Flags().StringVar(&oobServer, "oob-server", "", "self-hosted interaction sunucusu (boş=kapalı)")
 	cmd.Flags().BoolVar(&browserVerify, "browser-verify", false, "statik XSS kanıtını gerçek tarayıcı tetiklemesi + temiz kontrol ile doğrula (--active ve -tags deep build şart; stub build'de dürüstçe atlanır)")
@@ -439,6 +499,17 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().IntVar(&maxPages, "max-pages", 50, "crawler maksimum sayfa sayısı (0=sadece hedef sayfa)")
 	cmd.Flags().IntVar(&depth, "depth", 3, "crawler maksimum derinlik")
 	cmd.Flags().StringVar(&openapiSpec, "openapi-spec", "", "OpenAPI/Swagger dosyası veya http(s) URL (endpoint+parametreler surfacePoints'e eklenir; URL yalnızca loopback/kapsam-içi)")
+	cmd.Flags().BoolVar(&sshAudit, "ssh-audit", false, "SSH banner/protokol denetimi (salt-okuma, veri gönderilmez; --active gerektirir)")
+	cmd.Flags().BoolVar(&dbPortScan, "db-port-scan", false, "yaygın veritabanı portlarını tara (salt-okuma selamlama; --active gerektirir)")
+	cmd.Flags().StringVar(&dbPorts, "db-ports", "1433,1521,3306,5432,6379,9200,27017,11211,5984,9042", "taranacak veritabanı portları (virgüllü liste; 1..65535)")
+	cmd.Flags().BoolVar(&tlsAuditDeep, "tls-audit-deep", false, "eski TLS sürüm kabulünü ayrı el sıkışmalarla gözle (TLS 1.0/1.1; https hedef)")
+	cmd.Flags().BoolVar(&sshHandshakeAudit, "ssh-handshake-audit", false, "SSH KEX/hostkey/cipher/MAC algoritma denetimi (sürüm değişimi + KEXINIT; kimlik doğrulama yok; --active gerektirir)")
+	cmd.Flags().BoolVar(&dbUnauth, "db-unauth", false, "veritabanı kimlik doğrulamasız erişim denetimi (sabit dummy kullanıcı, tek istek; --active gerektirir)")
+	cmd.Flags().StringSliceVar(&infraTargets, "infra-target", nil, "altyapı denetimi hedefi 'host:port' (tekrarlanabilir; boşsa tarama hedef host'u)")
+	cmd.Flags().IntVar(&maxInfraPorts, "max-infra-ports", 20, "altyapı taramasında en fazla denenecek port sayısı")
+	cmd.Flags().StringVar(&infraTimeout, "infra-timeout", "5s", "altyapı dial/gözlem zaman aşımı")
+	cmd.Flags().Float64Var(&infraRateLimit, "infra-rate-limit", 5, "altyapı denetimi saniyedeki işlem tavanı (0=sınırsız)")
+	cmd.Flags().IntVar(&infraParallelism, "infra-parallelism", 4, "altyapı denetimi eşzamanlılık tavanı")
 	return cmd
 }
 
@@ -524,6 +595,30 @@ func normalizeScanFormats(formats []string) ([]string, error) {
 	}
 	if len(out) == 0 {
 		return []string{"text"}, nil
+	}
+	return out, nil
+}
+
+// parseDBPorts validates the --db-ports comma list (1..65535, dedupe).
+// What: Turkish error on any invalid token; order-preserving dedupe.
+// Why: A typo must fail fast before any dial; the engine also caps the list.
+func parseDBPorts(raw string) ([]int, error) {
+	seen := make(map[int]bool)
+	var out []int
+	for _, part := range strings.Split(raw, ",") {
+		token := strings.TrimSpace(part)
+		if token == "" {
+			continue
+		}
+		n, err := strconv.Atoi(token)
+		if err != nil || n < 1 || n > 65535 {
+			return nil, fmt.Errorf("scan: --db-ports geçersiz değer %q (1..65535 aralığında port beklenir)", part)
+		}
+		if seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
 	}
 	return out, nil
 }

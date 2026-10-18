@@ -129,6 +129,27 @@ func (f Finding) ToFinding() *finding.Finding {
 	return out
 }
 
+// sanitizeProtoBanner yazdırılamayan baytları kırpar ve uzunluğu sınırlar.
+// What: Kontrol karakterleri (yeni satır/tab hariç) ve geçersiz rune'lar
+// atılır; dize en fazla max bayta indirilir (rapor hijyeni).
+// Why: Banner/selamlama kanıtı ham bayt taşıyabilir; kanıt alanları
+// deterministik ve okunabilir kalmalıdır.
+func sanitizeProtoBanner(s string, max int) string {
+	clean := strings.Map(func(ch rune) rune {
+		if ch < 32 && ch != '\n' && ch != '\t' {
+			return -1
+		}
+		if ch > 0x10FFFF {
+			return -1
+		}
+		return ch
+	}, s)
+	if max > 0 && len(clean) > max {
+		clean = clean[:max]
+	}
+	return clean
+}
+
 // splitHostPort host:port ayrıştırır (port yoksa TLS 443 / TCP 80 önerilmez — açık port şart).
 func splitHostPort(addr string) (string, string, error) {
 	h, p, err := net.SplitHostPort(addr)

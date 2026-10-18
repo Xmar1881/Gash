@@ -106,21 +106,31 @@ func TestBuildTLSResultAndFindings(t *testing.T) {
 	if !signals["expiring"] || !signals["self-signed"] {
 		t.Fatalf("sinyaller: %v", signals)
 	}
-	if signals["expired"] || signals["old-version"] {
+	if signals["expired"] || signals["tls10"] || signals["tls11"] {
 		t.Fatalf("yanlış sinyal: %v", signals)
 	}
-	// Süresi dolmuş + eski sürüm.
+	// Süresi dolmuş + eski sürüm (TLS 1.0 → tls10 sinyali, tek bulgu).
 	old := buildTLSResult("example.com", "443", &tls.ConnectionState{
 		Version:          tls.VersionTLS10,
 		PeerCertificates: []*x509.Certificate{leafCert(t, now.Add(-time.Hour), "example.com")},
 	}, now)
 	found = TLSFindings("https://example.com/", old)
 	signals = map[string]bool{}
+	versionFindings := 0
 	for _, f := range found {
 		signals[f.Evidence["signal"]] = true
+		if f.Evidence["signal"] == "tls10" || f.Evidence["signal"] == "tls11" || f.Evidence["signal"] == "old-version" {
+			versionFindings++
+			if f.Evidence["tls_version"] != "TLS1.0" {
+				t.Fatalf("sürüm etiketi: %+v", f.Evidence)
+			}
+		}
 	}
-	if !signals["expired"] || !signals["old-version"] {
-		t.Fatalf("expired/old-version bekleniyordu: %v", signals)
+	if !signals["expired"] || !signals["tls10"] {
+		t.Fatalf("expired/tls10 bekleniyordu: %v", signals)
+	}
+	if versionFindings != 1 {
+		t.Fatalf("el sıkışma başına tek sürüm bulgusu: %d", versionFindings)
 	}
 	// Sağlıklı sertifika → bulgu yok.
 	caKey, _ := rsa.GenerateKey(rand.Reader, 2048)

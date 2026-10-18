@@ -119,7 +119,7 @@ jobs:
           fi
 
       - name: Race detector (core packages)
-        run: go test -race -count=1 ./internal/engine/ ./internal/oracle/ ./internal/plugin/... ./internal/probe/ ./internal/finding/ ./internal/baseline/
+        run: go test -race -count=1 ./internal/engine/... ./internal/proto/... ./internal/oracle/ ./internal/plugin/... ./internal/probe/ ./internal/finding/ ./internal/baseline/
 
       - name: Lint (no new issues vs base, pinned binary)
         run: |
