@@ -17,6 +17,9 @@ import (
 	"github.com/Xmar1881/Gash/internal/finding"
 	"github.com/Xmar1881/Gash/internal/plugin"
 	"github.com/Xmar1881/Gash/internal/plugin/loader"
+	"github.com/Xmar1881/Gash/internal/proto"
+
+	"time"
 )
 
 // Config tarama bayraklarının motor karşılığıdır (§14.1).
@@ -58,10 +61,42 @@ type Config struct {
 	MaxPages          int    // Maximum pages to crawl (default 50)
 	Depth             int    // Maximum crawl depth (default 3)
 	ProxyURL          string // Upstream HTTP proxy URL (e.g. http://127.0.0.1:8080)
+	// RequestTimeout per-HTTP-request timeout (default 15s).
+	RequestTimeout time.Duration
+	// MaxResponseBytes caps stored response bodies (default 5MB).
+	MaxResponseBytes int64
 	// OpenAPISpec --openapi-spec karşılığıdır (dosya yolu veya http(s) URL).
 	// Doluysa ParseSpec endpoint+parametreleri hedef bazında surfacePoints'e
 	// eklenir; URL ise yalnızca kapsam-içi/loopback çekilir (fail-closed).
 	OpenAPISpec string
+
+	// Faz 0 altyapı gözlemleri (engine-recon; plugin değildir):
+	// SSHAudit --ssh-audit karşılığıdır (SSH banner; --active şart).
+	SSHAudit bool
+	// DBPortScan --db-port-scan karşılığıdır (salt-okuma port/selamlama; --active şart).
+	DBPortScan bool
+	// DBPorts taranacak port listesidir (boşsa yaygın DB portları).
+	DBPorts []int
+	// TLSAuditDeep --tls-audit-deep karşılığıdır (eski TLS sürüm kabul gözlemi).
+	TLSAuditDeep bool
+	// SSHHandshakeAudit --ssh-handshake-audit karşılığıdır: sürüm değişimi +
+	// KEXINIT algoritma listesi gözlemi (GASH-054). --active + ssh dedektörü
+	// şart; anahtar değişimi tamamlanmaz, kimlik doğrulama yapılmaz.
+	SSHHandshakeAudit bool
+	// DBUnauth --db-unauth karşılığıdır: sabit dummy kimlikle tek zararsız
+	// istek üzerinden kimlik doğrulamasız erişim gözlemi (GASH-055).
+	// --active + db dedektörü şart; veri okuma/komut/parola denemesi yok.
+	DBUnauth bool
+	// InfraTargets explicit host:port altyapı hedefleridir; boşsa hedef host.
+	InfraTargets []string
+	// MaxInfraPorts tek taramada en fazla port sayısıdır (varsayılan 20).
+	MaxInfraPorts int
+	// InfraTimeout altyapı dial/gözlem zaman aşımıdır (varsayılan 5s).
+	InfraTimeout time.Duration
+	// InfraRatePerSecond altyapı işlem tavanıdır (<=0 sınırsız; test dostu).
+	InfraRatePerSecond float64
+	// InfraParallelism altyapı eşzamanlılık tavanıdır (varsayılan 4).
+	InfraParallelism int
 
 	// P1.2: Scan profile (Safe/Standard/Deep)
 	Profile config.ProfileName
@@ -84,6 +119,13 @@ func DefaultConfig() Config {
 		IgnorePlugins:        make(map[string]bool),
 		MaxPages:             50,
 		Depth:                3,
+		RequestTimeout:       15 * time.Second,
+		MaxResponseBytes:     5 * 1024 * 1024,
+		DBPorts:              proto.DefaultDBPorts(),
+		MaxInfraPorts:        20,
+		InfraTimeout:         5 * time.Second,
+		InfraRatePerSecond:   5,
+		InfraParallelism:     4,
 	}
 }
 

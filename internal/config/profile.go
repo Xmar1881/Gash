@@ -67,7 +67,7 @@ func StandardProfile() Profile {
 	return Profile{
 		Name:                 ProfileStandard,
 		Description:          "Controlled active scan with extended detector set and budget.",
-		ActiveDetectors:      []string{"header", "redirect", "cors", "cookie", "version", "tls", "dns", "tcp", "reflection", "error", "differential"},
+		ActiveDetectors:      []string{"header", "redirect", "cors", "cookie", "version", "tls", "dns", "tcp", "reflection", "error", "differential", "ssh", "db"},
 		RequestTypes:         []string{"GET", "POST", "HEAD", "OPTIONS"},
 		MaxRequestsPerTarget: 500,
 		MaxRequestsTotal:     5000,
@@ -87,7 +87,7 @@ func DeepProfile() Profile {
 	return Profile{
 		Name:                 ProfileDeep,
 		Description:          "Deep scan with browser execution, OOB, and high budget. Requires explicit opt-in.",
-		ActiveDetectors:      []string{"header", "redirect", "cors", "cookie", "version", "tls", "dns", "tcp", "reflection", "error", "differential", "timing", "execution", "oob", "verb-tamper"},
+		ActiveDetectors:      []string{"header", "redirect", "cors", "cookie", "version", "tls", "dns", "tcp", "reflection", "error", "differential", "timing", "execution", "oob", "verb-tamper", "ssh", "db"},
 		RequestTypes:         []string{"GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"},
 		MaxRequestsPerTarget: 2000,
 		MaxRequestsTotal:     20000,
@@ -107,7 +107,7 @@ func AggressiveProfile() Profile {
 	return Profile{
 		Name:                 ProfileAggressive,
 		Description:          "Aggressive offensive scan with all detectors enabled, high rate limit and deep probing.",
-		ActiveDetectors:      []string{"header", "redirect", "cors", "cookie", "version", "tls", "dns", "tcp", "reflection", "error", "differential", "timing", "execution", "oob", "smuggle", "verb-tamper"},
+		ActiveDetectors:      []string{"header", "redirect", "cors", "cookie", "version", "tls", "dns", "tcp", "reflection", "error", "differential", "timing", "execution", "oob", "smuggle", "verb-tamper", "ssh", "db"},
 		RequestTypes:         []string{"GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH"},
 		MaxRequestsPerTarget: 50000,
 		MaxRequestsTotal:     500000,
