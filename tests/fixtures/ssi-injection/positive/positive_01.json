@@ -1,0 +1,12 @@
+{
+  "name": "printenv-cgi-variables",
+  "target": "http://example.com/page?name=test",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body><pre>CONTENT_LENGTH=\nGATEWAY_INTERFACE=CGI/1.1\nSERVER_SOFTWARE=Apache/2.4.52 (Ubuntu)</pre></body></html>",
+  "control_body": "<html><body><pre>CONTENT_LENGTH=\nGATEWAY_INTERFACE=\nSERVER_SOFTWARE=</pre></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

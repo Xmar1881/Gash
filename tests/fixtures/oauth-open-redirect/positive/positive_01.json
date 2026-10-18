@@ -1,0 +1,15 @@
+{
+  "name": "authorize-redirects-to-canary-host",
+  "target": "http://example.com/oauth/authorize?redirect_uri=test",
+  "status": 302,
+  "headers": {
+    "Location": "https://gash-canary.example/oauth",
+    "Content-Type": "text/html"
+  },
+  "body": "",
+  "control_status": 200,
+  "control_body": "<html><body><h1>Sign in</h1></body></html>",
+  "payload_host": "gash-canary.example",
+  "expected_verdict": "accept",
+  "expected_confidence": "confirmed"
+}

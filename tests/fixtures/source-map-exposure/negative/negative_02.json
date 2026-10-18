@@ -1,0 +1,10 @@
+{
+  "name": "version-only-json",
+  "target": "http://example.com/main.js.map",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": "{\"version\":3,\"status\":\"ok\"}",
+  "expected_verdict": "reject"
+}

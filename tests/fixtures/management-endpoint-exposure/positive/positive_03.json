@@ -1,0 +1,11 @@
+{
+  "name": "apache-server-status",
+  "target": "http://example.com/server-status",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html; charset=ISO-8859-1"
+  },
+  "body": "<html><head><title>Apache Server Status for web01</title></head><body><dl><dt>Server Version: Apache/2.4.52 (Ubuntu)</dt><dt>Server MPM: event</dt></dl></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

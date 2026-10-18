@@ -1,0 +1,11 @@
+{
+  "name": "waf-blocked-probe",
+  "target": "http://example.com/api/user?callback=test",
+  "status": 403,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body>cf-chl challenge Please verify you are human</body></html>",
+  "canary": "gash_jsonp_9c1f7e2a",
+  "expected_verdict": "reject"
+}

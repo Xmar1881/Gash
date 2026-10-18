@@ -1,0 +1,13 @@
+{
+  "name": "apache-index-of",
+  "target": "http://example.com/uploads/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html;charset=UTF-8"
+  },
+  "body": "<!DOCTYPE html><html><head><title>Index of /uploads</title></head><body><h1>Index of /uploads</h1><pre><a href=\"../\">../</a>\n<a href=\"report.pdf\">report.pdf</a>\n</pre></body></html>",
+  "control_status": 404,
+  "control_body": "<!DOCTYPE html><html><head><title>404 Not Found</title></head><body><h1>Not Found</h1></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

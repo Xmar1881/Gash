@@ -1,0 +1,11 @@
+{
+  "name": "printenv-document-root-variant",
+  "target": "http://example.com/page?name=test",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body><pre>GATEWAY_INTERFACE=CGI/1.1\nDOCUMENT_ROOT=/var/www/html\nSERVER_PROTOCOL=HTTP/1.1</pre></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

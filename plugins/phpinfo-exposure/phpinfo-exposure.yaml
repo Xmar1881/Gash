@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/phpinfo-exposure/phpinfo-exposure.yaml
+# What: Tier 1 phpinfo() page exposure screen via ErrorSignatureOracle
+#   "content" mode with the phpinfo signature set, fixed path list, and
+#   soft-404 control absence (GASH-057, CWE-200).
+# Why: A phpinfo() page discloses php.ini paths, loaded modules, and
+#   environment details without authentication. A bare 200 is never enough:
+#   the PHP configuration marker must appear in the body and must not appear
+#   in the soft-404 control of the same path (SPA catch-alls stay clean).
+
+id: phpinfo-exposure
+name: PHP Info Page Exposure
+description: Detects exposed phpinfo() configuration pages by matching PHP configuration markers on common paths with soft-404 control absence.
+author: GASH contributors
+severity: medium
+tags: [phpinfo, exposure, misconfig, error]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 24
+phase: probe
+order: 88
+api_version: "1.0"
+tests: tests/fixtures/phpinfo-exposure/
+request:
+  method: GET
+  paths: ["/phpinfo.php", "/info.php", "/php_info.php", "/test.php", "/i.php", "/phpinfo/"]
+oracle:
+  name: error
+  params:
+    mode: content
+    signature_set: [phpinfo]

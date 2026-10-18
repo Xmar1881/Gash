@@ -1,0 +1,10 @@
+{
+  "name": "spa-catchall-html",
+  "target": "http://example.com/static/js/main.js.map",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<!DOCTYPE html><html><head><title>MyApp</title></head><body><div id=\"root\"></div><script src=\"/static/js/main.js\"></script></body></html>",
+  "expected_verdict": "reject"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "actuator-disabled-json-404",
+  "target": "http://example.com/actuator/env",
+  "status": 404,
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": "{\"timestamp\":\"2026-10-12T10:00:00.000+00:00\",\"status\":404,\"error\":\"Not Found\",\"path\":\"/actuator/env\"}",
+  "expected_verdict": "reject"
+}

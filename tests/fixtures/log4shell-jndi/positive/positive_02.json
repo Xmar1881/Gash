@@ -1,0 +1,14 @@
+{
+  "name": "parameter-dns-callback",
+  "target": "http://example.com/search?q=test",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body>Search results</body></html>",
+  "oob_callback": true,
+  "oob_correlation_id": "c_log4shell_dns_02",
+  "oob_namespace": "log4shell",
+  "expected_verdict": "accept",
+  "expected_confidence": "confirmed"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "actuator-env-property-sources",
+  "target": "http://example.com/actuator/env",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/vnd.spring-boot.actuator.v3+json"
+  },
+  "body": "{\"activeProfiles\":[\"prod\"],\"propertySources\":[{\"name\":\"systemProperties\",\"properties\":{\"java.home\":{\"value\":\"/usr/lib/jvm/temurin-17\"},\"user.name\":{\"value\":\"tomcat\"}}}]}",
+  "control_status": 404,
+  "control_body": "<html><body><h1>Not Found</h1></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

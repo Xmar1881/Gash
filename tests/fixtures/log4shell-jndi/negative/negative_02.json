@@ -1,0 +1,13 @@
+{
+  "name": "waf-blocked-no-callback",
+  "target": "http://example.com/search?q=test",
+  "status": 403,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body>Request blocked by web application firewall</body></html>",
+  "oob_callback": false,
+  "oob_correlation_id": "c_log4shell_waf_02",
+  "oob_namespace": "log4shell",
+  "expected_verdict": "reject"
+}

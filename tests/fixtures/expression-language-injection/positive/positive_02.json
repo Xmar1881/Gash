@@ -1,0 +1,13 @@
+{
+  "name": "evaluated-product-in-attribute",
+  "target": "http://example.com/form?q=test",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html; charset=UTF-8"
+  },
+  "body": "<!DOCTYPE html><html><body><form action=\"/search\"><input id=\"q\" name=\"q\" value=\"1787569\"></form></body></html>",
+  "canary": "1787569",
+  "control_body": "<!DOCTYPE html><html><body><form action=\"/search\"><input id=\"q\" name=\"q\" value=\"${1337*1337}\"></form></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

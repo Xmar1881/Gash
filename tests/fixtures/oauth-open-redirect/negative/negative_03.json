@@ -1,0 +1,11 @@
+{
+  "name": "no-redirect-login-page",
+  "target": "http://example.com/oauth/authorize?redirect_uri=test",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body><h1>Sign in</h1><form action=\"/login\" method=\"post\"></form></body></html>",
+  "payload_host": "gash-canary.example",
+  "expected_verdict": "reject"
+}

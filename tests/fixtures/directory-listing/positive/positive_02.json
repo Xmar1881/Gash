@@ -1,0 +1,11 @@
+{
+  "name": "python-http-server-listing",
+  "target": "http://example.com/backup/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html; charset=utf-8"
+  },
+  "body": "<!DOCTYPE HTML><html><head><meta charset=\"utf-8\"><title>Directory listing for /backup/</title></head><body><h1>Directory listing for /backup/</h1><ul><li><a href=\"dump.sql\">dump.sql</a></li></ul></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

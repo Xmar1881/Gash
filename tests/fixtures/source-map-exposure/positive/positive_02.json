@@ -1,0 +1,11 @@
+{
+  "name": "esbuild-source-map",
+  "target": "http://example.com/app.js.map",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": "{\"version\":3,\"sources\":[\"../src/app.js\"],\"names\":[],\"mappings\":\"IAAM,OAAO\"}",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

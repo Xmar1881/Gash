@@ -1,0 +1,11 @@
+{
+  "name": "product-inside-script-context",
+  "target": "http://example.com/greet?name=test",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html; charset=UTF-8"
+  },
+  "body": "<!DOCTYPE html><html><head><script type=\"text/javascript\">window.result = 1787569;</script></head><body>ok</body></html>",
+  "canary": "1787569",
+  "expected_verdict": "reject"
+}

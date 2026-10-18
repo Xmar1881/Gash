@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/oauth-open-redirect/oauth-open-redirect.yaml
+# What: Tier 1 OAuth authorization endpoint open-redirect screen via
+#   RedirectOracle (Location host == payload host + control absence)
+#   (GASH-063, CWE-601).
+# Why: OAuth/OpenID authorize endpoints must allowlist redirect targets;
+#   a Location pointing at the operator canary host proves the allowlist is
+#   missing (authorization-code/token exfiltration). Fixed authorize paths
+#   are combined with the standard redirect parameter names; only GET is
+#   sent and no consent flow is attempted.
+
+id: oauth-open-redirect
+name: OAuth Open Redirect
+description: Detects OAuth authorization endpoints redirecting to an external canary host via redirect_uri and related parameters.
+author: GASH contributors
+severity: medium
+tags: [redirect, oauth, misconfig]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 40
+phase: probe
+order: 94
+api_version: "1.0"
+tests: tests/fixtures/oauth-open-redirect/
+request:
+  method: GET
+  paths: ["/oauth/authorize", "/oauth2/authorize", "/connect/authorize", "/authorize"]
+  param_names: [redirect_uri, redirect_url, return_url, callback_url]
+  payload: "https://gash-canary.example/oauth"
+oracle:
+  name: redirect
+  params:
+    expect_external_host: true

@@ -1,0 +1,11 @@
+{
+  "name": "read-only-allow-header",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Allow": "GET, HEAD, OPTIONS, POST",
+    "Content-Type": "text/html"
+  },
+  "body": "",
+  "expected_verdict": "reject"
+}

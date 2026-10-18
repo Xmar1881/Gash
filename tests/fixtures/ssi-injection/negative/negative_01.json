@@ -1,0 +1,10 @@
+{
+  "name": "literal-directive-echo",
+  "target": "http://example.com/page?name=test",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body>Result: <!--#printenv --></body></html>",
+  "expected_verdict": "reject"
+}

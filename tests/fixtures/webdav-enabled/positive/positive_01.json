@@ -1,0 +1,12 @@
+{
+  "name": "allow-advertises-write-methods",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Allow": "OPTIONS, GET, HEAD, PUT, DELETE, PROPFIND",
+    "Content-Type": "text/html"
+  },
+  "body": "",
+  "expected_verdict": "accept",
+  "expected_confidence": "confirmed"
+}
