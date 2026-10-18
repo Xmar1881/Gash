@@ -86,23 +86,22 @@ func TestOpenMode_CrossHostRedirectFollowed(t *testing.T) {
 	}
 }
 
-// TestOpenMode_CrossSchemeDowngradeFollowed proves open mode follows
-// https→http redirects (scheme difference included; strict mode never does).
-func TestOpenMode_CrossSchemeDowngradeFollowed(t *testing.T) {
+// TestOpenMode_CrossSchemeDowngradeBlocked proves https→http downgrades are
+// never followed, even in open mode (credential/cookie safety).
+func TestOpenMode_CrossSchemeDowngradeBlocked(t *testing.T) {
 	policy, rt := newTestPolicySession(t, "https://example.com", map[string][]net.IP{
 		"example.com": ipList("93.184.216.34"),
 	}, scriptedRedirect("http://example.com/plain"))
 
 	resp, err := doRedirectRequest(t, policy, "https://example.com/")
-	if err != nil {
-		t.Fatalf("open mode must follow cross-scheme redirects: %v", err)
+	if err == nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		t.Fatalf("open mode must block https→http downgrades")
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 after cross-scheme redirect, got %d", resp.StatusCode)
-	}
-	if got := rt.seen(); len(got) != 2 {
-		t.Fatalf("expected the downgrade hop to be requested, saw %v", got)
+	if got := rt.seen(); len(got) != 1 {
+		t.Fatalf("downgrade hop must not be requested, saw %v", got)
 	}
 }
 

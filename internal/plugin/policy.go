@@ -891,17 +891,16 @@ func (p *PolicySession) RoundTripWithRetry(req *http.Request) (*http.Response, e
 			}
 
 			// Cross-scheme redirect handling:
-			//  - strict mode (--scope): http→https upgrade only; https→http
-			//    downgrades (and any other transition) are never followed.
-			//  - open mode (no --scope): http↔https both directions are
-			//    followed (Nuclei/ZAP behavior); non-http(s) stays unsupported.
+			//  - https→http downgrades are never followed (credential/cookie safety).
+			//  - http→https upgrades are followed when allowed.
+			//  - non-http(s) stays unsupported.
 			if !strings.EqualFold(nextURL.Scheme, currentReq.URL.Scheme) {
 				nextScheme := strings.ToLower(nextURL.Scheme)
 				switch {
 				case nextScheme != "http" && nextScheme != "https":
 					return nil, &PolicyError{PluginID: pc.ID, Op: "redirect",
 						Err: fmt.Errorf("%w: redirect to unsupported scheme %q", ErrPolicyViolation, nextURL.Scheme)}
-				case isSchemeDowngrade(currentReq.URL.Scheme, nextURL.Scheme) && p.strictScope():
+				case isSchemeDowngrade(currentReq.URL.Scheme, nextURL.Scheme):
 					return nil, &PolicyError{PluginID: pc.ID, Op: "redirect",
 						Err: fmt.Errorf("%w: scheme downgrade %s→%s never allowed", ErrPolicyViolation, currentReq.URL.Scheme, nextURL.Scheme)}
 				case isSchemeUpgrade(currentReq.URL.Scheme, nextURL.Scheme):

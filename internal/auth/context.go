@@ -205,7 +205,7 @@ func (c *Context) Redacted() string {
 	sort.Strings(cookies)
 	basic := "no"
 	if c.BasicUser != "" {
-		basic = "yes(user=" + c.BasicUser + ")"
+		basic = "yes"
 	}
 	return fmt.Sprintf("auth: headers=[%s] cookies=[%s] basic=%s",
 		strings.Join(names, ","), strings.Join(cookies, ","), basic)

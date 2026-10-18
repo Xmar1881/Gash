@@ -106,7 +106,7 @@ func TestRedactedLeaksNothing(t *testing.T) {
 			t.Fatalf("redacted sızıntı: %q", red)
 		}
 	}
-	if !strings.Contains(red, "Authorization") || !strings.Contains(red, "session") || !strings.Contains(red, "admin") {
+	if !strings.Contains(red, "Authorization") || !strings.Contains(red, "session") || !strings.Contains(red, "basic=yes") {
 		t.Fatalf("redacted adları göstermeli: %q", red)
 	}
 	if New().Redacted() != "auth: none" {
