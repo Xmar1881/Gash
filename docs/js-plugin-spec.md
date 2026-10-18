@@ -91,7 +91,10 @@ returning an array.
   round-trip in milliseconds for `host.oracles.timing`).
 - Points come from `ctx.injectionPoints()` as
   `{url, method, paramName, paramLocation, value}` with
-  `point.withValue(next)` returning an updated copy.
+  `point.withValue(next)` returning an updated copy. Form-body points also
+  carry `formValues` (the other form fields' current values, token fields
+  included) and `formEnctype` so `probe.send` replays the complete form with
+  only the target field replaced; `withValue` preserves both.
 
 ## Oracle API
 

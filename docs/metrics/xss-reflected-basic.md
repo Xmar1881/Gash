@@ -21,32 +21,40 @@ text or encoded reflection stays `tentative`.
 
 ## Live Path (payload corpus, browser-verify pass)
 
-The live script ships a bounded template corpus (≤60 requests): plain `alert`
-and canary-write forms plus tag/attribute breakouts (script, img/onerror,
-svg/onload, iframe/srcdoc, body/onload, math, details, quote breakouts). Each
-attempt uses a fresh canary and `point.withValue(payload)`, so per-candidate
-reflection evidence stays exact. Browser `confirmed` is no longer reserved
-unconditionally: with `--browser-verify` (requires `--active` plus the
-`-tags deep` build and a Chrome binary) the engine re-fetches each
-`static-execution-evidence` GET/query finding as payload URL plus a
-neutral-control URL through `headless.VerifyXSS`; only a real trigger
-(dialog or DOM canary) with a clean control upgrades the finding to
-`confirmed` (`Evidence["execution"]="browser-confirmed"`). Non-eligible
-findings, dirty controls, and no-trigger runs stay unchanged and are noted
-honestly in the finding's note. The fixture measurements below are unchanged:
-no fixture is browser-executed here.
+The live script ships a probe-first classifier plus a bounded payload corpus
+(≤60 requests): one bare-canary request per point classifies the reflection
+context (HTML text, attribute with quote style, event-handler attribute,
+script string with quote style, URL, escaped/unknown), then only the matching
+alert-based payload family is sent (tag breakouts, quote breakouts,
+`javascript:` URLs, script-string breakouts), so a wrong client-side guess
+costs one probe and never a false claim. Each attempt uses a fresh canary and
+`point.withValue(payload)`, so per-candidate reflection evidence stays exact.
+Browser `confirmed` is no longer reserved unconditionally: with
+`--browser-verify` (requires `--active` plus the `-tags deep` build and a
+Chrome binary) the engine re-fetches each `static-execution-evidence`
+GET/query finding as payload URL plus a neutral-control URL through
+`headless.VerifyXSS`; only a real trigger (dialog or DOM canary) with a clean
+control upgrades the finding to `confirmed`
+(`Evidence["execution"]="browser-confirmed"`). Non-eligible findings, dirty
+controls, and no-trigger runs stay unchanged and are noted honestly in the
+finding's note. The fixture measurements below are unchanged: no fixture is
+browser-executed here.
 
 ## Evidence Standard
 
 Rule GASH-001. Control payloads that render executable reject the candidate.
 WAF block pages are untrusted and always reject. Missing reflection rejects.
+Entity-encoded and JavaScript-escaped reflections stay `tentative` or reject.
 
 ## Fixtures
 
-- Positive: 2 of 2 accepted at `static-execution-evidence` (script block, event handler).
-- Negative: 8 of 8 clean (text stays `tentative`, encoded at most `tentative`,
-  WAF rejects, absent reflection rejects, comment reflection rejects,
-  style context at most `tentative`, JavaScript strings and JSON reject).
+- Positive: 5 of 5 accepted at `static-execution-evidence` (script block,
+  event handler, unquoted attribute breakout, `javascript:` URL attribute,
+  script-string breakout).
+- Negative: 10 of 10 clean (text stays `tentative`, encoded at most
+  `tentative`, WAF rejects, absent reflection rejects, comment reflection
+  rejects, style context at most `tentative`, JavaScript strings and JSON
+  reject, entity-encoded tag stays `tentative`, JS unicode escape rejects).
 - Command: `go run ./cmd/gash plugins test plugins/xss/xss-reflected-basic.js`
 
 ## Corpus Result
@@ -65,11 +73,11 @@ basic contexts covered here; exotic contexts stay out of scope.
 
 ## Precision
 
-True positives 2, false positives 0. Precision 1.00.
+True positives 5, false positives 0. Precision 1.00.
 
 ## Recall
 
-True positives 2, false negatives 0. Recall 1.00.
+True positives 5, false negatives 0. Recall 1.00.
 
 ## Gate Verdict
 
@@ -83,10 +91,12 @@ behaviour, not a plugin weakness.
 
 ## Dataset
 
-- Dataset hash: `27bba26a7f282df1de7486a433f53ce926eb74fe2a5c765cac163cae49fbd0c5`
-  (sha256 over all 10 fixture files under `tests/fixtures/xss-reflected-basic/`).
-- Samples: TP=2, FP=0, TN=8, FN=0. Fixture-only measurement; lab pending above.
+- Dataset hash: `e8c262ba6162ac29bfabcd5bb49c411fa4e11922083bf531929c0e0924098a2d`
+  (sha256 over all 15 fixture files under `tests/fixtures/xss-reflected-basic/`).
+- Samples: TP=5, FP=0, TN=10, FN=0. Fixture-only measurement; lab pending above.
 - Scope: script/attr-executable/text/encoded/comment/style/URL contexts,
-  JavaScript strings/comments, and JSON script blocks. Multi-layer encoding,
-  stored XSS, and browser-executed DOM XSS are NOT covered.
+  JavaScript strings/comments, JSON script blocks, unquoted-attribute and
+  script-string breakouts, `javascript:` URL attributes, entity-encoded tags,
+  and JS unicode escapes. Multi-layer encoding, stored XSS, and
+  browser-executed DOM XSS are NOT covered.
   `TestMetricGate` fails the build if this hash drifts from the fixtures.

@@ -38,6 +38,10 @@ type CrawlOptions struct {
 	Scope       []string // Scope allowlist (domains/CIDRs). Empty = open mod: yazılımsal host engeli yok.
 	ReadRobots  bool     // Whether to read robots.txt for seed URLs.
 	ReadSitemap bool     // Whether to read sitemap.xml for seed URLs.
+	// SkipJSRecon JS kaynağı toplama/çekmeyi kapatır. Ana crawl false bırakır
+	// (JS recon'u besler); mini/geri-besleme crawl'ları true kullanır (çift
+	// analiz ve istek tekrarı olmaz).
+	SkipJSRecon bool
 }
 
 // DefaultCrawlOptions returns recommended default crawl parameters.
@@ -54,8 +58,14 @@ func DefaultCrawlOptions() CrawlOptions {
 type CrawlResult struct {
 	Pages         []CrawlPage
 	SurfacePoints []InjectionPoint
+	// Forms holds deduplicated HTML forms for full-form replay fuzzing.
+	Forms         []Form
 	TotalRequests int
 	SeedURLs      []string
+	// JSSources pasif JS recon için toplanan gövdelerdir (harici + inline).
+	JSSources []JSSource
+	// JSFilesFetched çekilen harici JS dosyası sayısıdır (inline sayılmaz).
+	JSFilesFetched int
 }
 
 type crawlItem struct {
@@ -88,6 +98,7 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 	visited := make(map[string]bool)
 	seenParamSkeletons := make(map[string]bool)
 	seenPoints := make(map[string]bool)
+	seenForms := make(map[string]bool)
 
 	normTarget := normalizeURL(targetParsed)
 	visited[normTarget] = true
@@ -184,6 +195,9 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 	}
 
 	// 3. BFS Traversal
+	scriptQueue := make([]string, 0, 16)
+	seenScripts := make(map[string]bool)
+	inlineBudget := jsMaxInlineTotal
 	for len(queue) > 0 && len(result.Pages) < opts.MaxPages {
 		if ctx.Err() != nil {
 			break
@@ -229,6 +243,55 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 			}
 		}
 
+		// Full-form replay model: dedup by method+action+field-name set so the
+		// same site-wide form (search box, newsletter) is fuzzed once.
+		for _, f := range ExtractForms(item.rawURL, resp.Body) {
+			names := make([]string, 0, len(f.Fields))
+			for _, fld := range f.Fields {
+				names = append(names, fld.Name)
+			}
+			sort.Strings(names)
+			k := f.Method + "|" + f.ActionURL + "|" + strings.Join(names, ",")
+			if !seenForms[k] {
+				seenForms[k] = true
+				result.Forms = append(result.Forms, f)
+			}
+		}
+
+		// Pasif JS recon: inline gövdeler hemen toplanır, harici src'ler
+		// same-origin/--scope kapısından geçerse kuyruğa girer (CDN asla).
+		if !opts.SkipJSRecon && len(resp.Body) > 0 && inlineBudget > 0 {
+			pageParsed, perr := url.Parse(item.rawURL)
+			if perr == nil {
+				srcs, inline := extractScriptSources(resp.Body, inlineBudget)
+				for _, content := range inline {
+					inlineBudget -= len(content)
+					result.JSSources = append(result.JSSources, JSSource{
+						URL: item.rawURL, Body: content, Inline: true,
+					})
+				}
+				for _, s := range srcs {
+					ref, rerr := url.Parse(s)
+					if rerr != nil {
+						continue
+					}
+					resolved := pageParsed.ResolveReference(ref)
+					if !jsAssetFetchAllowed(ctx, targetParsed, resolved, policy, opts.Scope) {
+						continue
+					}
+					key := normalizeURL(resolved)
+					if seenScripts[key] {
+						continue
+					}
+					if len(scriptQueue) >= jsMaxFilesPerCrawl {
+						break
+					}
+					seenScripts[key] = true
+					scriptQueue = append(scriptQueue, key)
+				}
+			}
+		}
+
 		// Expand links if under max depth
 		if item.depth < opts.MaxDepth && len(resp.Body) > 0 {
 			pageParsed, err := url.Parse(item.rawURL)
@@ -253,6 +316,30 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 					queue = append(queue, crawlItem{rawURL: norm, depth: item.depth + 1})
 				}
 			}
+		}
+	}
+
+	// 4. Harici JS çekimi (pasif recon): GET-only, same-origin/--scope kapılı,
+	// dosya ve toplam boyut tavanlı; hata/bütçe sessiz düşer (tarama durmaz).
+	if !opts.SkipJSRecon && ctx.Err() == nil {
+		for _, su := range scriptQueue {
+			if ctx.Err() != nil {
+				break
+			}
+			reqCtx := plugin.WithPlugin(ctx, "crawler", true, nil)
+			resp, serr := client.Send(reqCtx, http.MethodGet, su, nil, nil)
+			if serr != nil {
+				if errors.Is(serr, plugin.ErrBudgetExceeded) {
+					break
+				}
+				continue
+			}
+			result.TotalRequests++
+			result.JSFilesFetched++
+			if resp == nil || len(resp.Body) == 0 {
+				continue
+			}
+			result.JSSources = append(result.JSSources, JSSource{URL: su, Body: resp.Body})
 		}
 	}
 
@@ -411,4 +498,93 @@ func extractLinks(body []byte) []string {
 	}
 	walk(doc)
 	return links
+}
+
+// extractScriptSources HTML'den harici script src'lerini ve inline JS
+// gövdelerini toplar.
+// What: Yalnızca JS-tipi script'ler (boş/module/javascript/ecmascript);
+// inline gövde script başına 256 KB ve çağrı bütçesiyle sınırlıdır.
+// Why: JSON veri blokları (__NEXT_DATA__ vb.) pasif JS recon kapsamı dışıdır;
+// tavanlar 2 MB'lık analiz limitine taşmadan besleme garantisidir.
+func extractScriptSources(body []byte, inlineBudget int) (srcs []string, inline [][]byte) {
+	doc, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		return nil, nil
+	}
+	if inlineBudget < 0 {
+		inlineBudget = 0
+	}
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && strings.EqualFold(n.Data, "script") {
+			scriptType := ""
+			var src string
+			for _, a := range n.Attr {
+				switch strings.ToLower(a.Key) {
+				case "src":
+					src = strings.TrimSpace(a.Val)
+				case "type":
+					scriptType = strings.ToLower(strings.TrimSpace(a.Val))
+				}
+			}
+			if isJSScriptType(scriptType) {
+				switch {
+				case src != "":
+					if len(srcs) < jsMaxSrcCandidates {
+						srcs = append(srcs, src)
+					}
+				case n.FirstChild != nil && inlineBudget > 0:
+					var sb strings.Builder
+					for c := n.FirstChild; c != nil; c = c.NextSibling {
+						if c.Type == html.TextNode {
+							sb.WriteString(c.Data)
+						}
+					}
+					content := []byte(sb.String())
+					if len(content) > jsMaxInlinePerScript {
+						content = content[:jsMaxInlinePerScript]
+					}
+					if len(content) > inlineBudget {
+						content = content[:inlineBudget]
+					}
+					if len(content) > 0 {
+						inline = append(inline, content)
+						inlineBudget -= len(content)
+					}
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	return srcs, inline
+}
+
+// sameOrigin şema + host (port dahil) birebir eşleşmesidir.
+func sameOrigin(a, b *url.URL) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
+}
+
+// jsAssetFetchAllowed JS asset çekme kapısıdır.
+// What: Yalnızca hedef origin VEYA explicit --scope içindeki host; CDN/analitik
+// host'lar ve non-http(s) şemalar hiçbir koşulda çekilmez.
+// Why: Pasif JS recon üçüncü taraf trafiği üretmez; kapsam disiplini crawl
+// ile aynıdır (policy + explicit scope, fail-closed).
+func jsAssetFetchAllowed(ctx context.Context, target, asset *url.URL, policy *plugin.PolicySession, scope []string) bool {
+	scheme := strings.ToLower(asset.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return false
+	}
+	if IsNoiseJSHost(asset.Hostname()) {
+		return false
+	}
+	if !sameOrigin(target, asset) && len(scope) == 0 {
+		return false
+	}
+	return isURLInScope(ctx, asset, target, policy, scope)
 }

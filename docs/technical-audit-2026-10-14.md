@@ -10,7 +10,7 @@ and fixture reliability.
 
 # Technical Audit: Priority Findings
 
-## Scope\n\nThis report records the priority work requested for the current checkout (last refreshed 2026-10-17, 63 detectors, GASH-001..051). It
+## Scope\n\nThis report records the priority work requested for the current checkout (last refreshed 2026-10-18, 73 detectors, GASH-001..066). It
 does not turn design-document claims into implementation claims. The full
 detector catalog remains in `docs/detector-inventory.md`; unresolved limits are
 in `docs/known-limits.md`.

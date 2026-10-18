@@ -53,8 +53,14 @@ permission to test (`--scope` opts into a strict allowlist; see Legal).
 
 ## What's New / Highlights
 
-- **63 detectors** — verify with `go run ./cmd/gash plugins list`
-  (55 YAML, 7 sandboxed JS, 1 native PoC; see Detector Summary below).
+- **73 detectors** — verify with `go run ./cmd/gash plugins list`
+  (65 YAML, 7 sandboxed JS, 1 native PoC; see Detector Summary below).
+- **Lab batch 2 (GASH-057..066)** — phpinfo/management-endpoint/directory-listing/
+  source-map/SSI error signatures, Log4Shell JNDI OOB (header + query vectors),
+  expression-language arithmetic canary, JSONP callback reflection, OAuth open
+  redirect, and read-only WebDAV OPTIONS validation; Tier 1 YAML gained `paths`
+  combined with parameter/payload injection and OOB token expansion in request
+  headers and bodies.
 - **Request-smuggling probe (GASH-033)** — raw-TCP CL.TE/TE.CL/TE.TE
   differential with dual-channel proof (follow-up divergence *and* delay),
   `firm` ceiling, aggressive-gated, bounded to 10 requests on one keep-alive
@@ -110,7 +116,7 @@ remain tracked work in [`docs/known-limits.md`](docs/known-limits.md).
 
 ## How It Differs
 
-Honest comparison — Gash is experimental (`v0.1.0-dev`, 63 reference
+Honest comparison — Gash is experimental (`v0.1.0-dev`, 73 reference
 plugins) and competes on verification discipline, not on maturity or library
 size. No Gash-versus-Nuclei benchmark has been run (not compared); see
 `docs/metrics/nuclei-comparison-2026-10-14.md`.
@@ -224,8 +230,8 @@ only shows help and waits for `Enter`; run it from a terminal instead:
 
 ## Detector Summary
 
-63 detectors via `go run ./cmd/gash plugins list`
-(55 Tier 1 YAML, 7 Tier 2 sandboxed JS, 1 Tier 3 native PoC).
+73 detectors via `go run ./cmd/gash plugins list`
+(65 Tier 1 YAML, 7 Tier 2 sandboxed JS, 1 Tier 3 native PoC).
 Full oracle/plugin catalog: `docs/detector-inventory.md`.
 
 | Class | Count | Examples |
@@ -235,20 +241,24 @@ Full oracle/plugin catalog: `docs/detector-inventory.md`.
 | XPath injection (error) | 1 | `xpath-injection-error` |
 | NoSQL injection (error, auth-bypass differential) | 2 | `nosql-injection-error`, `nosql-auth-bypass-differential` |
 | Command injection (error, timing) | 2 | `command-injection-error`, `command-injection-timing` |
-| SSRF (blind OOB, cloud metadata) | 2 | `ssrf-blind-oob`, `ssrf-cloud-metadata` |
-| XXE (OOB, reflected) | 2 | `xxe-oob`, `xxe-reflected-basic` |
-| Template injection (SSTI) | 1 | `template-injection-reflection` |
-| File / path (RFI, traversal, upload, backup exposure) | 4 | `rfi-remote-include`, `path-traversal-error`, `file-upload-unrestricted`, `backup-file-exposure` |
-| Access control and logic (IDOR, LDAP, HPP x2, mass assignment, verb tampering) | 6 | `idor-differential`, `ldap-injection-differential`, `hpp-parameter-pollution`, `hpp-duplicate-emission`, `mass-assignment-basic`, `verb-tampering-bypass` |
-| Misconfig and headers (security headers, cookie, CORS, CRLF, CSRF, clickjacking, JWT x2, version, GraphQL, host header, error disclosure, redirect, CVE, cache poisoning, rate limit) | 17 | `missing-security-headers`, `cookie-flags`, `cors-misconfig`, `crlf-header-injection`, `csrf-token-absence`, `clickjacking-frameable`, `jwt-token-exposure`, `jwt-alg-confusion`, `server-version-disclosure`, `graphql-endpoint-discovery`, `graphql-introspection-enabled`, `host-header-injection`, `error-message-disclosure`, `open-redirect-param`, `cve-dependency-scan`, `web-cache-poisoning-basic`, `missing-rate-limit` |
+| SSRF (blind OOB, cloud metadata, internal port scan) | 3 | `ssrf-blind-oob`, `ssrf-cloud-metadata`, `ssrf-internal-port-scan` |
+| XXE (OOB, blind OOB, reflected) | 4 | `xxe-oob`, `xxe-reflected-basic`, `xxe-blind-oob`, `xml-external-entity-blind` |
+| Template injection (SSTI: reflection, blind timing) | 2 | `template-injection-reflection`, `ssti-blind-timing` |
+| File / path (RFI, traversal, upload, backup, listing, source maps) | 7 | `rfi-remote-include`, `path-traversal-error`, `file-upload-unrestricted`, `backup-file-exposure`, `directory-listing`, `source-map-exposure`, `file-inclusion-rfi` |
+| Access control and logic (IDOR, LDAP x2, HPP x2, mass assignment, verb tampering) | 7 | `idor-differential`, `ldap-injection-differential`, `ldap-injection-blind`, `hpp-parameter-pollution`, `hpp-duplicate-emission`, `mass-assignment-basic`, `verb-tampering-bypass` |
+| Misconfig and headers (security headers, cookie, CORS x2, CRLF, response splitting, CSRF, clickjacking, JWT x3, version, GraphQL x2, host header, method override, error disclosure, redirect x2, management endpoints, phpinfo, WebDAV, CVE, rate limit) | 24 | `missing-security-headers`, `cookie-flags`, `cors-misconfig`, `insecure-cors-preflight`, `crlf-header-injection`, `http-response-splitting`, `csrf-token-absence`, `clickjacking-frameable`, `jwt-token-exposure`, `jwt-alg-confusion`, `jwt-none-alg-confusion`, `server-version-disclosure`, `graphql-endpoint-discovery`, `graphql-introspection-enabled`, `host-header-injection`, `http-method-override-abuse`, `error-message-disclosure`, `open-redirect-param`, `oauth-open-redirect`, `management-endpoint-exposure`, `phpinfo-exposure`, `webdav-enabled`, `cve-dependency-scan`, `missing-rate-limit` |
 | Insecure deserialization (error signature) | 1 | `insecure-deserialization-error` |
 | Subdomain takeover (unclaimed-service bodies) | 1 | `subdomain-takeover-basic` |
+| Web cache poisoning | 2 | `web-cache-poisoning-basic`, `cache-poisoning-host-header` |
+| Injection (JNDI, expression language, SSI, JSONP, prototype pollution) | 5 | `log4shell-jndi`, `expression-language-injection`, `ssi-injection`, `jsonp-callback-injection`, `prototype-pollution-differential` |
 | Native PoC (Tier 3, explicit trust) | 1 | `poc-native-header-check` |
-| **Total** | **63** | `go run ./cmd/gash plugins list` |
+| **Total** | **73** | `go run ./cmd/gash plugins list` |
 
 Engine-recon probes ship outside the plugin set: request smuggling
-(GASH-033, `internal/smuggle`) and content discovery (GASH-028,
-`internal/discovery`).
+(GASH-033, `internal/smuggle`), content discovery (GASH-028,
+`internal/discovery`), and passive JavaScript reconnaissance (GASH-067,
+`internal/discovery` + `internal/engine`; endpoint feeding plus masked
+hardcoded-secret findings).
 
 Evidence ladder: `tentative` -> `firm` / `static-execution-evidence` ->
 `confirmed`. Timing caps at `firm`; browser `confirmed` needs the headless
@@ -265,7 +275,7 @@ match. Counts above are plugin inventory, not real-target recall.
 | `docs/js-plugin-spec.md` | Tier 2 JS reference (timing + execution bindings) |
 | `docs/native-plugin-spec.md` | Tier 3 native reference |
 | `docs/architecture.md` | Full engine design (Phase 1) |
-| `docs/evidence-standard.md` | Per-class proof rules (GASH-001 to GASH-021) |
+| `docs/evidence-standard.md` | Per-class proof rules (Faz 1 detail GASH-001..021; inventory through GASH-067) |
 | `docs/design/00-scope.md` | Phase 0 scope decisions |
 | `docs/SECURITY.md` | Responsible use and reporting |
 | `docs/user-guide-tr.md` | Turkish beginner guide (Türkçe, profiles + aggressive) |

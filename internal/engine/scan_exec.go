@@ -235,6 +235,11 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		ReadRobots:  true,
 		ReadSitemap: true,
 	}
+	// Pasif JS recon sayaçları (crawl kapalı/başarısızken 0).
+	jsReconStats := map[string]int{
+		"js_files_fetched": 0, "js_endpoints_found": 0,
+		"js_secrets_found": 0, "js_maps_fetched": 0,
+	}
 	crawlRes, err := discovery.Crawl(ctx, client, target, crawlOpts)
 	var surfacePoints []loader.JSPoint
 	if err == nil && crawlRes != nil {
@@ -248,7 +253,17 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 				ParamName:     ip.ParamName,
 				ParamLocation: ip.ParamLocation,
 				Value:         ip.Value,
+				FormValues:    ip.FormValues,
+				FormEnctype:   ip.FormEnctype,
 			})
+		}
+		// Pasif JS recon: crawl'ın topladığı same-origin JS gövdeleri +
+		// kaynak haritaları; endpoint'ler yüzeye beslenir, sırlar GASH-067.
+		jsFindings, jsPoints, jsStats := e.runJSRecon(ctx, target, client, crawlRes)
+		allFindings = append(allFindings, jsFindings...)
+		surfacePoints = append(surfacePoints, jsPoints...)
+		for k, v := range jsStats {
+			jsReconStats[k] = v
 		}
 	}
 	if len(surfacePoints) == 0 {
@@ -260,6 +275,8 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 				ParamName:     ip.ParamName,
 				ParamLocation: ip.ParamLocation,
 				Value:         ip.Value,
+				FormValues:    ip.FormValues,
+				FormEnctype:   ip.FormEnctype,
 			})
 		}
 	}
@@ -309,7 +326,7 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 				dirs++
 				follow, ferr := discovery.Crawl(ctx, client, p, discovery.CrawlOptions{
 					MaxPages: 10, MaxDepth: 1, Scope: e.cfg.Scope,
-					ReadRobots: false, ReadSitemap: false,
+					ReadRobots: false, ReadSitemap: false, SkipJSRecon: true,
 				})
 				if ferr != nil || follow == nil {
 					continue
@@ -319,6 +336,7 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 					surfacePoints = append(surfacePoints, loader.JSPoint{
 						URL: ip.URL, Method: ip.Method, ParamName: ip.ParamName,
 						ParamLocation: ip.ParamLocation, Value: ip.Value,
+						FormValues: ip.FormValues, FormEnctype: ip.FormEnctype,
 					})
 				}
 			}
@@ -332,6 +350,15 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		fuzzFindings, freq := e.runActiveFuzz(ctx, target, client, surfacePoints)
 		fuzzRequests = freq
 		allFindings = append(allFindings, fuzzFindings...)
+	}
+	// Görev B2: tam-form replay fuzz. Tek-alan gövdeleri sunucu doğrulaması
+	// ve CSRF kapısında düşer; keşfedilen formlar tüm alanlarıyla (token'lar
+	// tazelenerek) tekrarlanır. Yalnızca --active.
+	var formRequests int64
+	if e.cfg.Active && crawlRes != nil && len(crawlRes.Forms) > 0 {
+		formFindings, formReq := e.runActiveFormFuzz(ctx, target, client, crawlRes.Forms)
+		formRequests = formReq
+		allFindings = append(allFindings, formFindings...)
 	}
 	// Görev C: çift-kullanıcı BOLA matrisi. --active + iki kimlik şart;
 	// bulgular daima tentative (sahiplik elle doğrulanır).
@@ -459,16 +486,22 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 			"waf_detected":     int(wafDet),
 			"waf_bypassed":     int(wafByp),
 			"fuzz_requests":    int(fuzzRequests),
+			"form_requests":    int(formRequests),
 			"matrix_requests":  int(matrixRequests),
 			"content_requests": contentRequests + contentFollowRequests,
 			"content_findings": contentFindingCount,
 			"smuggle_requests": smuggleRequests,
-			"detected_tech":    len(e.detectedTech),
-			"detected_caps":    len(e.detectedCaps),
-			"ssh_checks":       infraStats["ssh_checks"],
-			"db_ports_scanned": infraStats["db_ports_scanned"],
-			"db_open_ports":    infraStats["db_open_ports"],
-			"tls_deep_checks":  infraStats["tls_deep_checks"],
+			// Pasif JS recon sayaçları (crawl kapalı/başarısızken 0).
+			"js_files_fetched":   jsReconStats["js_files_fetched"],
+			"js_endpoints_found": jsReconStats["js_endpoints_found"],
+			"js_secrets_found":   jsReconStats["js_secrets_found"],
+			"js_maps_fetched":    jsReconStats["js_maps_fetched"],
+			"detected_tech":      len(e.detectedTech),
+			"detected_caps":      len(e.detectedCaps),
+			"ssh_checks":         infraStats["ssh_checks"],
+			"db_ports_scanned":   infraStats["db_ports_scanned"],
+			"db_open_ports":      infraStats["db_open_ports"],
+			"tls_deep_checks":    infraStats["tls_deep_checks"],
 			// Faz 1 altyapı sayaçları (kapalıyken 0).
 			"ssh_handshake_checks": infraStats["ssh_handshake_checks"],
 			"db_unauth_checks":     infraStats["db_unauth_checks"],
@@ -671,12 +704,10 @@ func (e *Engine) jsEnvForScan(pctx context.Context, target string, client *probe
 
 		switch strings.ToLower(p.ParamLocation) {
 		case "body":
-			reqHeaders = map[string]string{"Content-Type": "application/x-www-form-urlencoded"}
 			if p.ParamName != "" {
-				form := url.Values{}
-				form.Set(p.ParamName, value)
-				reqBody = []byte(form.Encode())
+				reqHeaders, reqBody = formRequestBody(p, p.ParamName, value)
 			} else {
+				reqHeaders = map[string]string{"Content-Type": "application/x-www-form-urlencoded"}
 				reqBody = []byte(value)
 			}
 		case "header":

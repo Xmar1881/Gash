@@ -149,6 +149,11 @@ func NewBaseline(target Target, resp *probe.Response) Baseline {
 // Count yapılan istek sayısı.
 func (e *Engine) Count() int64 { return e.count.Load() }
 
+// Compare yanıtı motorun baseline'ı ile karşılaştırır.
+// What: Dış çağıranlar (form-fuzz) mutasyon üretmeden sapma ölçebilsin.
+// Why: Aynı eşik/benzerlik mantığı tek yerde kalır; kopya kod sapmaz.
+func (e *Engine) Compare(resp *probe.Response) Divergence { return e.compare(resp) }
+
 // Stopped motor durdu mu.
 func (e *Engine) Stopped() bool { return e.stopped.Load() }
 

@@ -212,14 +212,11 @@ func matrixRequestForPoint(p loader.JSPoint) (method, rawURL string, headers map
 	value := matrixProbeValue(p)
 	switch strings.ToLower(strings.TrimSpace(p.ParamLocation)) {
 	case "body":
-		headers = map[string]string{"Content-Type": "application/x-www-form-urlencoded"}
 		param := p.ParamName
 		if param == "" {
 			param = "id"
 		}
-		form := url.Values{}
-		form.Set(param, value)
-		body = []byte(form.Encode())
+		headers, body = formRequestBody(p, param, value)
 	default:
 		param := p.ParamName
 		if param == "" {

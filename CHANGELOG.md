@@ -53,6 +53,51 @@ Dates are UTC.
   exposure (GASH-037, CWE-538, fixed 12-path list with soft-404 control),
   GraphQL introspection enabled (GASH-038, CWE-200), and NoSQL auth bypass
   differential (GASH-039, CWE-943, `firm` ceiling, session never reused).
+- New Tier 1 detectors (GASH-057..066): phpinfo exposure (GASH-057, CWE-200),
+  management endpoint exposure (GASH-058, CWE-200), directory listing
+  (GASH-059, CWE-548), Log4Shell JNDI OOB (GASH-060, CWE-917, header and query
+  vectors), expression language injection (GASH-061, CWE-917), JSONP callback
+  injection (GASH-062, CWE-79), OAuth open redirect (GASH-063, CWE-601), SSI
+  injection (GASH-064, CWE-97), WebDAV enabled (GASH-065, CWE-650, read-only
+  OPTIONS Allow-header check), and JavaScript source map exposure (GASH-066,
+  CWE-540), each with fixtures and metric reports.
+- Passive JavaScript reconnaissance (GASH-067, CWE-798): the crawler collects
+  same-origin `<script src>` and inline JS bodies (JS types only) and parses
+  endpoints (`fetch`/axios/jQuery/XHR, `url:` configs, route-like literals,
+  absolute URLs, `${...}` normalized to `1`) plus `sourceMappingURL` maps.
+  Parameterized endpoints feed the injection surface directly; parameterless
+  endpoints get a one-page follow crawl (<=25). Hardcoded-secret findings use
+  AWS/GitHub/GitLab/Slack/Google/Stripe/SendGrid/Twilio/PEM/JWT plus a generic
+  key-name + Shannon-entropy rule, stay `static-execution-evidence`, and report
+  masked evidence only (`first4…last4` + masked context) with values scrubbed
+  from endpoint outputs. Third-party/CDN assets are never fetched; source maps
+  are fetched same-origin/in-scope (<=5) and only their `sourcesContent` is
+  scanned. New engine stats: `js_files_fetched`, `js_endpoints_found`,
+  `js_secrets_found`, `js_maps_fetched`.
+- Tier 1 YAML gained `paths` combined with parameter/payload injection and OOB
+  token expansion in request headers and bodies; the error oracle gained
+  `phpinfo`, `management_endpoint`, `directory_listing`, `source_map`, and
+  `ssi` signature sets; the header oracle gained a read-only `webdav` mode.
+- Full-form replay fuzzing: HTML forms are parsed into a replay model
+  (`discovery.ExtractForms`) that keeps hidden and CSRF token fields, and
+  body injection points carry the other fields' values (`FormValues` /
+  `FormEnctype`) so the engine replays the complete form — urlencoded or
+  multipart — instead of a single-field body. Active scans run a bounded
+  full-form fuzz (<=5 forms, <=10 non-token fields per form, 12 probes per
+  field) with CSRF token refresh from the source page (<=2 per form, one
+  retry on 403/419/422 plus token-wording match), same-origin action gate,
+  and tentative findings only. New engine stat: `form_requests`.
+- Payload quality upgrade: a shared SQLi corpus (`internal/fuzz/sqli_corpus.go`)
+  with a boolean pair plus ten DBMS error probes (EXTRACTVALUE/UPDATEXML,
+  CONVERT, CAST, case-mixing, double-encoding, tab and MySQL versioned-comment
+  WAF-bypass variants) now drives both the live engine and
+  `sqli-error-based.js` (locked by a sync test); the MySQL signature set gained
+  `XPATH syntax error` and Postgres `invalid input syntax`. The reflected-XSS
+  plugin now classifies the reflection context first (bare-canary marker, one
+  request) and sends only the matching alert-based payload family (HTML tag,
+  quoted/unquoted attribute, event handler, script string, `javascript:` URL)
+  with new oracle fixtures for unquoted attributes, `javascript:` URLs,
+  script-string breakouts, entity-encoded tags, and JS unicode escapes.
 - Tier 1 YAML requests gained `payloads` (ordered list with per-param
   short-circuit), `paths` (payload-free path probes), `headers`, and `body`
   support; the reflection oracle gained `canary_by_payload` and the

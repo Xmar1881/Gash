@@ -37,6 +37,13 @@ type JSPoint struct {
 	ParamLocation string
 	// Value is the current parameter value.
 	Value string
+	// FormValues, when non-nil, holds the other form fields' current values
+	// (tokens included) so the executor replays the complete form with only
+	// this field replaced by the payload. Findings MUST NOT serialize it.
+	FormValues map[string]string
+	// FormEnctype is the owning form's encoding
+	// ("application/x-www-form-urlencoded" or "multipart/form-data").
+	FormEnctype string
 }
 
 // JSResponse is one probe response visible to scripts.
@@ -231,6 +238,21 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 		_ = obj.Set("paramName", p.ParamName)
 		_ = obj.Set("paramLocation", p.ParamLocation)
 		_ = obj.Set("value", p.Value)
+		if len(p.FormValues) > 0 {
+			fv := vm.NewObject()
+			keys := make([]string, 0, len(p.FormValues))
+			for k := range p.FormValues {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				_ = fv.Set(k, p.FormValues[k])
+			}
+			_ = obj.Set("formValues", fv)
+		}
+		if p.FormEnctype != "" {
+			_ = obj.Set("formEnctype", p.FormEnctype)
+		}
 		cur := p
 		_ = obj.Set("withValue", func(call goja.FunctionCall) goja.Value {
 			v := ""
@@ -255,10 +277,23 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 		if method == "" {
 			method = http.MethodGet
 		}
+		var formValues map[string]string
+		if fv := obj.Get("formValues"); fv != nil && !goja.IsUndefined(fv) && !goja.IsNull(fv) {
+			fvObj := fv.ToObject(vm)
+			formValues = make(map[string]string)
+			for _, k := range fvObj.Keys() {
+				if val := fvObj.Get(k); val != nil && !goja.IsUndefined(val) && !goja.IsNull(val) {
+					formValues[k] = val.String()
+				}
+			}
+			if len(formValues) == 0 {
+				formValues = nil
+			}
+		}
 		return JSPoint{
 			URL: get("url"), Method: method,
 			ParamName: get("paramName"), ParamLocation: get("paramLocation"),
-			Value: get("value"),
+			Value: get("value"), FormValues: formValues, FormEnctype: get("formEnctype"),
 		}
 	}
 
