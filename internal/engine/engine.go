@@ -15,6 +15,7 @@ import (
 	"github.com/Xmar1881/Gash/internal/auth"
 	"github.com/Xmar1881/Gash/internal/config"
 	"github.com/Xmar1881/Gash/internal/finding"
+	"github.com/Xmar1881/Gash/internal/headless"
 	"github.com/Xmar1881/Gash/internal/plugin"
 	"github.com/Xmar1881/Gash/internal/plugin/loader"
 	"github.com/Xmar1881/Gash/internal/proto"
@@ -57,14 +58,23 @@ type Config struct {
 	BrowserVerify bool
 	// BrowserVerifyFunc is a test seam; nil uses the real headless verifier.
 	BrowserVerifyFunc func(ctx context.Context, payloadURL, controlURL string) (triggered, controlClean bool, err error)
-	NoisyThreshold    int
-	StrictPlugins     bool
-	ShowTentative     bool
-	IgnorePlugins     map[string]bool
-	Target            string
-	MaxPages          int    // Maximum pages to crawl (default 50)
-	Depth             int    // Maximum crawl depth (default 3)
-	ProxyURL          string // Upstream HTTP proxy URL (e.g. http://127.0.0.1:8080)
+	// BrowserCrawl enables bounded SPA surface discovery: selected crawl pages
+	// are rendered in headless Chrome and their DOM forms/links plus observed
+	// XHR/fetch endpoints enter the scan surface. Needs a -tags deep build plus
+	// a Chrome binary; GET-only and off by default.
+	BrowserCrawl bool
+	// BrowserCrawlPages caps rendered pages (default 5, hard cap 10).
+	BrowserCrawlPages int
+	// BrowserCrawlFunc is a test seam; nil uses the real headless renderer.
+	BrowserCrawlFunc func(ctx context.Context, pageURL string, opts headless.RenderOptions) (headless.RenderedPage, error)
+	NoisyThreshold   int
+	StrictPlugins    bool
+	ShowTentative    bool
+	IgnorePlugins    map[string]bool
+	Target           string
+	MaxPages         int    // Maximum pages to crawl (default 50)
+	Depth            int    // Maximum crawl depth (default 3)
+	ProxyURL         string // Upstream HTTP proxy URL (e.g. http://127.0.0.1:8080)
 	// RequestTimeout per-HTTP-request timeout (default 15s).
 	RequestTimeout time.Duration
 	// MaxResponseBytes caps stored response bodies (default 5MB).

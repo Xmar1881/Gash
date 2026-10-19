@@ -133,6 +133,8 @@ func newScanCmd() *cobra.Command {
 		oobServer         string
 		oobWait           string
 		browserVerify     bool
+		browserCrawl      bool
+		browserCrawlPages int
 		showTentative     bool
 		format            []string
 		output            string
@@ -438,6 +440,8 @@ func newScanCmd() *cobra.Command {
 			cfg.Parallelism = parallelism
 			cfg.OOBServer = strings.TrimSpace(oobServer)
 			cfg.BrowserVerify = browserVerify
+			cfg.BrowserCrawl = browserCrawl
+			cfg.BrowserCrawlPages = browserCrawlPages
 			cfg.StrictPlugins = strictPlugins
 			cfg.ShowTentative = showTentative
 			cfg.IgnorePlugins = ignoreSet
@@ -555,6 +559,8 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().StringVar(&oobWait, "oob-wait", "60s", "scan-sonu OOB penceresi")
 	cmd.Flags().StringVar(&oobServer, "oob-server", "", "self-hosted interaction sunucusu (boş=kapalı)")
 	cmd.Flags().BoolVar(&browserVerify, "browser-verify", false, "statik XSS kanıtını gerçek tarayıcı tetiklemesi + temiz kontrol ile doğrula (--active ve -tags deep build şart; stub build'de dürüstçe atlanır)")
+	cmd.Flags().BoolVar(&browserCrawl, "browser-crawl", false, "keşfedilen sayfaları gerçek tarayıcıda render edip SPA yüzeyini (DOM form/link + XHR/fetch endpoint) tarama listesine ekler; -tags deep build + Chrome şart; stub build'de dürüstçe atlanır")
+	cmd.Flags().IntVar(&browserCrawlPages, "browser-crawl-pages", 5, "SPA render edilecek en fazla sayfa sayısı (1..10)")
 	cmd.Flags().BoolVar(&showTentative, "show-tentative", false, "tentative'i dahil et")
 	cmd.Flags().StringSliceVar(&format, "format", []string{"text"}, "json|sarif|text|html|junit (tekrarlanabilir)")
 	cmd.Flags().StringVar(&output, "output", "", "rapor dosyası (tek format ile kullanın)")
