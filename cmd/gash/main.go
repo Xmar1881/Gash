@@ -148,6 +148,13 @@ func newScanCmd() *cobra.Command {
 		basicAuth         string
 		authUserA         []string
 		authUserB         []string
+		loginURL          string
+		loginUser         string
+		loginPass         string
+		loginPassEnv      string
+		loginUserField    string
+		loginPassField    string
+		loginVerifyURL    string
 		techFlags         []string
 		tcpBanners        []string
 		maxPages          int
@@ -311,6 +318,74 @@ func newScanCmd() *cobra.Command {
 			if authCtx.HasAuth() {
 				fmt.Fprintln(cmd.ErrOrStderr(), authCtx.Redacted())
 			}
+			// P2.6: login akışı (--login-url) — oturum kurulumu POST gönderir,
+			// bu yüzden --active şart; tek kimlik seti zorunlu (parola denemesi YOK).
+			var loginOpts *auth.LoginOptions
+			loginFlagUsed := strings.TrimSpace(loginURL) != "" ||
+				strings.TrimSpace(loginUser) != "" ||
+				strings.TrimSpace(loginPass) != "" ||
+				strings.TrimSpace(loginPassEnv) != "" ||
+				strings.TrimSpace(loginUserField) != "" ||
+				strings.TrimSpace(loginPassField) != "" ||
+				strings.TrimSpace(loginVerifyURL) != ""
+			if loginFlagUsed {
+				if strings.TrimSpace(loginURL) == "" {
+					return fmt.Errorf("scan: login bayrakları --login-url gerektirir")
+				}
+				if !active {
+					return fmt.Errorf("scan: --login-url verildiyse --active zorunlu (oturum kurulumu POST gönderir)")
+				}
+				if strings.TrimSpace(loginUser) == "" {
+					return fmt.Errorf("scan: --login-user zorunlu (tek kimlik seti; parola denemesi yapılmaz)")
+				}
+				hasPass := strings.TrimSpace(loginPass) != ""
+				hasEnv := strings.TrimSpace(loginPassEnv) != ""
+				switch {
+				case hasPass && hasEnv:
+					return fmt.Errorf("scan: --login-pass ve --login-pass-env birlikte kullanılamaz")
+				case !hasPass && !hasEnv:
+					return fmt.Errorf("scan: --login-pass veya --login-pass-env zorunlu")
+				}
+				resolvedPass := loginPass
+				if hasEnv {
+					resolvedPass = os.Getenv(strings.TrimSpace(loginPassEnv))
+					if resolvedPass == "" {
+						return fmt.Errorf("scan: --login-pass-env %q boş veya tanımsız", strings.TrimSpace(loginPassEnv))
+					}
+				}
+				if u, err := url.Parse(strings.TrimSpace(loginURL)); err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+					return fmt.Errorf("scan: --login-url geçersiz (http(s) URL olmalı, got %q)", loginURL)
+				}
+				if strings.TrimSpace(loginVerifyURL) != "" {
+					if u, err := url.Parse(strings.TrimSpace(loginVerifyURL)); err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+						return fmt.Errorf("scan: --login-verify-url geçersiz (http(s) URL olmalı, got %q)", loginVerifyURL)
+					}
+				}
+				if len(scope) > 0 {
+					if err := enforceScanScope(ctx, strings.TrimSpace(loginURL), scope); err != nil {
+						return fmt.Errorf("scan: --login-url %w", err)
+					}
+					if strings.TrimSpace(loginVerifyURL) != "" {
+						if err := enforceScanScope(ctx, strings.TrimSpace(loginVerifyURL), scope); err != nil {
+							return fmt.Errorf("scan: --login-verify-url %w", err)
+						}
+					}
+				}
+				loginOpts = &auth.LoginOptions{
+					LoginURL:    strings.TrimSpace(loginURL),
+					VerifyURL:   strings.TrimSpace(loginVerifyURL),
+					User:        loginUser,
+					Pass:        resolvedPass,
+					UserField:   strings.TrimSpace(loginUserField),
+					PassField:   strings.TrimSpace(loginPassField),
+					MaxAttempts: auth.DefaultLoginMaxAttempts,
+				}
+				verifyNote := "none"
+				if loginOpts.VerifyURL != "" {
+					verifyNote = loginOpts.VerifyURL
+				}
+				fmt.Fprintln(cmd.ErrOrStderr(), fmt.Sprintf("login: url=%s verify=%s user=[redacted] pass=[redacted]", loginOpts.LoginURL, verifyNote))
+			}
 			if strings.TrimSpace(target) != "" {
 				if len(scope) > 0 {
 					if err := enforceScanScope(ctx, normalized, scope); err != nil {
@@ -352,6 +427,7 @@ func newScanCmd() *cobra.Command {
 			cfg.Auth = authCtx
 			cfg.AuthA = authA
 			cfg.AuthB = authB
+			cfg.Login = loginOpts
 			cfg.Technologies = techFlags
 			cfg.TCPBanners = tcpBanners
 			cfg.Scope = scope
@@ -494,6 +570,13 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().StringVar(&basicAuth, "basic-auth", "", "basic kimlik 'kullanıcı:parola'")
 	cmd.Flags().StringSliceVar(&authUserA, "auth-user-a", nil, "BOLA matrisi kullanıcı A başlığı 'Ad: değer' (tekrarlanabilir, --auth-user-b ile birlikte, --active şart)")
 	cmd.Flags().StringSliceVar(&authUserB, "auth-user-b", nil, "BOLA matrisi kullanıcı B başlığı 'Ad: değer' (tekrarlanabilir, --auth-user-a ile birlikte, --active şart)")
+	cmd.Flags().StringVar(&loginURL, "login-url", "", "login formu URL'i; verilirse gerçek oturum kurulur (--active + --login-user + parola şart; başarısızlık dürüstçe raporlanır)")
+	cmd.Flags().StringVar(&loginUser, "login-user", "", "tek kimlik seti kullanıcı adı (parola denemesi/guessing YOK)")
+	cmd.Flags().StringVar(&loginPass, "login-pass", "", "tek kimlik seti parolası (uyarı: argv süreç listesinde görünebilir; --login-pass-env tercih edilir)")
+	cmd.Flags().StringVar(&loginPassEnv, "login-pass-env", "", "parolayı ortam değişkeninden oku (örn. GASH_LOGIN_PASS); --login-pass ile birlikte kullanılamaz")
+	cmd.Flags().StringVar(&loginUserField, "login-user-field", "", "kullanıcı alanı adı override'ı (boşsa sezgisel: user|email|login|account|mail)")
+	cmd.Flags().StringVar(&loginPassField, "login-pass-field", "", "parola alanı adı override'ı (boşsa ilk type=password alanı)")
+	cmd.Flags().StringVar(&loginVerifyURL, "login-verify-url", "", "oturum doğrulama URL'i (boşsa login action target, o da yoksa --login-url)")
 	cmd.Flags().StringSliceVar(&techFlags, "tech", nil, "bilinen teknoloji (tekrarlanabilir/virgüllü, örn. wordpress,graphql — chain kapısı)")
 	cmd.Flags().StringSliceVar(&tcpBanners, "tcp-banner", nil, "açık TCP banner probu 'host:port' (tekrarlanabilir, --active şart, kapsam-izinli)")
 	cmd.Flags().IntVar(&maxPages, "max-pages", 50, "crawler maksimum sayfa sayısı (0=sadece hedef sayfa)")

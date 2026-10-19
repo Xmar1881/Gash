@@ -181,6 +181,24 @@ func WithPlugin(ctx context.Context, id string, safe bool, maxRequests *int) con
 	return context.WithValue(ctx, ctxKey{}, pluginCtx{ID: id, Safe: safe, MaxRequests: maxRequests})
 }
 
+// noRedirectKey login akışının manuel redirect kontrolü işaretçisidir.
+type noRedirectKey struct{}
+
+// WithNoRedirect ctx'e "redirect izleme" iptal işareti gömer.
+// What: RoundTripWithRetry 3xx yanıtını izlemeden döner; diğer tüm politika
+// kontrolleri (scope/rate/bütçe/safe) her istekte aynen uygulanır.
+// Why: Login akışı Set-Cookie'yi her hop'ta görmek ve https→http downgrade
+// kararını kendisi vermek zorundadır; politika yine atlanmaz.
+func WithNoRedirect(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noRedirectKey{}, true)
+}
+
+// noRedirectFromCtx işaretçiyi okur (yoksa false).
+func noRedirectFromCtx(ctx context.Context) bool {
+	v, _ := ctx.Value(noRedirectKey{}).(bool)
+	return v
+}
+
 type pluginCtx struct {
 	ID          string
 	Safe        bool
@@ -872,8 +890,9 @@ func (p *PolicySession) RoundTripWithRetry(req *http.Request) (*http.Response, e
 			p.counterFor(p.perPlugin, pc.ID).Add(1)
 		}
 
-		// Handle redirects
-		if p.cfg.RedirectPolicy.FollowRedirects && isRedirect(resp.StatusCode) {
+		// Handle redirects. WithNoRedirect taşıyan çağrılar (login akışı) 3xx'i
+		// izlemeden alır; kararı kendileri verir.
+		if p.cfg.RedirectPolicy.FollowRedirects && isRedirect(resp.StatusCode) && !noRedirectFromCtx(currentReq.Context()) {
 			if redirectCount >= p.cfg.RedirectPolicy.MaxRedirects {
 				resp.Body.Close()
 				return nil, &PolicyError{PluginID: pc.ID, Op: "redirect",

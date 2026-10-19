@@ -30,6 +30,10 @@ type Config struct {
 	HasAuth bool
 	// Auth kimlik doğrulama bağlamıdır (P2.5). Nil-güvenlidir; HasAuth buradan türetilir.
 	Auth *auth.Context
+	// Login kullanıcı-beyanlı oturum kurulumudur (P2.6). Nil-güvenli.
+	// Başarılıysa kurulan oturum Auth bağlamına AD bazında birleşir (açık
+	// --auth-header/--cookie kazanır) ve requires_auth kapısı açılır.
+	Login *auth.LoginOptions
 	// AuthA/AuthB çift-kullanıcı BOLA matrisi bağlamlarıdır (--auth-user-a/b).
 	// Nil-güvenlidir; yalnızca ikisi de doluyken ve --active varken matris koşar.
 	AuthA *auth.Context
@@ -414,6 +418,7 @@ func (e *Engine) SharedPolicy() *plugin.PolicySession {
 // What: Validated target plus scheduled execution plus correlated findings.
 // Why: Empty registries still return a valid empty report while live targets
 // get deterministic Tier1/Tier2/Tier3 verification through one pipeline.
+// P2.6 sırası: istemci kur → login → teknoloji tespiti → schedule → koşum.
 func (e *Engine) Run(ctx context.Context, target string) (*Report, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("engine run ctx: %w", err)
@@ -422,6 +427,25 @@ func (e *Engine) Run(ctx context.Context, target string) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	// P2.6: tarama istemcisi tek kez kurulur; login de bu hattan geçer.
+	policy, client, err := e.newScanClient(normalized)
+	if err != nil {
+		return nil, err
+	}
+	login, err := e.runLogin(ctx, client)
+	if err != nil {
+		// Kapsam/politika ihlali: fail-closed, tarama başlamaz.
+		return nil, err
+	}
+	if login.succeeded == 1 && login.auth != nil {
+		// Açık kimlik beyanı login türevinin üzerindedir (ad bazında).
+		if e.cfg.Auth == nil {
+			e.cfg.Auth = auth.New()
+		}
+		e.cfg.Auth.MergeMissing(login.auth)
+		e.cfg.HasAuth = true
+		client.SetExtraHeaders(e.cfg.Auth.HeaderMap())
+	}
 	// Çalışma-anı teknoloji tespiti: tek pasif GET ile zincir girdisi.
 	// Hata = boş küme (kullanıcı --tech tek başına yeterli); ek trafik yok.
 	e.detectRuntimeTech(ctx, normalized)
@@ -429,13 +453,20 @@ func (e *Engine) Run(ctx context.Context, target string) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Login skip izi en başta raporlanır (başarısızlık sessiz kalmaz).
+	skipped = append(append([]plugin.SkippedPlugin{}, login.skipped...), skipped...)
 	if len(ordered) == 0 {
 		rep := &Report{
 			Target:   normalized,
 			Findings: []*finding.Finding{},
-			Stats:    map[string]int{"scheduled": 0, "skipped": len(skipped), "findings": 0, "errors": 0},
-			Skipped:  skipped,
-			ScanID:   newScanID(),
+			Stats: map[string]int{
+				"scheduled": 0, "skipped": len(skipped), "findings": 0, "errors": 0,
+				"login_attempted": login.attempted,
+				"login_succeeded": login.succeeded,
+				"login_cookies":   login.cookies,
+			},
+			Skipped: skipped,
+			ScanID:  newScanID(),
 		}
 		if rep.Skipped == nil {
 			rep.Skipped = []plugin.SkippedPlugin{}
@@ -443,7 +474,7 @@ func (e *Engine) Run(ctx context.Context, target string) (*Report, error) {
 		// B2: empty registry yields a valid empty report, not an error.
 		return rep, nil
 	}
-	return e.runLive(ctx, normalized, ordered, skipped)
+	return e.runLive(ctx, normalized, ordered, skipped, policy, client, login)
 }
 
 // Correlate motor-tarafı dedup uygular (A-16).
