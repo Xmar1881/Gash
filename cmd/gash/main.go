@@ -175,6 +175,9 @@ func newScanCmd() *cobra.Command {
 		infraTimeout      string
 		infraRateLimit    float64
 		infraParallelism  int
+		flowSeeds         []string
+		flowMaxSteps      int
+		flowProbes        int
 	)
 	cmd := &cobra.Command{
 		Use:   "scan",
@@ -237,6 +240,36 @@ func newScanCmd() *cobra.Command {
 			// + temiz kontrol ile confirmed'a taşır; aktif probdur.
 			if browserVerify && !active {
 				return fmt.Errorf("scan: --browser-verify verildiyse --active zorunlu (tarayıcı probu aktiftir)")
+			}
+			// SPA render'ı salt GET gözlemdir (--active gerekmez); sayfa tavanı
+			// erken doğrulanır, renderer ayrıca non-GET istekleri bloklar.
+			if browserCrawlPages < 1 || browserCrawlPages > 10 {
+				return fmt.Errorf("scan: --browser-crawl-pages 1..10 aralığında olmalı (got %d)", browserCrawlPages)
+			}
+			// Çok-adımlı akış replay'i durum değiştiren form gönderimleri yapar.
+			if len(flowSeeds) > 0 && !active {
+				return fmt.Errorf("scan: --flow-seed verildiyse --active zorunlu (akış replay'i form POST'u gönderir)")
+			}
+			if len(flowSeeds) > 1 {
+				return fmt.Errorf("scan: --flow-seed tek kez verilebilir (v1 tek akış)")
+			}
+			if flowMaxSteps < 1 || flowMaxSteps > 6 {
+				return fmt.Errorf("scan: --flow-max-steps 1..6 aralığında olmalı (got %d)", flowMaxSteps)
+			}
+			if flowProbes < 1 || flowProbes > 10 {
+				return fmt.Errorf("scan: --flow-probes 1..10 aralığında olmalı (got %d)", flowProbes)
+			}
+			var flowSeed string
+			if len(flowSeeds) == 1 {
+				flowSeed = strings.TrimSpace(flowSeeds[0])
+				if u, err := url.Parse(flowSeed); err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+					return fmt.Errorf("scan: --flow-seed geçersiz (http(s) URL olmalı, got %q)", flowSeed)
+				}
+				if len(scope) > 0 {
+					if err := enforceScanScope(ctx, flowSeed, scope); err != nil {
+						return fmt.Errorf("scan: --flow-seed %w", err)
+					}
+				}
 			}
 			var normalized string
 			if strings.TrimSpace(target) != "" {
@@ -449,6 +482,9 @@ func newScanCmd() *cobra.Command {
 			cfg.MaxPages = maxPages
 			cfg.Depth = depth
 			cfg.OpenAPISpec = strings.TrimSpace(openapiSpec)
+			cfg.FlowSeed = flowSeed
+			cfg.FlowMaxSteps = flowMaxSteps
+			cfg.FlowProbes = flowProbes
 			cfg.RequestTimeout = reqDur
 			cfg.MaxResponseBytes = maxResponseBytes
 			cfg.SSHAudit = sshAudit
@@ -599,6 +635,9 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().StringVar(&infraTimeout, "infra-timeout", "5s", "altyapı dial/gözlem zaman aşımı")
 	cmd.Flags().Float64Var(&infraRateLimit, "infra-rate-limit", 5, "altyapı denetimi saniyedeki işlem tavanı (0=sınırsız)")
 	cmd.Flags().IntVar(&infraParallelism, "infra-parallelism", 4, "altyapı denetimi eşzamanlılık tavanı")
+	cmd.Flags().StringArrayVar(&flowSeeds, "flow-seed", nil, "çok-adımlı akış keşif URL'i (v1 tek; --active şart; kapsam-dışı seed'e istek gitmez)")
+	cmd.Flags().IntVar(&flowMaxSteps, "flow-max-steps", 4, "akış keşfi adım tavanı (1..6)")
+	cmd.Flags().IntVar(&flowProbes, "flow-probes", 6, "adım başına SQLi probu (1..10)")
 	return cmd
 }
 

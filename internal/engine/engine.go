@@ -83,6 +83,13 @@ type Config struct {
 	// Doluysa ParseSpec endpoint+parametreleri hedef bazında surfacePoints'e
 	// eklenir; URL ise yalnızca kapsam-içi/loopback çekilir (fail-closed).
 	OpenAPISpec string
+	// FlowSeed --flow-seed karşılığıdır: çok-adımlı akış keşfinin başlangıç
+	// URL'i. Yalnızca --active ile ve açıkça verildiğinde koşar.
+	FlowSeed string
+	// FlowMaxSteps akış keşfi adım tavanıdır (varsayılan 4, kesin tavan 6).
+	FlowMaxSteps int
+	// FlowProbes adım başına SQLi probu sayısıdır (varsayılan 6, tavan 10).
+	FlowProbes int
 
 	// Faz 0 altyapı gözlemleri (engine-recon; plugin değildir):
 	// SSHAudit --ssh-audit karşılığıdır (SSH banner; --active şart).
@@ -140,6 +147,9 @@ func DefaultConfig() Config {
 		InfraTimeout:         5 * time.Second,
 		InfraRatePerSecond:   5,
 		InfraParallelism:     4,
+		FlowMaxSteps:         4,
+		FlowProbes:           6,
+		BrowserCrawlPages:    spaDefaultPages,
 	}
 }
 
