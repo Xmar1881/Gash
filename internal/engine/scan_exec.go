@@ -386,6 +386,20 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		formRequests = formReq
 		allFindings = append(allFindings, formFindings...)
 	}
+	// Çok-adımlı akış replay (--flow-seed): keşif + taze token'lı replay +
+	// alt-adım değerlendirmesi + oturumsuz doğrudan erişim ekranı.
+	// Yalnızca --active + açık seed ile; kapsam-dışı seed'e istek gitmez.
+	var flowFindings []*finding.Finding
+	flowStats := map[string]int{
+		"flow_seed": 0, "flow_steps": 0, "flow_replays": 0,
+		"flow_findings": 0, "flow_bypass_checked": 0, "flow_requests": 0,
+	}
+	if e.cfg.Active && strings.TrimSpace(e.cfg.FlowSeed) != "" {
+		var flowSkipped []plugin.SkippedPlugin
+		flowFindings, flowSkipped, flowStats = e.runFlowFuzz(ctx, target, client)
+		allFindings = append(allFindings, flowFindings...)
+		execSkipped = append(execSkipped, flowSkipped...)
+	}
 	// Görev C: çift-kullanıcı BOLA matrisi. --active + iki kimlik şart;
 	// bulgular daima tentative (sahiplik elle doğrulanır).
 	var matrixRequests int64
@@ -517,6 +531,13 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 			"content_requests": contentRequests + contentFollowRequests,
 			"content_findings": contentFindingCount,
 			"smuggle_requests": smuggleRequests,
+			// Çok-adımlı akış replay sayaçları (flow yoksa 0).
+			"flow_seed":           flowStats["flow_seed"],
+			"flow_steps":          flowStats["flow_steps"],
+			"flow_replays":        flowStats["flow_replays"],
+			"flow_findings":       flowStats["flow_findings"],
+			"flow_bypass_checked": flowStats["flow_bypass_checked"],
+			"flow_requests":       flowStats["flow_requests"],
 			// Pasif JS recon sayaçları (crawl kapalı/başarısızken 0).
 			"js_files_fetched":   jsReconStats["js_files_fetched"],
 			"js_endpoints_found": jsReconStats["js_endpoints_found"],

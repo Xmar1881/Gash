@@ -313,3 +313,89 @@ func TestScanLoginURLShapeValidation(t *testing.T) {
 		t.Fatalf("gerekçe --login-url taşımalı: %v", err)
 	}
 }
+
+// TestScanFlowSeedRequiresActive: ak??Y replay'i form POST'u g?nderir; --active
+// olmadan scan erken hata vermeli (OOB/login kap?s?yla ayn? disiplin).
+func TestScanFlowSeedRequiresActive(t *testing.T) {
+	root := newRoot()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"scan", "--target", "http://127.0.0.1:1", "--flow-seed", "http://127.0.0.1:1/start"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("--flow-seed tek ba??na hata vermeli")
+	}
+	if !strings.Contains(err.Error(), "--flow-seed") || !strings.Contains(err.Error(), "--active") {
+		t.Fatalf("gerek?e --flow-seed + --active ta??mal?: %v", err)
+	}
+}
+
+// TestScanFlowSeedSingle: v1 tek ak??; yinelenen seed reddedilir.
+func TestScanFlowSeedSingle(t *testing.T) {
+	root := newRoot()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"scan", "--target", "http://127.0.0.1:1", "--active",
+		"--flow-seed", "http://127.0.0.1:1/a", "--flow-seed", "http://127.0.0.1:1/b"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("yinelenen --flow-seed hata vermeli")
+	}
+	if !strings.Contains(err.Error(), "--flow-seed") {
+		t.Fatalf("gerek?e --flow-seed ta??mal?: %v", err)
+	}
+}
+
+// TestScanFlowSeedShapeValidation: http(s) d??? seed erken reddedilir.
+func TestScanFlowSeedShapeValidation(t *testing.T) {
+	root := newRoot()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"scan", "--target", "http://127.0.0.1:1", "--active", "--flow-seed", "ftp://x.example/start"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("ftp seed hata vermeli")
+	}
+	if !strings.Contains(err.Error(), "--flow-seed") {
+		t.Fatalf("gerek?e --flow-seed ta??mal?: %v", err)
+	}
+}
+
+// TestScanFlowSeedScopePreflight: kapsam-d??? seed'e istek gitmeden fail-closed.
+func TestScanFlowSeedScopePreflight(t *testing.T) {
+	root := newRoot()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"scan", "--target", "http://127.0.0.1:1", "--active",
+		"--scope", "203.0.113.0/24", "--flow-seed", "http://10.1.2.3/start"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("kapsam-d??? --flow-seed hata vermeli")
+	}
+	if !strings.Contains(err.Error(), "--flow-seed") || !strings.Contains(err.Error(), "scope") {
+		t.Fatalf("gerek?e --flow-seed + scope ta??mal?: %v", err)
+	}
+}
+
+// TestScanFlowBounds: ad?m/prob aral?k d??? de?erler erken reddedilir.
+func TestScanFlowBounds(t *testing.T) {
+	for _, tc := range [][]string{
+		{"--flow-max-steps", "0"},
+		{"--flow-max-steps", "7"},
+		{"--flow-probes", "0"},
+		{"--flow-probes", "11"},
+	} {
+		args := append([]string{"scan", "--target", "http://127.0.0.1:1", "--active", "--flow-seed", "http://127.0.0.1:1/start"}, tc...)
+		root := newRoot()
+		root.SetOut(io.Discard)
+		root.SetErr(io.Discard)
+		root.SetArgs(args)
+		err := root.Execute()
+		if err == nil {
+			t.Fatalf("%v hata vermeli", tc)
+		}
+		if !strings.Contains(err.Error(), tc[0]) {
+			t.Fatalf("gerek?e %s ta??mal?: %v", tc[0], err)
+		}
+	}
+}
