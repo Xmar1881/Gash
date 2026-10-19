@@ -165,3 +165,134 @@ func TestScanDBUnauthRequiresActive(t *testing.T) {
 		t.Fatalf("gerekçe --db-unauth + --active taşımalı: %v", err)
 	}
 }
+
+// TestScanLoginURLRequiresActive: oturum kurulumu POST gönderir; --active şart.
+func TestScanLoginURLRequiresActive(t *testing.T) {
+	root := newRoot()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"scan", "--target", "http://127.0.0.1:1", "--login-url", "http://127.0.0.1:1/login", "--login-user", "u", "--login-pass", "p"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("--login-url tek başına hata vermeli")
+	}
+	if !strings.Contains(err.Error(), "--login-url") || !strings.Contains(err.Error(), "--active") {
+		t.Fatalf("gerekçe --login-url + --active taşımalı: %v", err)
+	}
+}
+
+// TestScanLoginFlagsRequireLoginURL: alt bayraklar tek başına anlamsızdır.
+func TestScanLoginFlagsRequireLoginURL(t *testing.T) {
+	for _, args := range [][]string{
+		{"--login-user", "u"},
+		{"--login-pass", "p"},
+		{"--login-pass-env", "GASH_TEST_LOGIN_PASS"},
+		{"--login-user-field", "user"},
+		{"--login-verify-url", "http://127.0.0.1:1/panel"},
+	} {
+		full := append([]string{"scan", "--target", "http://127.0.0.1:1", "--active"}, args...)
+		root := newRoot()
+		root.SetOut(io.Discard)
+		root.SetErr(io.Discard)
+		root.SetArgs(full)
+		err := root.Execute()
+		if err == nil {
+			t.Fatalf("%v: --login-url olmadan hata vermeli", args)
+		}
+		if !strings.Contains(err.Error(), "--login-url") {
+			t.Fatalf("%v: gerekçe --login-url taşımalı: %v", args, err)
+		}
+	}
+}
+
+// TestScanLoginRequiresUser: tek kimlik seti için kullanıcı zorunludur.
+func TestScanLoginRequiresUser(t *testing.T) {
+	root := newRoot()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"scan", "--target", "http://127.0.0.1:1", "--active", "--login-url", "http://127.0.0.1:1/login", "--login-pass", "p"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("--login-user olmadan hata vermeli")
+	}
+	if !strings.Contains(err.Error(), "--login-user") {
+		t.Fatalf("gerekçe --login-user taşımalı: %v", err)
+	}
+}
+
+// TestScanLoginRequiresPass: parola (veya env) zorunludur; deneme YOK.
+func TestScanLoginRequiresPass(t *testing.T) {
+	root := newRoot()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"scan", "--target", "http://127.0.0.1:1", "--active", "--login-url", "http://127.0.0.1:1/login", "--login-user", "u"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("parolasız login hata vermeli")
+	}
+	if !strings.Contains(err.Error(), "--login-pass") {
+		t.Fatalf("gerekçe --login-pass taşımalı: %v", err)
+	}
+}
+
+// TestScanLoginPassConflict: --login-pass ve --login-pass-env birlikte olamaz.
+func TestScanLoginPassConflict(t *testing.T) {
+	root := newRoot()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"scan", "--target", "http://127.0.0.1:1", "--active", "--login-url", "http://127.0.0.1:1/login", "--login-user", "u", "--login-pass", "p", "--login-pass-env", "GASH_TEST_LOGIN_PASS"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("çift parola kaynağı hata vermeli")
+	}
+	if !strings.Contains(err.Error(), "birlikte kullanılamaz") {
+		t.Fatalf("gerekçe birleşme yasağı taşımalı: %v", err)
+	}
+}
+
+// TestScanLoginPassEnvMissing: tanımsız/boş env değişkeni erken hata verir.
+func TestScanLoginPassEnvMissing(t *testing.T) {
+	t.Setenv("GASH_TEST_LOGIN_PASS_MISSING", "")
+	root := newRoot()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"scan", "--target", "http://127.0.0.1:1", "--active", "--login-url", "http://127.0.0.1:1/login", "--login-user", "u", "--login-pass-env", "GASH_TEST_LOGIN_PASS_MISSING"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("boş env değişkeni hata vermeli")
+	}
+	if !strings.Contains(err.Error(), "GASH_TEST_LOGIN_PASS_MISSING") {
+		t.Fatalf("gerekçe env değişken adını taşımalı: %v", err)
+	}
+}
+
+// TestScanLoginScopePreflight: kapsam-dışı login URL'i ağ trafiği başlamadan
+// fail-closed reddedilir.
+func TestScanLoginScopePreflight(t *testing.T) {
+	root := newRoot()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"scan", "--target", "http://127.0.0.1:1", "--active", "--scope", "203.0.113.0/24", "--login-url", "http://10.1.2.3/login", "--login-user", "u", "--login-pass", "p"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("kapsam-dışı --login-url hata vermeli")
+	}
+	if !strings.Contains(err.Error(), "--login-url") || !strings.Contains(err.Error(), "scope") {
+		t.Fatalf("gerekçe --login-url + scope taşımalı: %v", err)
+	}
+}
+
+// TestScanLoginURLShapeValidation: http(s) dışı login URL'i erken reddedilir.
+func TestScanLoginURLShapeValidation(t *testing.T) {
+	root := newRoot()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"scan", "--target", "http://127.0.0.1:1", "--active", "--login-url", "ftp://x.example/login", "--login-user", "u", "--login-pass", "p"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("ftp login URL'i hata vermeli")
+	}
+	if !strings.Contains(err.Error(), "--login-url") {
+		t.Fatalf("gerekçe --login-url taşımalı: %v", err)
+	}
+}

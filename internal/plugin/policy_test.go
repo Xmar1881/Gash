@@ -283,6 +283,35 @@ func doRedirectRequest(t *testing.T, policy *PolicySession, rawURL string) (*htt
 	return policy.RoundTripWithRetry(req)
 }
 
+// TestWithNoRedirectReturns3xxUnfollowed locks the login-flow marker: a 3xx is
+// returned to the caller without following, and the redirect target is never
+// requested (policy checks still run for the first hop).
+func TestWithNoRedirectReturns3xxUnfollowed(t *testing.T) {
+	policy, rt := newTestPolicySession(t, "https://example.com", map[string][]net.IP{
+		"example.com": ipList("93.184.216.34"),
+	}, scriptedRedirect("https://example.com/home"))
+
+	ctx := WithNoRedirect(WithPlugin(context.Background(), "login", false, nil))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://example.com/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := policy.RoundTripWithRetry(req)
+	if err != nil {
+		t.Fatalf("no-redirect 3xx hatasız dönmeli: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMovedPermanently {
+		t.Fatalf("3xx izlenmeden dönmeli, got %d", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "https://example.com/home" {
+		t.Fatalf("Location korunmalı: %q", loc)
+	}
+	if seen := rt.seen(); len(seen) != 1 {
+		t.Fatalf("redirect hedefi istenmemeli, seen=%v", seen)
+	}
+}
+
 func TestRedirectPolicy_HTTPToHTTPSUpgradeFollowed(t *testing.T) {
 	policy, rt := newTestPolicySession(t, "http://example.com", map[string][]net.IP{
 		"example.com": ipList("93.184.216.34"),

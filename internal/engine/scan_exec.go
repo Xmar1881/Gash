@@ -134,22 +134,18 @@ func newScanID() string {
 	return "scan_" + hex.EncodeToString(b[:])
 }
 
-// runLive executes scheduled plugins against a validated target.
-// What: Probe-backed Tier1/Tier2/Tier3 execution plus correlate and stats.
-// Why: Single live path serves CLI scans and engine e2e tests identically.
-func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.PluginSpec, skipped []plugin.SkippedPlugin) (*Report, error) {
-	timeoutMs := e.cfg.PluginTimeoutMs
-	if timeoutMs <= 0 {
-		timeoutMs = 30000
-	}
-	pluginTimeout := time.Duration(timeoutMs) * time.Millisecond
-
+// newScanClient hedef için politika oturumu + probe istemcisini kurar.
+// What: Run (login dahil) ve runLive'ın paylaştığı tek istemci kurulum noktası.
+// Why: Login akışı ile plugin koşumu aynı policy/probe hattını kullanmalı;
+// kimlik bağlamı tek yerden (ExtraHeaders) gömülür ve login sonrası
+// SetExtraHeaders ile tazelenir.
+func (e *Engine) newScanClient(target string) (*plugin.PolicySession, *probe.Client, error) {
 	var parsedProxy *url.URL
 	if strings.TrimSpace(e.cfg.ProxyURL) != "" {
 		var err error
 		parsedProxy, err = url.Parse(strings.TrimSpace(e.cfg.ProxyURL))
 		if err != nil {
-			return nil, fmt.Errorf("invalid proxy URL %q: %w", e.cfg.ProxyURL, err)
+			return nil, nil, fmt.Errorf("invalid proxy URL %q: %w", e.cfg.ProxyURL, err)
 		}
 	}
 
@@ -194,6 +190,20 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		EnableWAFBypass: e.cfg.Profile == config.ProfileAggressive,
 		ProxyURL:        parsedProxy,
 	})
+	return policy, client, nil
+}
+
+// runLive executes scheduled plugins against a validated target.
+// What: Probe-backed Tier1/Tier2/Tier3 execution plus correlate and stats.
+// Why: Single live path serves CLI scans and engine e2e tests identically.
+// policy/client Run tarafından kurulur (login aynı hattı paylaşır); login
+// sonucu istatistik ve skip izi olarak rapora girer.
+func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.PluginSpec, skipped []plugin.SkippedPlugin, policy *plugin.PolicySession, client *probe.Client, login loginOutcome) (*Report, error) {
+	timeoutMs := e.cfg.PluginTimeoutMs
+	if timeoutMs <= 0 {
+		timeoutMs = 30000
+	}
+	pluginTimeout := time.Duration(timeoutMs) * time.Millisecond
 
 	parallelism := e.cfg.Parallelism
 	if parallelism <= 0 {
@@ -505,6 +515,10 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 			// Faz 1 altyapı sayaçları (kapalıyken 0).
 			"ssh_handshake_checks": infraStats["ssh_handshake_checks"],
 			"db_unauth_checks":     infraStats["db_unauth_checks"],
+			// P2.6 login sayaçları (login yoksa 0; başarı yalnızca doğrulanmış oturumda 1).
+			"login_attempted": login.attempted,
+			"login_succeeded": login.succeeded,
+			"login_cookies":   login.cookies,
 		},
 		ScanID: newScanID(),
 	}

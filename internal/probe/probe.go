@@ -188,6 +188,35 @@ func (c *Client) extraHeaders() map[string]string {
 	return cloneMap(c.extra)
 }
 
+// SetExtraHeaders bağlam başlıklarını değiştirir (login sonrası auth tazeleme).
+// What: Haritayı kopyalayarak saklar; mevcut ekstra başlıkların yerini alır.
+// Why: Login akışının kurduğu oturum (MergeMissing sonucu) taramanın geri
+// kalanına taşınmalı. Yarış koşulundan kaçınmak için tarama işçileri
+// başlamadan ÖNCE çağrılmalıdır (engine sırası bunu garanti eder).
+func (c *Client) SetExtraHeaders(headers map[string]string) {
+	if c == nil {
+		return
+	}
+	c.extra = cloneMap(headers)
+}
+
+// noWAFBypassKey login akışının WAF-bypass varyant denemesini kapatır.
+type noWAFBypassKey struct{}
+
+// WithNoWAFBypass ctx'e "WAF-bypass varyantı deneme" iptal işareti gömer.
+// What: Send agresif modda olsa bile blok yanıtında varyant ÜRETMEZ.
+// Why: Login POST'u kimlik bilgisi taşır; bypass mutasyonlarıyla kimlik
+// yeniden oynatılmamalı (tek gönderim politikası).
+func WithNoWAFBypass(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noWAFBypassKey{}, true)
+}
+
+// noWAFBypassFromCtx işaretçiyi okur (yoksa false).
+func noWAFBypassFromCtx(ctx context.Context) bool {
+	v, _ := ctx.Value(noWAFBypassKey{}).(bool)
+	return v
+}
+
 func cloneMap(m map[string]string) map[string]string {
 	if m == nil {
 		return nil
@@ -230,7 +259,7 @@ func (c *Client) Send(ctx context.Context, method, rawURL string, headers map[st
 	if r.WAFDetected {
 		c.wafDetected.Add(1)
 	}
-	if !c.enableWAFBypass || !wafbypass.ShouldAttemptBypass(r.Status, r.Headers, r.Body) {
+	if !c.enableWAFBypass || noWAFBypassFromCtx(ctx) || !wafbypass.ShouldAttemptBypass(r.Status, r.Headers, r.Body) {
 		return r, nil
 	}
 	for _, att := range wafbypass.BuildAttempts(rawURL, headers, body) {

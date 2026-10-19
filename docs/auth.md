@@ -51,6 +51,90 @@ them, never paste them into issue reports.
 
 ---
 
+## Login Flow (`--login-url`)
+
+Instead of pasting a session token you already extracted, you can point Gash at
+the login form and let it establish one real session (P2.6):
+
+```sh
+gash scan --target https://app.example.com --scope app.example.com \
+  --active \
+  --login-url https://app.example.com/login \
+  --login-user analyst \
+  --login-pass-env GASH_LOGIN_PASS \
+  --login-verify-url https://app.example.com/dashboard
+```
+
+### Flags
+
+- `--login-url <url>`: page carrying the login form (required to enable the flow).
+- `--login-user <name>`: the single username set (required).
+- `--login-pass <pass>` or `--login-pass-env <VAR>`: the single password set
+  (exactly one source; missing/empty env vars fail fast). Prefer the env var:
+  `--login-pass` is visible in the process list.
+- `--login-user-field` / `--login-pass-field`: field-name overrides for
+  unusual forms.
+- `--login-verify-url <url>`: page that only logged-in users can see
+  (defaults to the form action target, then to `--login-url`).
+
+The flow sends a POST, so it requires `--active` and is subject to the same
+scope, rate, and budget policy as every other request (a dedicated per-plugin
+budget of 40 requests bounds the whole flow).
+
+### Semantics (honest verification)
+
+1. GET the login page and pick the first form containing a `type=password`
+   field. GET-method forms and `text/plain` forms are refused.
+2. Username field: your override, else the first text/email field whose name
+   matches `user|email|login|account|mail`, else the first text/email field.
+   Password field: your override, else the first `type=password` field. Hidden
+   fields (CSRF tokens) are preserved with fresh values on every attempt.
+3. POST through the policy pipeline. Redirects are followed manually (up to 5);
+   cookies set on any hop are kept per host, and an `https → http` downgrade
+   aborts the flow.
+4. Verify: GET the verify target with the new cookies. Success is declared only
+   when the response has **no** password field AND differs from an anonymous
+   control fetch of the same URL (token-like `value="..."` contents are
+   normalized out, so rotating CSRF nonces cannot fake a difference).
+5. On success the session cookies are merged into the scan context and every
+   later request (including `requires_auth` plugins) carries them.
+
+### Failure reasons (never silent)
+
+Failures do not stop the scan: one `login` skip record is emitted and the scan
+continues unauthenticated. `login-failed: <reason>` uses these reasons:
+
+| Reason | Meaning |
+| --- | --- |
+| `login-failed` | POST rejected; no session evidence. |
+| `2fa-detected` | OTP/MFA/CAPTCHA field seen; the flow **never** retries. |
+| `unverified-session` | A session-like cookie was set but verification stayed inconclusive. |
+| `no-password-form` | No form with a password field on the page. |
+| `no-user-field` | No usable username field (use `--login-user-field`). |
+| `login-form-get` | Form submits with GET (password would land in the URL). |
+| `unsupported-enctype` | `text/plain` form encoding. |
+| `redirect-downgrade-blocked` | Login tried to redirect https → http. |
+| `request-failed` | The requests could not be completed. |
+
+Stats: `login_attempted`, `login_succeeded`, `login_cookies`. A scope or
+policy violation during login is the one fail-closed case: the scan aborts
+before any plugin traffic.
+
+### Attempts and limits
+
+- At most 2 POST attempts by default (hard cap 3): this is a single credential
+  set, never password guessing. Once `2fa-detected` fires there is no retry.
+- Precedence: explicitly supplied `--auth-header`/`--cookie`/`--basic-auth`
+  values win per name; login-derived cookies only fill the gaps, so you can
+  mix, e.g., a fixed API token with a form-derived session cookie.
+- Credentials never appear in findings, stats, skip reasons, or logs. The CLI
+  prints a redacted summary (`user=[redacted] pass=[redacted]`).
+- Not covered: OAuth/SSO/OIDC flows, JS-rendered login widgets, JSON token
+  endpoints, and re-login after mid-scan session expiry — see
+  `docs/known-limits.md`.
+
+---
+
 ## Upstream Proxy & TLS / mTLS Verification (`--proxy`)
 
 For manual inspection, workflow validation, and collaborative red teaming, Gash supports routing all HTTP traffic through an upstream interception proxy such as **Burp Suite** or **OWASP ZAP**:

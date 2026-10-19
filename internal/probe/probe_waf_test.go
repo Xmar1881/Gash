@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Xmar1881/Gash/internal/plugin"
@@ -173,6 +174,36 @@ func TestSendWAFDisabledKeepsBlock(t *testing.T) {
 	}
 	if det, byp := c.WAFStats(); det != 1 || byp != 0 {
 		t.Fatalf("kapalı modda detected=1 bypassed=0 olmalı, got %d/%d", det, byp)
+	}
+}
+
+// TestSendNoWAFBypassMarker: login akışı işareti WAF-bypass varyantlarını
+// kapatır; kimlik taşıyan istek TEK sefer gönderilir (yeniden oynatma yok).
+func TestSendNoWAFBypassMarker(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("<html>request blocked by waf</html>"))
+	}))
+	defer srv.Close()
+	c := NewClient(Options{Policy: plugin.NewPolicySession(plugin.DefaultPolicyConfig(), nil), EnableWAFBypass: true})
+	ctx := plugin.WithPlugin(context.Background(), "login", false, nil)
+	ctx = WithNoWAFBypass(ctx)
+	resp, err := c.Send(ctx, http.MethodPost, srv.URL+"/login",
+		map[string]string{"Content-Type": "application/x-www-form-urlencoded"},
+		[]byte("username=u&password=p"))
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if resp.WAFBypassed {
+		t.Fatal("marker varken bypass denemesi yapılmamalı")
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("tek istek beklenir (varyant/replay yok), got %d", hits.Load())
+	}
+	if !resp.WAFDetected {
+		t.Fatal("engel yine de WAFDetected işaretlenmeli (sessiz düşürme yok)")
 	}
 }
 

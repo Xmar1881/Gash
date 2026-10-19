@@ -186,6 +186,58 @@ func (c *Context) HeaderMap() map[string]string {
 	return out
 }
 
+// MergeMissing src'te olup bu bağlamda AD bazında eksik olan header/cookie
+// bilgilerini ekler; açık (bu bağlamdaki) değerler her zaman kazanır.
+// What: Login akışının türettiği oturumu --auth-header/--cookie ile birleştirir.
+// Why: Kullanıcının açık beyanı login türevinin üzerindedir; aynı adlı değer
+// asla ezilmez ve çift Cookie adı gönderilmez.
+func (c *Context) MergeMissing(src *Context) {
+	if c == nil || src == nil || !src.hasAuth {
+		return
+	}
+	for name, value := range src.Headers {
+		if c.Headers == nil {
+			c.Headers = make(map[string]string)
+		}
+		exists := false
+		for cur, curVal := range c.Headers {
+			if strings.EqualFold(cur, name) && strings.TrimSpace(curVal) != "" {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			c.Headers[name] = value
+		}
+	}
+	// Açık cookie adları: hem --cookie haritası hem açık "Cookie" header'ı.
+	explicit := make(map[string]bool, len(c.Cookies))
+	for name := range c.Cookies {
+		explicit[name] = true
+	}
+	for hname, hval := range c.Headers {
+		if !strings.EqualFold(hname, "Cookie") {
+			continue
+		}
+		for _, part := range strings.Split(hval, ";") {
+			n, _, ok := strings.Cut(part, "=")
+			if ok && strings.TrimSpace(n) != "" {
+				explicit[strings.TrimSpace(n)] = true
+			}
+		}
+	}
+	for name, value := range src.Cookies {
+		if explicit[name] {
+			continue
+		}
+		if c.Cookies == nil {
+			c.Cookies = make(map[string]string)
+		}
+		c.Cookies[name] = value
+	}
+	c.hasAuth = true
+}
+
 // Redacted log/rapor amaçlı maskeli özet döner (değerler asla yazılmaz).
 // What: Yalnızca adlar + var/yok bilgisi.
 // Why: Kimlik bilgisi stdout/rapora sızmamalı (§14).
