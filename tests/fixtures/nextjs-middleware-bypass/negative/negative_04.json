@@ -1,0 +1,11 @@
+{
+  "name": "public route 200 to 200 is not an authorization bypass",
+  "target": "http://target.test/settings",
+  "status": 200,
+  "headers": {"Content-Type": "text/html"},
+  "body": "<html><body>Public settings help page with documentation links.</body></html>",
+  "control_status": 200,
+  "control_headers": {},
+  "control_body": "<html><body>Public settings help page.</body></html>",
+  "expected_verdict": "reject"
+}

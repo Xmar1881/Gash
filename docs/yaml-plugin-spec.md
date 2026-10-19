@@ -60,6 +60,7 @@ keys are forbidden (code blocks are never accepted in Tier 1).
 | `paths` | No | Payload-free path probes (e.g. `/admin`); runs once per path instead of query injection |
 | `headers` | No | Static request headers sent with the probe (used by host-header style checks) |
 | `body` | No | Raw request body for POST probes (e.g. JSON login bodies) |
+| `query` | No | Static query values merged into the probe URL (OOB placeholders expanded); companion parameters that are not injection targets, e.g. `w`/`q` for `/_next/image` (GASH-070) |
 
 The engine issues one request per `param_names` entry with `payload` as the
 value, then retries the remaining `payloads` until one produces evidence,
@@ -70,7 +71,7 @@ owned by the scan; never point it at third-party infrastructure.
 
 ```yaml
 oracle:
-  name: header      # reflection|differential|error|header|redirect|oob|version|timing|stored|verb-tamper|cookie|cors
+  name: header      # reflection|differential|error|header|redirect|oob|version|timing|stored|verb-tamper|cookie|cors|middleware-bypass
   params: {}        # oracle-specific, see below
 ```
 
@@ -92,6 +93,10 @@ Supported oracles and their params:
   oracle matrix.
 - `oob`: declare `oob: required|optional` in metadata; without
   `--oob-server` the plugin skips (`required`) or degrades (`optional`).
+- `middleware-bypass` (`header`, `header_values`): the declarative request is
+  the access-denied control; each header value is replayed on the same path
+  and must produce a 2xx, materially different masked body (GASH-069). Example:
+  `plugins/nextjs-middleware-bypass/nextjs-middleware-bypass.yaml`.
 - `version`: banner check; without behavioral proof the finding stays
   `tentative` plus `banner-based`.
 

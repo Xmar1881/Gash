@@ -94,6 +94,13 @@ Tarama seçeneklerini gösterir. Uydurma flag kullanma, listede ne varsa o geçe
       --fail-on string                CI kapısı (firm|confirmed)
       --format strings                json|sarif|text|html|junit (tekrarlanabilir) (default [text])
       --ignore-plugin strings         döngü kırma / susturma
+      --login-pass string             tek kimlik seti parolası (--login-pass-env tercih edilir)
+      --login-pass-env string         parolayı ortam değişkeninden oku (örn. GASH_LOGIN_PASS)
+      --login-pass-field string       parola alanı adı override'ı (boşsa ilk type=password)
+      --login-url string              login formu URL'i; gerçek oturum kurar (--active + --login-user şart)
+      --login-user string             tek kimlik seti kullanıcı adı (parola denemesi YOK)
+      --login-user-field string       kullanıcı alanı adı override'ı (boşsa sezgisel)
+      --login-verify-url string       oturum doğrulama URL'i (boşsa action target, o da yoksa --login-url)
       --max-requests-per-target int   per-target bütçe (default 1000)
       --max-requests-total int        global bütçe (default 10000)
       --no-plugin-cache               cache bypass (debug)

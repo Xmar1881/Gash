@@ -1,0 +1,9 @@
+{
+  "name": "optimizer returned a placeholder image without fetching",
+  "target": "http://target.test/_next/image?w=640&q=75",
+  "status": 200,
+  "headers": {"Content-Type": "image/svg+xml"},
+  "body": "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"640\" height=\"480\"/></svg>",
+  "oob_callback": false,
+  "expected_verdict": "reject"
+}

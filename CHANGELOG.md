@@ -74,6 +74,18 @@ Dates are UTC.
   are fetched same-origin/in-scope (<=5) and only their `sourcesContent` is
   scanned. New engine stats: `js_files_fetched`, `js_endpoints_found`,
   `js_secrets_found`, `js_maps_fetched`.
+- SPA-rendered surface discovery (`--browser-crawl`, `-tags deep` + Chrome):
+  renders up to 5 crawled 2xx HTML pages (`--browser-crawl-pages`, hard cap 10),
+  harvests rendered forms/injection points plus in-scope Document/XHR/Fetch
+  URLs (<=200 per page, 200 endpoints per page), follows parameterless
+  endpoints with <=25 one-page crawls, and merges results into the existing
+  crawl surface. Browser traffic is GET/HEAD only (other methods are failed
+  before send), out-of-scope requests are blocked, only auth-context cookies
+  are seeded (`Authorization` headers are not forwarded), and render errors are
+  non-fatal. Default builds and hosts without Chrome emit one honest
+  `browser-crawl` skip and never synthesize rendered surface. New engine stats:
+  `spa_pages_rendered`, `spa_forms`, `spa_endpoints`, `spa_skipped`. No new
+  detectors (plugin count unchanged).
 - Tier 1 YAML gained `paths` combined with parameter/payload injection and OOB
   token expansion in request headers and bodies; the error oracle gained
   `phpinfo`, `management_endpoint`, `directory_listing`, `source_map`, and
@@ -136,6 +148,54 @@ Dates are UTC.
 - DOM sink/source vocabulary expanded (`outerHTML`, `insertAdjacentHTML`,
   `eval(`, string-arg timers, jQuery `.html(`, `new Function(`, `postMessage`,
   `URLSearchParams`, `window.name`) with the fixture mirror kept in sync.
+- Login/session automation (`--login-url`, `--login-user`, `--login-pass` /
+  `--login-pass-env`, `--login-user-field`, `--login-pass-field`,
+  `--login-verify-url`; `internal/auth/login.go` + engine `runLogin`): forms
+  are fetched and POSTed through the same policy pipeline as every other
+  request, redirects are followed manually with per-host cookies and
+  https→http downgrade refusal, and success is declared only when the verify
+  page has no password field and differs from an anonymous control fetch.
+  Failures never stop the scan: one honest `login` skip record
+  (`login-failed: <reason>`, `2fa-detected` never retries) plus new stats
+  `login_attempted`/`login_succeeded`/`login_cookies`. Explicit
+  `--auth-header`/`--cookie` values win per name; credentials never appear in
+  reports, skip reasons, or logs (redacted stderr summary only); scope or
+  policy violations during login fail closed before any plugin traffic.
+- Multi-step workflow replay (`--flow-seed`, `--flow-max-steps`,
+  `--flow-probes`; `internal/flow` + engine `runFlowFuzz`): discovers a
+  same-origin form workflow from the seed, replays it in a fresh cookie jar
+  while re-fetching every step page to refresh CSRF tokens, mutates exactly
+  one non-token/non-password field, and continues downstream clean. Mutated
+  replays are evaluated from the mutation step onward with the existing error
+  (GASH-004), reflection (GASH-001), and N=1 differential (GASH-005) oracles.
+  A session-bypass screen (>=2 steps, fresh jar without seed cookies, 2xx,
+  no login form, normalized similarity >=0.95) emits GASH-068 (CWE-841)
+  tentative. All flow findings stay `tentative` (synthetic `flow-replay`
+  spec has no fixtures, R-06) and never add a plugin of their own. Gates:
+  `--active` required, one seed, seed scope preflight fail-closed, <=6 steps,
+  <=120 requests/flow, manual redirects (max 5, no https->http downgrade),
+  cross-origin actions never submitted. New engine stats: `flow_seed`,
+  `flow_steps`, `flow_replays`, `flow_findings`, `flow_bypass_checked`,
+  `flow_requests`; discovery failure emits one honest `flow` skip record.
+- Next.js middleware authorization bypass detector (GASH-069, CWE-288,
+  CVE-2025-29927): GET control-versus-`x-middleware-subrequest` differential
+  across five admin/dashboard/API paths, four bounded header values, clean
+  denied control required, 2xx masked-body divergence required, WAF pages and
+  public-route 200-to-200 comparisons rejected, `firm` ceiling.
+- Next.js image optimizer blind SSRF detector (GASH-070, CWE-918):
+  `/_next/image` with an OOB `url` plus static `w`/`q`, callback-only proof,
+  no internal/metadata target probing.
+- Tier 1 YAML gained an optional static `query` object on request templates,
+  applied after OOB placeholder expansion (used by GASH-070).
+- SPA embedded-state secret detector (GASH-071, CWE-798/200): parses
+  Next/Nuxt/Redux/Apollo/Angular state containers plus `self.__next_f.push`,
+  reuses JS secret rules with sensitive key matching, masks values, and makes
+  no extra requests (page and external JS bodies already fetched).
+- Development build artifact detector (GASH-072, CWE-489): low/firm,
+  aggregated per source, marker table for React/Vue/Angular dev builds, with
+  devtools hooks and generic warnings rejected as production noise.
+- Engine report stats: `spa_state_pages`, `spa_state_secrets`,
+  `devbuild_markers`.
 
 ### Changed
 

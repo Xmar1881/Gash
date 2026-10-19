@@ -78,6 +78,8 @@ discovers this tree automatically; no enable flag exists.
 | ssi-injection | Tier 1 | error (ssi, GASH-064, firm ceiling) | `ssi-injection/ssi-injection.yaml` |
 | webdav-enabled | Tier 1 | header (webdav, GASH-065) | `webdav-enabled/webdav-enabled.yaml` |
 | source-map-exposure | Tier 1 | error (source_map, GASH-066, firm ceiling) | `source-map-exposure/source-map-exposure.yaml` |
+| nextjs-middleware-bypass | Tier 1 | middleware-bypass (GASH-069, firm ceiling) | `nextjs-middleware-bypass/nextjs-middleware-bypass.yaml` |
+| nextjs-image-optimizer-ssrf | Tier 1 | oob (required, GASH-070) | `nextjs-image-optimizer-ssrf/nextjs-image-optimizer-ssrf.yaml` |
 | poc-native-header-check | Tier 3 | header | `native/poc-native-header-check.gashplugin.yaml` |
 
 ## Testing
@@ -104,6 +106,17 @@ go test ./internal/discovery/ -run 'TestContentDiscovery|TestWordlist' -v
 ```
 
 Report: `docs/metrics/content-discovery-2026-10-16.md`.
+
+`internal/discovery/spa_state.go` (GASH-071, SPA embedded-state secrets) and
+`internal/discovery/devbuild.go` (GASH-072, development build markers) also
+ship as engine-recon: both consume already-fetched page/external-JS bodies and
+cannot be expressed as single-request Tier 1 plugins. Evidence is engine-built
+and masked; no additional requests are made. Test with:
+
+```sh
+go test ./internal/discovery/ -run 'TestSPAState|TestDevBuild' -v
+go test ./internal/engine/ -run 'TestRunReportsEmbeddedStateAndDevBuildStats' -v
+```
 
 `internal/smuggle/smuggle.go` (request-smuggling differential probe,
 GASH-033, CWE-444) ships as engine-recon, not as Tier 1 YAML — Tier 1 runs

