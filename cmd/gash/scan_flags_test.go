@@ -26,6 +26,23 @@ func TestScanBrowserVerifyRequiresActive(t *testing.T) {
 	}
 }
 
+// TestScanBrowserCrawlPagesBounds: render sayfa tavanı 1..10 aralığındadır.
+func TestScanBrowserCrawlPagesBounds(t *testing.T) {
+	for _, bad := range []string{"0", "11", "-1"} {
+		root := newRoot()
+		root.SetOut(io.Discard)
+		root.SetErr(io.Discard)
+		root.SetArgs([]string{"scan", "--target", "http://127.0.0.1:1", "--browser-crawl-pages", bad})
+		err := root.Execute()
+		if err == nil {
+			t.Fatalf("--browser-crawl-pages %s hata vermeli", bad)
+		}
+		if !strings.Contains(err.Error(), "--browser-crawl-pages") {
+			t.Fatalf("gerekçe --browser-crawl-pages taşımalı: %v", err)
+		}
+	}
+}
+
 // TestScanOOBServerRequiresActive: mevcut OOB kapısı pini (regresyon ağı).
 func TestScanOOBServerRequiresActive(t *testing.T) {
 	root := newRoot()

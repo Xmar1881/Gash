@@ -72,6 +72,14 @@ var CommonCandidateParams = []string{
 
 // ExtractSurface analyzes target URL and HTML response body to discover all injection points.
 func ExtractSurface(targetURL string, body []byte) []InjectionPoint {
+	return extractSurface(targetURL, body, true)
+}
+
+// extractSurface is ExtractSurface with an explicit fallback switch.
+// What: allowFallback populates CommonCandidateParams when nothing was found.
+// Why: Rendered SPA harvest must add only observed surface; synthetic fallback
+// points are already supplied by the engine when the whole surface is empty.
+func extractSurface(targetURL string, body []byte, allowFallback bool) []InjectionPoint {
 	var points []InjectionPoint
 	seen := make(map[string]bool)
 
@@ -121,7 +129,7 @@ func ExtractSurface(targetURL string, body []byte) []InjectionPoint {
 	}
 
 	// 3. Fallback: If no injection points were discovered, populate common candidate params
-	if len(points) == 0 {
+	if allowFallback && len(points) == 0 {
 		for _, param := range CommonCandidateParams {
 			addPoint(InjectionPoint{
 				URL:           targetURL,

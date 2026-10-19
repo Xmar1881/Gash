@@ -250,6 +250,11 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		"js_files_fetched": 0, "js_endpoints_found": 0,
 		"js_secrets_found": 0, "js_maps_fetched": 0,
 	}
+	// SPA render sayaçları (--browser-crawl kapalı/başarısızken 0).
+	spaStats := map[string]int{
+		"spa_pages_rendered": 0, "spa_forms": 0,
+		"spa_endpoints": 0, "spa_skipped": 0,
+	}
 	crawlRes, err := discovery.Crawl(ctx, client, target, crawlOpts)
 	var surfacePoints []loader.JSPoint
 	if err == nil && crawlRes != nil {
@@ -274,6 +279,17 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		surfacePoints = append(surfacePoints, jsPoints...)
 		for k, v := range jsStats {
 			jsReconStats[k] = v
+		}
+		// SPA yüzeyi: seçilmiş sayfalar render edilir; DOM formları/form
+		// fuzz'ına, gözlenen endpoint'ler yüzeye eklenir. Browser yoksa tek
+		// dürüst skip kaydı; sayfa hatası taramayı durdurmaz.
+		if e.cfg.BrowserCrawl {
+			spaPoints, spaSkipped, spaRunStats := e.runSPACrawl(ctx, target, client, crawlRes, surfacePoints)
+			surfacePoints = append(surfacePoints, spaPoints...)
+			execSkipped = append(execSkipped, spaSkipped...)
+			for k, v := range spaRunStats {
+				spaStats[k] = v
+			}
 		}
 	}
 	if len(surfacePoints) == 0 {
@@ -506,6 +522,11 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 			"js_endpoints_found": jsReconStats["js_endpoints_found"],
 			"js_secrets_found":   jsReconStats["js_secrets_found"],
 			"js_maps_fetched":    jsReconStats["js_maps_fetched"],
+			// SPA render sayaçları (--browser-crawl kapalıyken 0).
+			"spa_pages_rendered": spaStats["spa_pages_rendered"],
+			"spa_forms":          spaStats["spa_forms"],
+			"spa_endpoints":      spaStats["spa_endpoints"],
+			"spa_skipped":        spaStats["spa_skipped"],
 			"detected_tech":      len(e.detectedTech),
 			"detected_caps":      len(e.detectedCaps),
 			"ssh_checks":         infraStats["ssh_checks"],
