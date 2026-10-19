@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -22,6 +23,10 @@ import (
 	"github.com/Xmar1881/Gash/internal/plugin"
 	"github.com/dop251/goja"
 )
+
+// controlNeutralValue is the benign replacement used for control requests.
+// What: One shared literal keeps control semantics auditable across tiers.
+const controlNeutralValue = "gash-control-neutral"
 
 // JSPoint is one injection point visible to scripts.
 // What: Serializable point exchanged through the ctx binding.
@@ -382,7 +387,22 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 			}
 		}
 		neutral := p
-		neutral.Value = "gash-control-neutral"
+		// URL-derived control point (reflection/stored bindings pass the
+		// response URL): the query still carries the attack payload, so a
+		// verbatim replay would make every control dirty and reject genuine
+		// executable reflections. Neutralize every query value instead.
+		// What: value-level neutralization; why: param names can be unknown.
+		if neutral.ParamName == "" && neutral.URL != "" {
+			if u, err := url.Parse(neutral.URL); err == nil && u.RawQuery != "" {
+				q := u.Query()
+				for k := range q {
+					q.Set(k, controlNeutralValue)
+				}
+				u.RawQuery = q.Encode()
+				neutral.URL = u.String()
+			}
+		}
+		neutral.Value = controlNeutralValue
 		if r, err := env.Send(neutral); err == nil {
 			return r
 		}

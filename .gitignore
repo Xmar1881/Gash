@@ -26,6 +26,9 @@ vendor/
 *.db
 trust.db
 
+# Benchmark run outputs (generated reports; bench/baselines/ IS committed).
+bench/results/
+
 # IDE and editor leftovers.
 .idea/
 .vscode/

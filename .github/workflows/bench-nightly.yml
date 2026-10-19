@@ -1,0 +1,159 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: .github/workflows/bench-nightly.yml
+# What: Nightly benchmark: regression-gated standard fixture run plus a deep
+#   run with real headless-Chrome browser verification; artifacts uploaded.
+# Why: The PR gate stays fast (plugin-ci runs the bench unit tests plus the
+#   end-to-end critical-detector test); the nightly is the comprehensive,
+#   baseline-gated measurement the benchmark spec calls for.
+#
+# Honesty rules encoded here:
+#   - The standard run is gated against bench/baselines/fixtures.json with
+#     --fail-on-regression: precision drop, recall drop, request-budget drift
+#     and wall-clock blowup fail the job.
+#   - The deep run reports browser-verified DOM XSS or honestly reports it
+#     unverified when Chrome is missing; no number is fabricated.
+#   - Nuclei is installed from upstream at its own version; if the install or
+#     template fetch fails, the job fails instead of silently dropping the
+#     comparison to N/A.
+#   - The compose-lab dataset is opt-in (workflow_dispatch input) because its
+#     runtime ground truth could not be verified where docker is absent.
+#
+# Scope red line: every dataset used here is lab-only (fixture lab in-process
+#   on 127.0.0.1, or the pinned localhost compose lab); datasets.yaml validation
+#   refuses non-loopback targets without --allow-non-lab.
+
+name: bench-nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      compose_lab:
+        description: "Also run the compose-lab dataset (requires docker; slower)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-nightly
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.2"
+          cache: true
+
+      - name: Build (default profile)
+        run: go build -o bin/gash ./cmd/gash
+
+      - name: Bench unit tests (fast)
+        run: go test ./internal/bench/ -short -count=1
+
+      - name: Standard fixture benchmark (baseline-gated)
+        # Deterministic, docker-free, in-process fixture lab. The gate enforces
+        # no precision/recall regression and bounded request/duration drift.
+        run: |
+          ./bin/gash bench run \
+            --dataset bench/datasets/fixtures.yaml \
+            --tool gash \
+            --out bench/results/nightly-standard \
+            --baseline bench/baselines/fixtures.json \
+            --fail-on-regression
+
+      - name: Install Chrome (for browser verification)
+        run: |
+          if ! command -v google-chrome &>/dev/null && [ ! -x "/usr/bin/google-chrome" ]; then
+            sudo apt-get update && sudo apt-get install -y google-chrome-stable
+          fi
+          CHROME_BIN="$(command -v google-chrome || echo /usr/bin/google-chrome)"
+          echo "Using Chrome: $CHROME_BIN"
+          "$CHROME_BIN" --version
+          echo "CHROME_BIN=$CHROME_BIN" >> "$GITHUB_ENV"
+
+      - name: Build (deep profile)
+        run: go build -tags deep -o bin/gash-deep ./cmd/gash
+
+      - name: Deep fixture benchmark (browser verification)
+        # DOM XSS scenarios are verified with real headless Chrome before they
+        # can be scored; without Chrome they stay unverified, never fabricated.
+        run: |
+          ./bin/gash-deep bench run \
+            --dataset bench/datasets/fixtures-deep.yaml \
+            --tool gash \
+            --out bench/results/nightly-deep
+
+      - name: Install nuclei (upstream, with templates)
+        # Fails the job when upstream install or template fetch breaks, so the
+        # Gash/Nuclei comparison cannot silently degrade to N/A.
+        run: |
+          go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+          "$(go env GOPATH)/bin/nuclei" -version
+          "$(go env GOPATH)/bin/nuclei" -update-templates -silent
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Comparison run (gash vs nuclei, standard fixtures)
+        # Equal-conditions comparison on the same lab: same targets, same
+        # scope, pinned budgets; nuclei is equalized by wall-clock timeout and
+        # rate limit (it cannot cap total requests upstream).
+        run: |
+          ./bin/gash bench run \
+            --dataset bench/datasets/fixtures.yaml \
+            --tool gash,nuclei \
+            --out bench/results/nightly-comparison
+
+      - name: Compose-lab benchmark (opt-in)
+        if: ${{ inputs.compose_lab }}
+        run: |
+          ./bin/gash bench lab up
+          ./bin/gash bench run \
+            --dataset bench/datasets/compose-lab.yaml \
+            --tool gash,nuclei \
+            --out bench/results/nightly-compose
+
+      - name: Compose-lab teardown (always, when started)
+        if: ${{ always() && inputs.compose_lab }}
+        run: ./bin/gash bench lab reset || ./bin/gash bench lab down || true
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-nightly
+          path: |
+            bench/results/nightly-standard
+            bench/results/nightly-deep
+            bench/results/nightly-comparison
+            bench/results/nightly-compose
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Baseline gate summary
+        if: always()
+        run: |
+          if [ -f bench/results/nightly-standard/report.json ]; then
+            echo "=== standard run (gated) ==="
+            cat bench/results/nightly-standard/summary.md
+          fi
+          if [ -f bench/results/nightly-deep/summary.md ]; then
+            echo "=== deep run (browser verification) ==="
+            cat bench/results/nightly-deep/summary.md
+          fi
+          if [ -f bench/results/nightly-comparison/summary.md ]; then
+            echo "=== comparison run (gash vs nuclei) ==="
+            cat bench/results/nightly-comparison/summary.md
+          fi

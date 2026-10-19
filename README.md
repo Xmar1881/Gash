@@ -309,6 +309,7 @@ match. Counts above are plugin inventory, not real-target recall.
 | `docs/known-limits.md` | BLOCKED and gap register (lab recall, benchmark, browser limits) |
 | `docs/technical-audit-2026-10-14.md` | Latest technical audit, priorities, and measured status |
 | `docs/report-formats.md` | JSON/SARIF/text/HTML/JUnit contracts |
+| `docs/benchmark.md` | Benchmark harness: datasets, verification, scoring, gates |
 | `docs/ci-integration.md` | CI gates (`--fail-on`, corpus, bench) |
 | `docs/detector-inventory.md` | Oracle and plugin catalog |
 | `docs/metrics/README.md` | Precision and recall index |
@@ -329,11 +330,15 @@ go test ./tests/bench/ -run TestWarmDiscoveryBudget -v
 
 Precision below 0.99 fails the build. Any `firm+` finding on the clean
 corpus fails the build. Warm discovery of 100 plugins must stay under
-150 ms. Lab procedures (`docker-compose.lab.yml`: DVWA 2.0, Juice Shop
-17.1.0, WebGoat 2023.8) are manual and recorded per report. The first
-measured recall is the localhost synthetic lab
-(`docs/metrics/lab-aggressive-local-2026-10-14.md`); the compose lab is
-BLOCKED without docker
+150 ms. The `gash bench` harness measures end-to-end TP/FP/TN/FN with
+independently verified ground truth, cross-checks HTTP request counts, and
+gates regressions against `bench/baselines/fixtures.json`
+(`docs/benchmark.md`; first measured runs:
+`docs/metrics/benchmark-fixtures-2026-10-19.md`). Lab procedures
+(`docker-compose.lab.yml`: DVWA 2.0, Juice Shop 17.1.0, WebGoat 2023.8) are
+manual and recorded per report. The first measured recall is the localhost
+synthetic lab (`docs/metrics/lab-aggressive-local-2026-10-14.md`); the
+compose lab is BLOCKED without docker
 (`docs/metrics/lab-compose-dvwa-juiceshop-2026-10-14.md`); Nuclei comparison
 is explicitly not compared
 (`docs/metrics/nuclei-comparison-2026-10-14.md`).

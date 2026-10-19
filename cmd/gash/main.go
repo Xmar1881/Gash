@@ -1406,16 +1406,6 @@ func newOpenAPICmd() *cobra.Command {
 	return c
 }
 
-func newBenchCmd() *cobra.Command {
-	bench := &cobra.Command{Use: "bench", Short: "Benchmark"}
-	lab := &cobra.Command{Use: "lab", Short: "Recall lab (DVWA/JuiceShop/WebGoat)", RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Fprintln(cmd.OutOrStdout(), "bench lab (faz2 iskelet — lab Faz 3)")
-		return nil
-	}}
-	bench.AddCommand(lab)
-	return bench
-}
-
 func newSuppressCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "suppress", Short: "Yerel suppress yönetimi"}
 	cmd.AddCommand(

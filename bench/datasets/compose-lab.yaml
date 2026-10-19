@@ -1,0 +1,174 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# Compose-lab dataset (requires docker: `gash bench lab up`).
+# Independently verifiable scenarios only: labels are never trusted, every
+# scenario is re-verified at runtime and unverified entries are excluded from
+# scoring and listed in the report.
+
+version: "1"
+name: compose-lab
+kind: compose
+description: |
+  Pinned Docker Compose lab: OWASP Juice Shop (:8082), DVWA (:8081),
+  WebGoat (:8083). Vulnerability scenarios are limited to independently
+  verifiable, well-documented endpoints.
+
+allow_hosts: [127.0.0.1, "::1", localhost]
+
+gash:
+  timeout: 10m
+  args:
+    - --profile
+    - standard
+    - --active
+    - --rate-limit
+    - "50"
+    - --plugin-timeout
+    - 30s
+    - --request-timeout
+    - 10s
+    - --max-requests-total
+    - "8000"
+    - --max-requests-per-target
+    - "4000"
+
+nuclei:
+  timeout: 10m
+  rate_limit: 50
+  tags: [xss, sqli, lfi, rce, redirect, exposure]
+
+unscored_plugins:
+  - missing-security-headers
+  - clickjacking-frameable
+  - cookie-flags
+  - csrf-token-absence
+  - server-version-disclosure
+  - error-message-disclosure
+  - directory-listing
+  - source-map-exposure
+  - management-endpoint-exposure
+  - verb-tampering-bypass
+  - hpp-parameter-pollution
+  - hpp-duplicate-emission
+  - cors-misconfig
+  - insecure-cors-preflight
+  - cache-poisoning-host-header
+  - web-cache-poisoning-basic
+  - host-header-injection
+  - crlf-header-injection
+  - http-response-splitting
+  - template-injection-reflection
+  - expression-language-injection
+  - ssti-blind-timing
+  - xpath-injection-error
+  - ldap-injection-differential
+  - ldap-injection-blind
+  - nosql-injection-error
+  - nosql-auth-bypass-differential
+  - sqli-stacked-time
+  - sqli-time-based
+  - blind-sqli-oob
+  - xxe-reflected-basic
+  - xxe-oob
+  - xml-external-entity-blind
+  - ssrf-cloud-metadata
+  - ssrf-internal-port-scan
+  - ssrf-blind-oob
+  - log4shell-jndi
+  - file-inclusion-rfi
+  - rfi-remote-include
+  - file-upload-unrestricted
+  - insecure-deserialization-error
+  - jsonp-callback-injection
+  - prototype-pollution-differential
+  - graphql-endpoint-discovery
+  - graphql-introspection-enabled
+  - jwt-alg-confusion
+  - jwt-none-alg-confusion
+  - jwt-token-exposure
+  - cve-dependency-scan
+  - webdav-enabled
+  - mass-assignment-basic
+  - ssi-injection
+  - nextjs-middleware-bypass
+  - nextjs-image-optimizer-ssrf
+
+targets:
+  - id: juiceshop
+    base_url: "http://127.0.0.1:8082"
+    notes: "bkimminich/juice-shop:17.1.0 (pinned in docker-compose.lab.yml)"
+  - id: dvwa
+    base_url: "http://127.0.0.1:8081"
+    notes: "vulnerables/web-dvwa:2.0; vulnerability lessons need manual DB setup/login"
+  - id: webgoat
+    base_url: "http://127.0.0.1:8083"
+    notes: "webgoat/webgoat:2023.8"
+
+scenarios:
+  - id: juiceshop-sqli-search
+    category: sqli
+    subcategory: error-based
+    cwe: CWE-89
+    target_id: juiceshop
+    path: /rest/products/search?q=apple
+    expected: vulnerable
+    verify:
+      kind: http-error
+      payload: "'"
+      expect_contains: ["SQLITE_ERROR", "SQL syntax", "error"]
+      timeout: 20s
+    match:
+      plugin_ids: [sqli-error-based, sqli-boolean-differential]
+      nuclei_tags: [sqli]
+
+  - id: juiceshop-xss-dom-search
+    category: xss-dom
+    subcategory: search-route
+    cwe: CWE-79
+    target_id: juiceshop
+    path: "/#/search?q=apple"
+    expected: vulnerable
+    notes: |
+      Juice Shop's documented DOM XSS in the search route; confirmed only by
+      browser execution, so execution_required is set.
+    xss: {kind: dom, context: html, execution_required: true}
+    verify:
+      kind: browser-exec
+      path: "/#/search?q={payload}"
+      payload: '<iframe src="javascript:window.__gashCanary=true">'
+      timeout: 60s
+    match:
+      plugin_ids: [dom-sink-basic]
+      nuclei_tags: [xss]
+
+  - id: dvwa-login-page-clean
+    category: clean
+    subcategory: login-page
+    target_id: dvwa
+    path: /login.php
+    expected: clean
+    verify:
+      kind: http-clean
+      payload: "<script>{marker}</script>"
+      expect_not_contains: ["<script>"]
+      timeout: 20s
+    match:
+      plugin_ids: [xss-reflected-basic, sqli-error-based, open-redirect-param]
+      nuclei_tags: [xss, sqli]
+
+  - id: webgoat-login-page-clean
+    category: clean
+    subcategory: login-page
+    target_id: webgoat
+    path: /WebGoat/login
+    expected: clean
+    verify:
+      kind: http-clean
+      payload: "<script>{marker}</script>"
+      expect_not_contains: ["<script>"]
+      timeout: 20s
+    match:
+      plugin_ids: [xss-reflected-basic, sqli-error-based, open-redirect-param]
+      nuclei_tags: [xss, sqli]

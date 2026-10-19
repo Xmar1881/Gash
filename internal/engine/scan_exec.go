@@ -535,6 +535,10 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 
 	allSkipped := append(append([]plugin.SkippedPlugin{}, skipped...), execSkipped...)
 	wafDet, wafByp := client.WAFStats()
+	httpRequests := int64(0)
+	if policy != nil {
+		httpRequests = policy.TotalCount()
+	}
 	rep := &Report{
 		Target:   target,
 		Findings: deduped,
@@ -544,6 +548,7 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 			"skipped":          len(allSkipped),
 			"findings":         len(deduped),
 			"errors":           errorCount,
+			"http_requests":    int(httpRequests),
 			"waf_detected":     int(wafDet),
 			"waf_bypassed":     int(wafByp),
 			"fuzz_requests":    int(fuzzRequests),

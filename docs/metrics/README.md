@@ -94,7 +94,8 @@ The gate is enforced by `TestMetricGate` in `tests/plugins`, not by review conve
 | aggressive recall, localhost synthetic lab (2026-10-14) | [lab-aggressive-local-2026-10-14.md](lab-aggressive-local-2026-10-14.md) |
 | compose lab DVWA/Juice Shop (2026-10-14, BLOCKED: no docker) | [lab-compose-dvwa-juiceshop-2026-10-14.md](lab-compose-dvwa-juiceshop-2026-10-14.md) |
 | compose lab DVWA/Juice Shop/WebGoat (2026-10-15, BLOCKED: no docker) | [lab-compose-2026-10-15.md](lab-compose-2026-10-15.md) |
-| Nuclei comparison (2026-10-14, not compared: no harness) | [nuclei-comparison-2026-10-14.md](nuclei-comparison-2026-10-14.md) |
+| Nuclei comparison (2026-10-14; harness built 2026-10-19, comparison still unmeasured) | [nuclei-comparison-2026-10-14.md](nuclei-comparison-2026-10-14.md) |
+| benchmark, fixtures standard + deep (2026-10-19, measured) | [benchmark-fixtures-2026-10-19.md](benchmark-fixtures-2026-10-19.md) |
 
 ## How to Reproduce
 
