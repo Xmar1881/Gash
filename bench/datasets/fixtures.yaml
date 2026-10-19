@@ -1,0 +1,432 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# Fixture dataset: a seeded localhost Go lab (no docker) with one scenario per
+# ground-truth class. Every scenario is independently verified before scoring;
+# dataset labels are never trusted on their own.
+
+version: "1"
+name: fixtures
+kind: fixtures
+description: |
+  Self-contained localhost lab covering reflected/stored/DOM XSS contexts,
+  error-based injection classes, open redirect, clean controls, soft-404,
+  access denied, WAF block, slow endpoint and auth scenarios.
+
+allow_hosts: [127.0.0.1, "::1", localhost]
+
+gash:
+  timeout: 6m
+  args:
+    - --profile
+    - standard
+    - --active
+    - --rate-limit
+    - "80"
+    - --plugin-timeout
+    - 20s
+    - --request-timeout
+    - 2s
+    - --max-requests-total
+    - "6000"
+    - --max-requests-per-target
+    - "3000"
+
+nuclei:
+  timeout: 6m
+  rate_limit: 80
+  tags: [xss, sqli, lfi, rce, redirect, exposure]
+
+unscored_plugins:
+  - missing-security-headers
+  - clickjacking-frameable
+  - cookie-flags
+  - csrf-token-absence
+  - server-version-disclosure
+  - error-message-disclosure
+  - directory-listing
+  - backup-file-exposure
+  - source-map-exposure
+  - phpinfo-exposure
+  - management-endpoint-exposure
+  - http-method-override-abuse
+  - verb-tampering-bypass
+  - hpp-parameter-pollution
+  - hpp-duplicate-emission
+  - cors-misconfig
+  - insecure-cors-preflight
+  - cache-poisoning-host-header
+  - web-cache-poisoning-basic
+  - host-header-injection
+  - crlf-header-injection
+  - http-response-splitting
+  - template-injection-reflection
+  - expression-language-injection
+  - ssti-blind-timing
+  - xpath-injection-error
+  - ldap-injection-differential
+  - ldap-injection-blind
+  - nosql-injection-error
+  - nosql-auth-bypass-differential
+  - sqli-stacked-time
+  - sqli-time-based
+  - blind-sqli-oob
+  - xxe-reflected-basic
+  - xxe-oob
+  - xml-external-entity-blind
+  - ssrf-cloud-metadata
+  - ssrf-internal-port-scan
+  - ssrf-blind-oob
+  - log4shell-jndi
+  - file-inclusion-rfi
+  - rfi-remote-include
+  - file-upload-unrestricted
+  - insecure-deserialization-error
+  - jsonp-callback-injection
+  - prototype-pollution-differential
+  - graphql-endpoint-discovery
+  - graphql-introspection-enabled
+  - jwt-alg-confusion
+  - jwt-none-alg-confusion
+  - jwt-token-exposure
+  - cve-dependency-scan
+  - webdav-enabled
+  - mass-assignment-basic
+  - ssi-injection
+  - nextjs-middleware-bypass
+  - nextjs-image-optimizer-ssrf
+
+targets:
+  - id: lab
+    base_url: "{{FIXTURE_BASE}}"
+    auth:
+      user-a: "X-Bench-User: alice"
+      user-b: "X-Bench-User: bob"
+
+scenarios:
+  # ---- XSS sub-benchmark: reflected contexts ------------------------------
+  - id: xss-reflected-html
+    category: xss-reflected
+    subcategory: html-body
+    cwe: CWE-79
+    path: /xss/reflect?q=hello
+    expected: vulnerable
+    xss: {kind: reflected, context: html}
+    verify:
+      kind: http-reflection
+      payload: "<b>{marker}</b>"
+    match:
+      plugin_ids: [xss-reflected-basic]
+      nuclei_tags: [xss]
+
+  - id: xss-reflected-attr
+    category: xss-reflected
+    subcategory: attribute-quoted
+    cwe: CWE-79
+    path: /xss/attr?q=hello
+    expected: vulnerable
+    xss: {kind: reflected, context: attribute}
+    verify:
+      kind: http-reflection
+      payload: '" {marker}="'
+    match:
+      plugin_ids: [xss-attribute-injection, xss-reflected-basic]
+      nuclei_tags: [xss]
+
+  - id: xss-reflected-attr-unquoted
+    category: xss-reflected
+    subcategory: attribute-unquoted
+    cwe: CWE-79
+    path: /xss/attr-quoted?q=hello
+    expected: vulnerable
+    xss: {kind: reflected, context: attribute}
+    verify:
+      kind: http-reflection
+      payload: " {marker}="
+    match:
+      plugin_ids: [xss-reflected-basic]
+      nuclei_tags: [xss]
+
+  - id: xss-reflected-js-string
+    category: xss-reflected
+    subcategory: script-string
+    cwe: CWE-79
+    path: /xss/js?q=hello
+    expected: vulnerable
+    xss: {kind: reflected, context: js-string}
+    verify:
+      kind: http-reflection
+      payload: "';{marker};'"
+    match:
+      plugin_ids: [xss-reflected-basic]
+      nuclei_tags: [xss]
+
+  - id: xss-reflected-url
+    category: xss-reflected
+    subcategory: url-attribute
+    cwe: CWE-79
+    path: /xss/url?q=hello
+    expected: vulnerable
+    xss: {kind: reflected, context: url}
+    verify:
+      kind: http-reflection
+      payload: "javascript:{marker}"
+    match:
+      plugin_ids: [xss-reflected-basic]
+      nuclei_tags: [xss]
+
+  # ---- XSS sub-benchmark: non-executable reflections (clean controls) -----
+  - id: xss-json-raw
+    category: xss-reflected
+    subcategory: json-raw
+    cwe: CWE-79
+    path: /xss/json-raw?q=hello
+    expected: clean
+    notes: |
+      Raw JSON reflection without HTML execution context: a browser rendering
+      application/json does not execute markup, so ground truth is clean.
+    xss: {kind: reflected, context: json}
+    verify:
+      kind: http-json-raw
+      payload: "<b>{marker}</b>"
+    match:
+      plugin_ids: [xss-reflected-basic, xss-attribute-injection, xss-stored-basic, xss-stored-two-step]
+      nuclei_tags: [xss]
+
+  - id: xss-escaped
+    category: xss-reflected
+    subcategory: escaped
+    cwe: CWE-79
+    path: /xss/escape?q=hello
+    expected: clean
+    xss: {kind: reflected, context: html}
+    verify:
+      kind: http-clean
+      payload: "<script>{marker}</script>"
+      expect_not_contains: ["<script>"]
+    match:
+      plugin_ids: [xss-reflected-basic, xss-attribute-injection, xss-stored-basic, xss-stored-two-step]
+      nuclei_tags: [xss]
+
+  # ---- XSS sub-benchmark: DOM (execution-required) ------------------------
+  - id: xss-dom-hash-sink
+    category: xss-dom
+    subcategory: document-write-hash
+    cwe: CWE-79
+    path: "/xss/dom#hello"
+    expected: vulnerable
+    notes: |
+      Static sink detection (dom-sink-basic) is firm-ceiling; confirmed ground
+      truth requires browser execution, so this scenario is execution_required.
+    xss: {kind: dom, context: html, execution_required: true}
+    verify:
+      kind: browser-exec
+      path: "/xss/dom#{payload}"
+      payload: '<img src=x onerror="window.__gashCanary=true">'
+    match:
+      plugin_ids: [dom-sink-basic]
+      nuclei_tags: [xss]
+
+  # ---- XSS sub-benchmark: stored -----------------------------------------
+  - id: xss-stored-render
+    category: xss-stored
+    subcategory: two-step
+    cwe: CWE-79
+    path: /stored?message=hello
+    expected: vulnerable
+    xss: {kind: stored, context: html}
+    verify:
+      kind: http-stored
+      store_path: "/stored?message={marker}"
+      render_path: /stored
+      payload: '<img src=x onerror="bench({marker})">'
+    match:
+      plugin_ids: [xss-stored-two-step, xss-stored-basic, xss-reflected-basic]
+      nuclei_tags: [xss]
+
+  # ---- Injection classes --------------------------------------------------
+  - id: sqli-error-based
+    category: sqli
+    subcategory: error-based
+    cwe: CWE-89
+    path: /sqli/error?id=1
+    expected: vulnerable
+    verify:
+      kind: http-error
+      payload: "'"
+      expect_contains: ["You have an error in your SQL syntax"]
+    match:
+      plugin_ids: [sqli-error-based]
+      nuclei_tags: [sqli]
+
+  - id: path-traversal-file-access
+    category: path-traversal
+    subcategory: error-signature
+    cwe: CWE-22
+    path: /traversal?file=readme.txt
+    expected: vulnerable
+    verify:
+      kind: http-error
+      payload: "../../../etc/passwd"
+      expect_contains: ["No such file or directory", "etc/passwd"]
+    match:
+      plugin_ids: [path-traversal-error]
+      nuclei_tags: [lfi, traversal]
+
+  - id: command-injection-error
+    category: command-injection
+    subcategory: error-based
+    cwe: CWE-78
+    path: /cmdi?cmd=ping
+    expected: vulnerable
+    verify:
+      kind: http-error
+      payload: "; id"
+      expect_contains: ["Syntax error"]
+    match:
+      plugin_ids: [command-injection-error]
+      nuclei_tags: [rce, cmdi]
+
+  - id: open-redirect-param
+    category: open-redirect
+    subcategory: query-param
+    cwe: CWE-601
+    path: /redirect?url=/home
+    expected: vulnerable
+    verify:
+      kind: http-redirect
+      payload: "https://gash-bench-canary.example/landing"
+      expect_external_location: true
+    match:
+      plugin_ids: [open-redirect-param]
+      nuclei_tags: [redirect]
+
+  # ---- Clean controls -----------------------------------------------------
+  - id: clean-search
+    category: clean
+    subcategory: escaped-search
+    path: /clean/search?q=hello
+    expected: clean
+    verify:
+      kind: http-clean
+      payload: "<script>{marker}</script>"
+      expect_not_contains: ["<script>"]
+    match:
+      plugin_ids: [xss-reflected-basic, xss-attribute-injection, xss-stored-basic, xss-stored-two-step, dom-sink-basic, sqli-error-based, path-traversal-error, command-injection-error, open-redirect-param]
+      nuclei_tags: [xss, sqli, lfi, redirect]
+
+  - id: clean-inline
+    category: clean
+    subcategory: static-page
+    path: /clean/inline
+    expected: clean
+    verify:
+      kind: http-clean
+      payload: "<script>{marker}</script>"
+      expect_not_contains: ["<script>"]
+    match:
+      plugin_ids: [xss-reflected-basic, dom-sink-basic, sqli-error-based, path-traversal-error, command-injection-error, open-redirect-param]
+      nuclei_tags: [xss, sqli, redirect]
+
+  # ---- Traps: soft-404 / denied / WAF / timeout ---------------------------
+  - id: soft404-trap
+    category: trap-soft404
+    subcategory: fake-200
+    path: /soft404/help?q=hello
+    expected: soft404
+    verify:
+      kind: http-soft404
+      expect_contains: ["soft-404"]
+    match:
+      plugin_ids: [backup-file-exposure, source-map-exposure, directory-listing, management-endpoint-exposure, phpinfo-exposure]
+      nuclei_tags: [exposure, disclosure]
+
+  - id: denied-path
+    category: trap-denied
+    subcategory: forbidden
+    path: /denied
+    expected: denied
+    verify:
+      kind: http-denied
+    match:
+      plugin_ids: [backup-file-exposure, source-map-exposure, directory-listing, management-endpoint-exposure, phpinfo-exposure]
+      nuclei_tags: [exposure, disclosure]
+
+  - id: waf-block
+    category: trap-waf
+    subcategory: blocked-payload
+    path: /waf?q=hello
+    expected: waf
+    verify:
+      kind: http-waf
+      payload: "{marker}' OR 1=1--"
+      expect_contains: ["bench WAF"]
+    match:
+      plugin_ids: [xss-reflected-basic, xss-attribute-injection, sqli-error-based, path-traversal-error, command-injection-error, open-redirect-param]
+      nuclei_tags: [xss, sqli, lfi, rce, redirect]
+
+  - id: timeout-slow-endpoint
+    category: trap-timeout
+    subcategory: slow-response
+    path: /slow?q=hello
+    expected: timeout
+    verify:
+      kind: http-timeout
+      expect_slow_ms: 1000
+    match:
+      plugin_ids: [xss-reflected-basic, sqli-error-based, path-traversal-error, command-injection-error]
+      nuclei_tags: [xss, sqli]
+
+  # ---- Auth: different privileges, no vulnerability -----------------------
+  - id: auth-secret-a
+    category: auth
+    subcategory: owner-access
+    path: /auth/a/secret?id=1
+    auth: user-a
+    expected: clean
+    verify:
+      kind: http-clean
+      payload: "<script>{marker}</script>"
+      expect_not_contains: ["<script>"]
+    match:
+      plugin_ids: [idor-differential, sqli-auth-bypass]
+      nuclei_tags: [idor, auth]
+
+  - id: auth-secret-b
+    category: auth
+    subcategory: owner-access
+    path: /auth/b/secret?id=1
+    auth: user-b
+    expected: clean
+    verify:
+      kind: http-clean
+      payload: "<script>{marker}</script>"
+      expect_not_contains: ["<script>"]
+    match:
+      plugin_ids: [idor-differential, sqli-auth-bypass]
+      nuclei_tags: [idor, auth]
+
+  - id: auth-denied-unauthenticated
+    category: auth
+    subcategory: unauthenticated
+    path: /auth/a/secret?id=1
+    auth: none
+    expected: denied
+    verify:
+      kind: http-denied
+    match:
+      plugin_ids: [idor-differential, sqli-auth-bypass]
+      nuclei_tags: [idor, auth]
+
+  - id: auth-denied-wrong-user
+    category: auth
+    subcategory: wrong-privilege
+    path: /auth/b/secret?id=1
+    auth: user-a
+    expected: denied
+    verify:
+      kind: http-denied
+    match:
+      plugin_ids: [idor-differential, sqli-auth-bypass]
+      nuclei_tags: [idor, auth]

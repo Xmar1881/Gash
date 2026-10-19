@@ -19,6 +19,20 @@ budget, no equivalent template selection, and no precision/recall harness
 spanning both tools. Any parity claim would be unmeasured and is therefore
 absent from the README, the detector inventory, and this report.
 
+## Update (2026-10-19): the harness now exists, the comparison still does not
+
+The required harness below has been built (`gash bench`, see
+`docs/benchmark.md`): same-target same-scope runs, pinned request budgets,
+lab-observed request counters, per-scenario verification, cross-tool verdicts,
+and a regression gate. It has been measured for Gash alone
+(`benchmark-fixtures-2026-10-19.md`). The Gash/Nuclei comparison itself is
+still unmeasured **in this repository**, because nuclei is not installed in
+the environment where those runs were made; the harness reports it as N/A
+with a reason rather than zero success. The nightly CI workflow
+(`bench-nightly.yml`) installs nuclei with templates and will file the first
+real comparison run; until that artifact exists, the numbers below stay
+unmeasured and no claim is made.
+
 ## What Exists Instead
 
 - Honest capability table in `README.md` (`How It Differs`): engine plus

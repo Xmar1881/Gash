@@ -89,6 +89,7 @@ jobs:
           go test ./internal/probe/ ./internal/wafbypass/ -v
           go test ./internal/reporter/ -run 'TestStaticExecutionEvidence|TestBrowserConfirmedEvidenceType' -v
           go test ./internal/plugin/loader/ -run 'TestExecuteJSInfiniteLoopAborts' -v
+          go test ./internal/bench/ -short -v
 
       - name: Headless DOM XSS browser verification (Chrome deep-tag)
         # Deep DOM verification: runs real headless Chrome via chromedp (-tags deep).

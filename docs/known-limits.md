@@ -514,8 +514,24 @@ procedure, never a number. See
 procedure updated for DVWA 2.0 / Juice Shop 17.1.0 / WebGoat 2023.8 with
 `--aggressive --scope 127.0.0.1`, no fake result).
 
-## Nuclei benchmark: not compared (no harness)
+## Nuclei benchmark: not compared (harness exists, comparison unmeasured)
 
-No same-target, same-budget, same-scope Gash-versus-Nuclei benchmark has run.
-The README compares capabilities honestly without parity claims. See
+No same-target, same-budget, same-scope Gash-versus-Nuclei benchmark has run
+in this repository. The README compares capabilities honestly without parity
+claims. Update 2026-10-19: the measurement harness now exists
+(`gash bench`, `docs/benchmark.md`) and has produced first measured Gash-only
+runs (`docs/metrics/benchmark-fixtures-2026-10-19.md`); the comparison itself
+stays unmeasured until the nightly workflow (`bench-nightly.yml`) files a
+real run with nuclei installed. See
 `docs/metrics/nuclei-comparison-2026-10-14.md`.
+
+## Benchmark-measured engine limits (reported, not hidden)
+
+The fixture benchmark measures and lists, rather than works around, these
+engine behaviors: Tier 1 YAML plugins probe the target root plus declared
+parameters only (miss discovered multi-endpoint surfaces); Tier 2 JS plugins
+can exhaust their per-plugin send budget before the vulnerable injection
+point; the stored two-step plugin can time out under the standard profile's
+plugin timeout; DOM XSS evidence stays static unless a real browser confirms
+execution. Details and the fixed control-request bug:
+`docs/metrics/benchmark-fixtures-2026-10-19.md`.

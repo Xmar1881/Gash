@@ -196,6 +196,33 @@ Dates are UTC.
   devtools hooks and generic warnings rejected as production noise.
 - Engine report stats: `spa_state_pages`, `spa_state_secrets`,
   `devbuild_markers`.
+- Automated benchmark harness (`gash bench`): YAML ground-truth datasets with
+  strict validation and a lab-only safety guard, an independent verifier
+  (HTTP reflection/error/stored/clean/denied/soft-404/WAF/timeout/redirect and
+  controlled headless-Chrome browser execution) that excludes unverified
+  scenarios from scoring, an equal-conditions Gash/Nuclei comparison with
+  cross-checked HTTP request counters, TP/FP/TN/FN plus precision/recall/F1
+  and per-category/XSS-context metrics, `report.json`/`summary.md`/
+  `report.html`/`findings.csv`/`manifest.json` reports, a baseline regression
+  gate (`gash bench compare`, `gash bench baseline`), an in-process fixture
+  lab, compose-lab lifecycle commands, and a nightly CI workflow
+  (`bench-nightly.yml`). Tentative candidates are unscored by default.
+- Bench datasets and baselines: `bench/datasets/fixtures.yaml` (23 verified
+  scenarios), `fixtures-deep.yaml` (deep profile + browser verification),
+  `compose-lab.yaml` (DVWA/Juice Shop/WebGoat), `bench/baselines/fixtures.json`.
+- Bench tests: unit suites plus an end-to-end critical-detector gate that runs
+  a real gash binary against the fixture lab and fails on false positives,
+  not-run outcomes, or reflected-XSS regressions.
+
+### Fixed
+
+- Tier 2 execution control requests replayed the payload when
+  `env.ControlSend` was unset: `controlFor` rebuilt the control from the
+  payload-bearing response URL, the oracle saw a dirty control, and every
+  executable reflection/error/redirect evidence was rejected — live scans
+  produced no firm reflected-XSS findings at all. Controls now neutralize all
+  query values to `gash-control-neutral`; regression test
+  `internal/bench/plugin_live_test.go`.
 
 ### Changed
 
