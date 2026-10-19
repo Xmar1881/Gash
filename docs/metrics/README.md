@@ -81,6 +81,8 @@ The gate is enforced by `TestMetricGate` in `tests/plugins`, not by review conve
 | ssi-injection | [ssi-injection.md](ssi-injection.md) |
 | webdav-enabled | [webdav-enabled.md](webdav-enabled.md) |
 | source-map-exposure | [source-map-exposure.md](source-map-exposure.md) |
+| nextjs-middleware-bypass | [nextjs-middleware-bypass.md](nextjs-middleware-bypass.md) |
+| nextjs-image-optimizer-ssrf | [nextjs-image-optimizer-ssrf.md](nextjs-image-optimizer-ssrf.md) |
 | caa-dns-check (proto GASH-027, unit-scoped) | [caa-dns-check.md](caa-dns-check.md) |
 | content-discovery (engine-recon GASH-028, mock-fixture scoped) | [content-discovery-2026-10-16.md](content-discovery-2026-10-16.md) |
 | smuggle-differential (engine-recon GASH-033, mock-fixture scoped) | [smuggle-differential.md](smuggle-differential.md) |

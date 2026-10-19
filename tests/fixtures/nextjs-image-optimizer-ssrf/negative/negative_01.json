@@ -1,0 +1,9 @@
+{
+  "name": "url parameter rejected with 400 and no callback",
+  "target": "http://target.test/_next/image?w=640&q=75",
+  "status": 400,
+  "headers": {"Content-Type": "text/plain"},
+  "body": "url parameter is not allowed",
+  "oob_callback": false,
+  "expected_verdict": "reject"
+}

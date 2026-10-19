@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/nextjs-image-optimizer-ssrf/nextjs-image-optimizer-ssrf.yaml
+# What: Tier 1 blind SSRF screen against the Next.js image optimizer
+#   (GASH-070, CWE-918).
+# Why: The optimizer fetches the supplied `url` server-side. A callback to the
+#   operator's self-hosted OOB server is the only evidence; without
+#   --oob-server the plugin never runs and no finding is fabricated. Internal,
+#   localhost, and metadata targets are deliberately not probed.
+
+id: nextjs-image-optimizer-ssrf
+name: Next.js Image Optimizer SSRF
+description: Detects server-side request forgery in the Next.js image optimizer via out-of-band callback correlation on the url parameter.
+author: GASH contributors
+severity: high
+tags: [nextjs, ssrf, image-optimizer, oob]
+safe: false
+deep: false
+active: true
+requires_auth: false
+oob: required
+max_requests: 6
+phase: probe
+order: 93
+api_version: "1.0"
+tests: tests/fixtures/nextjs-image-optimizer-ssrf/
+request:
+  method: GET
+  paths: ["/_next/image"]
+  param_names: [url]
+  payload: "{{OOB_URL}}"
+  query:
+    w: "640"
+    q: "75"
+oracle:
+  name: oob
+  params:
+    namespace: nextjs-image-optimizer

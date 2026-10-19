@@ -103,6 +103,12 @@ func ruleAndCWE(oracleName string) (string, string) {
 func ruleForPlugin(pluginID, oracleName string) (string, string) {
 	id := strings.ToLower(strings.TrimSpace(pluginID))
 	switch {
+	// Framework-specific detectors (GASH-069/070) must precede the generic
+	// ssrf keyword match so they keep their own rule IDs.
+	case strings.Contains(id, "nextjs-middleware"):
+		return "GASH-069", "CWE-288"
+	case strings.Contains(id, "nextjs-image-optimizer"):
+		return "GASH-070", "CWE-918"
 	case strings.Contains(id, "ssrf"):
 		return "GASH-008", "CWE-918"
 	case strings.Contains(id, "content") || strings.Contains(id, "exposed-path"):
@@ -250,6 +256,9 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		"js_files_fetched": 0, "js_endpoints_found": 0,
 		"js_secrets_found": 0, "js_maps_fetched": 0,
 	}
+	// GASH-071/072 content scans (crawl kapalı/başarısızken 0).
+	spaStateStats := map[string]int{"spa_state_pages": 0, "spa_state_secrets": 0}
+	devBuildStats := map[string]int{"devbuild_markers": 0}
 	// SPA render sayaçları (--browser-crawl kapalı/başarısızken 0).
 	spaStats := map[string]int{
 		"spa_pages_rendered": 0, "spa_forms": 0,
@@ -279,6 +288,18 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		surfacePoints = append(surfacePoints, jsPoints...)
 		for k, v := range jsStats {
 			jsReconStats[k] = v
+		}
+		// GASH-071/072: already-fetched page + external JS bodies are scanned
+		// deterministically; no additional requests are issued.
+		stateFindings, stateStats := scanSPAState(crawlRes)
+		allFindings = append(allFindings, stateFindings...)
+		for k, v := range stateStats {
+			spaStateStats[k] = v
+		}
+		devFindings, devStats := scanDevBuild(crawlRes)
+		allFindings = append(allFindings, devFindings...)
+		for k, v := range devStats {
+			devBuildStats[k] = v
 		}
 		// SPA yüzeyi: seçilmiş sayfalar render edilir; DOM formları/form
 		// fuzz'ına, gözlenen endpoint'ler yüzeye eklenir. Browser yoksa tek
@@ -543,6 +564,10 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 			"js_endpoints_found": jsReconStats["js_endpoints_found"],
 			"js_secrets_found":   jsReconStats["js_secrets_found"],
 			"js_maps_fetched":    jsReconStats["js_maps_fetched"],
+			// GASH-071/072 embedded-state and dev-build content scans.
+			"spa_state_pages":   spaStateStats["spa_state_pages"],
+			"spa_state_secrets": spaStateStats["spa_state_secrets"],
+			"devbuild_markers":  devBuildStats["devbuild_markers"],
 			// SPA render sayaçları (--browser-crawl kapalıyken 0).
 			"spa_pages_rendered": spaStats["spa_pages_rendered"],
 			"spa_forms":          spaStats["spa_forms"],

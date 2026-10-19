@@ -1,0 +1,12 @@
+{
+  "name": "image optimizer fetched the OOB url",
+  "target": "http://target.test/_next/image?w=640&q=75",
+  "status": 200,
+  "headers": {"Content-Type": "image/png"},
+  "body": "image-bytes",
+  "oob_callback": true,
+  "oob_correlation_id": "c_img_01",
+  "oob_namespace": "nextjs-image-optimizer",
+  "expected_verdict": "accept",
+  "expected_confidence": "confirmed"
+}

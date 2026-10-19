@@ -2,7 +2,7 @@ SPDX-License-Identifier: AGPL-3.0-only | Copyright (C) 2026 Xmar1881 / GASH cont
 
 # Gash - Kanit Standardi (Faz 1, refreshed 2026-10-18)
 
-- Durum: Faz 1 temel dokuman, kod mevcut (73 dedektor, GASH-001..067). benioku.txt 3.3 tablosunun genisletilmis hali.
+- Durum: Faz 1 temel dokuman, kod mevcut (75 dedektor, GASH-001..072 + engine-owned flow screen GASH-068). benioku.txt 3.3 tablosunun genisletilmis hali.
 - Modul: github.com/Xmar1881/Gash. Lisans: AGPL-3.0-only.
 - Es dosya: docs/architecture.md (oracle arayuzleri bolum 6, Finding semasi bolum 10, OOB protokolu bolum 9).
 - Faz kapisi: Onay beklenir. Faz 2'ye gecilmez, kod yazilmaz.
@@ -71,8 +71,13 @@ Her kural icin positive + negative fixture Faz 3'te zorunlu. Fixturesiz plugin t
 - GASH-019 Header/Misconfig, CWE-693/16, Header, OOB gecersiz
 - GASH-020 CSRF, CWE-352, Mantik Header+Differential, OOB gecersiz
 - GASH-021 Version/Banner, CWE-200, Version, OOB gecersiz
+- GASH-068 Cok-adimli akis atlama (oturumsuz dogrudan erisim), CWE-841, Differential, OOB gecersiz
+- GASH-069 Next.js middleware yetkilendirme atlama (CVE-2025-29927), CWE-288, Middleware differential, OOB gecersiz
+- GASH-070 Next.js image optimizer blind SSRF, CWE-918, OOB, OOB ZORUNLU
+- GASH-071 SPA embedded-state sir ifsasi, CWE-798/200, Static state extraction, OOB gecersiz
+- GASH-072 Development build marker, CWE-489, Static content marker, OOB gecersiz
 
-oob required yalnizca GASH-008/010/012/013'tedir (+ GASH-005/006/015'te optional). Digerlerinde required validasyon hatasidir.
+oob required yalnizca GASH-008/010/012/013/070'tedir (+ GASH-005/006/015'te optional). Digerlerinde required validasyon hatasidir.
 
 ## 3. Sinif kurallari
 
@@ -295,6 +300,110 @@ controlled headless run with a triggered canary and clean control may emit
 - ret: banner yok veya teknoloji eslesmiyor.
 - Ornek (+): Server: Apache/2.4.49 + /cgi-bin/.%2e/.%2e davranissal fark -> firm; sadece banner -> tentative + banner-based.
 - Ornek (-): Server: cloudflare (CDN, origin gizli) uzerinden version iddiasi -> reject.
+- OOB: gecersiz.
+
+### GASH-068 Cok-adimli akis atlama (oturumsuz dogrudan erisim)
+
+Implementation note: this rule is engine-owned (`flow-replay` synthetic spec,
+no plugin file) and only runs with `--active --flow-seed`. It is a heuristic
+screen, not a state-machine proof: a single unauthenticated fetch of the final
+workflow URL is compared to the authenticated baseline.
+
+- Oracle: differential (normalized body similarity), N=1.
+- tentative: >=2 discovered steps + fresh jar without seed cookies + final URL
+  returns 2xx + body has no password field + normalized similarity >=0.95 to
+  the authenticated final page. The synthetic spec has no fixtures, so R-06
+  caps confidence at tentative and severity at medium regardless of oracle
+  contribution.
+- firm/confirmed: not emitted by this screen; a repeated multi-session
+  ladder or an explicit authorization check is required and is out of scope.
+- ret: final URL not reachable anonymously, non-2xx, login form present,
+  similarity <0.95, or <2 steps.
+- Ornek (+): /start -> /step1 -> /done; GET /done anonymously returns the same
+  masked confirmation page as the authenticated run -> GASH-068 tentative.
+- Ornek (-): GET /done anonymously returns 401/403 or a login form -> reject.
+- OOB: gecersiz.
+
+### GASH-069 Next.js middleware authorization bypass (CVE-2025-29927)
+
+Implementation note: Tier 1 YAML (`nextjs-middleware-bypass`) plus the
+`middleware-bypass` oracle. Read-only GET differential across five fixed
+paths; the control request carries no bypass header.
+
+- Oracle: middleware-bypass (control status/body versus
+  `x-middleware-subrequest` variants).
+- firm: control is access-denied (401/403 or a login/session redirect toward
+  a login path) AND bypass returns 2xx with >=32 body bytes AND the masked
+  body differs materially from the control AND neither response is a
+  WAF/challenge page. Ceiling is firm; confirmed does not exist for this
+  class.
+- ret: control is already 2xx, bypass is non-2xx, body is short/identical,
+  response is a block/challenge page, or the change is only header echo with
+  no status change.
+- Ornek (+): GET /admin -> 307 /login; GET /admin with
+  `x-middleware-subrequest: middleware` -> 200 with dashboard content ->
+  GASH-069 firm.
+- Ornek (-): GET /admin -> 200 on the control (public route), or variant ->
+  401/403 -> reject.
+- OOB: gecersiz.
+
+### GASH-070 Next.js image optimizer blind SSRF
+
+Implementation note: Tier 1 YAML (`nextjs-image-optimizer-ssrf`) with
+`oob=required`, path `/_next/image`, `url={{OOB_URL}}`, static `w`/`q`.
+Internal, metadata, and cloud-metadata targets are deliberately not sent.
+
+- Oracle: OOB callback (single-use token per payload).
+- confirmed: the operator's OOB server receives the matching callback; no
+  status/body in-band proof is used.
+- ret: no callback within the shared bounded window; without
+  `--oob-server` the plugin skips as `oob-not-configured` (no fake
+  tentative).
+- Ornek (+): callback for `/cb/<token>` after the optimizer fetches the
+  external URL -> GASH-070 confirmed.
+- Ornek (-): optimizer rejects the URL, serves from an allowlist, or
+  optimization is disabled -> no callback -> reject.
+- OOB: ZORUNLU.
+
+### GASH-071 SPA embedded-state secrets
+
+Implementation note: engine-owned (`internal/discovery/spa_state.go` +
+`internal/engine/embedded_state.go`, no plugin file). Static parse of
+already-fetched page bodies and external JS; no extra requests.
+
+- Oracle: static state extraction (known containers + secret rules +
+  sensitive-key match), masked literal.
+- static-execution-evidence: a supported container parses AND a secret-shaped
+  literal or sensitive state key with a >=12-char value is present after
+  placeholder/env-reference filtering. JWT values map to CWE-200; other
+  secrets map to CWE-798. Values are masked (never reported in full).
+- ret: no supported container, unparseable/JS-evaluated state, placeholder
+  or environment reference, low-entropy value, or duplicate already seen in
+  another container/page.
+- Ornek (+): `__NEXT_DATA__` contains `"apiKey": "sk_live_..."` ->
+  GASH-071 static-execution-evidence with masked evidence.
+- Ornek (-): `__NEXT_DATA__` contains `"apiKey": "YOUR_API_KEY"` or
+  `process.env.API_KEY` -> reject.
+- OOB: gecersiz.
+
+### GASH-072 Development build markers
+
+Implementation note: engine-owned (`internal/discovery/devbuild.go` +
+`internal/engine/embedded_state.go`, no plugin file). One aggregated finding
+per fetched source; static content only.
+
+- Oracle: marker table (React development bundles/`jsxDEV(`, Vue dev global
+  build, Angular debug APIs).
+- firm: at least one marker from the exact table is present. Severity stays
+  low; confidence is firm, not confirmed, because presence is an observation
+  and does not prove an exploitable debug endpoint.
+- ret: only devtools hooks, `isDevMode()`, generic warnings, or production
+  bundle markers (`.prod.js`) are present; production-present noise never
+  fires.
+- Ornek (+): page loads `react-dom.development.js` -> GASH-072 firm with the
+  matched marker and a bounded snippet.
+- Ornek (-): page loads `vue.global.prod.js` or only sets
+  `__REACT_DEVTOOLS_GLOBAL_HOOK__` -> reject.
 - OOB: gecersiz.
 
 ## 4. OOB zorunlu/onerilir/gecersiz kurallari nasil zorlanir

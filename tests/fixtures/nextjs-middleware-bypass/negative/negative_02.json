@@ -1,0 +1,11 @@
+{
+  "name": "bypass returns the same block content",
+  "target": "http://target.test/dashboard",
+  "status": 200,
+  "headers": {"Content-Type": "text/html"},
+  "body": "<html><body>Access denied. You do not have permission to view this page.</body></html>",
+  "control_status": 401,
+  "control_headers": {},
+  "control_body": "<html><body>Access denied. You do not have permission to view this page.</body></html>",
+  "expected_verdict": "reject"
+}

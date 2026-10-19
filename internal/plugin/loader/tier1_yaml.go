@@ -26,6 +26,9 @@ type Tier1Request struct {
 	Paths      []string          `yaml:"paths" json:"paths"`
 	Headers    map[string]string `yaml:"headers" json:"headers"`
 	Body       string            `yaml:"body" json:"body"`
+	// Query is a static query-string map applied to every request attempt
+	// (GASH-070: Next.js image optimizer requires w/q alongside url).
+	Query map[string]string `yaml:"query" json:"query"`
 }
 
 // Tier1Oracle oracle referansıdır (kod bloğu YOK).

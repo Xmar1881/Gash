@@ -1,0 +1,11 @@
+{
+  "name": "bypass header echoed but still redirected to login",
+  "target": "http://target.test/admin",
+  "status": 302,
+  "headers": {"Location": "/login?next=/admin"},
+  "body": "<html><body>Redirecting to sign in</body></html>",
+  "control_status": 302,
+  "control_headers": {"Location": "/login?next=/admin"},
+  "control_body": "<html><body>Redirecting to sign in</body></html>",
+  "expected_verdict": "reject"
+}

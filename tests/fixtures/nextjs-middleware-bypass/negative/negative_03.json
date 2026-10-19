@@ -1,0 +1,11 @@
+{
+  "name": "waf challenge page is not protected content",
+  "target": "http://target.test/api/user",
+  "status": 200,
+  "headers": {"Content-Type": "text/html", "Server": "cloudflare"},
+  "body": "<html><title>Attention Required! | Cloudflare</title><body>Request blocked. Complete the challenge to continue.</body></html>",
+  "control_status": 403,
+  "control_headers": {},
+  "control_body": "Forbidden",
+  "expected_verdict": "reject"
+}

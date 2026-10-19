@@ -15,12 +15,12 @@ reason for each. Nothing here is implied as covered elsewhere.
 
 ## Out-of-band (OOB) blind detectors: self-hosted only, shared bounded window
 
-OOB plugins (`ssrf-blind-oob`, `blind-sqli-oob`, `xxe-oob`) run only with a
-self-hosted `--oob-server` (no public interactsh default) and require
-`--active`; without a server the scheduler skips them honestly
-(`oob-not-configured`). Callback proof discipline: every payload variant
-carries its own single-use correlation token, so an incoming callback can
-only confirm the exact request that caused it. Token verification is
+OOB plugins (`ssrf-blind-oob`, `blind-sqli-oob`, `xxe-oob`,
+`nextjs-image-optimizer-ssrf`) run only with a self-hosted `--oob-server` (no
+public interactsh default) and require `--active`; without a server the
+scheduler skips them honestly (`oob-not-configured`). Callback proof discipline:
+every payload variant carries its own single-use correlation token, so an
+incoming callback can only confirm the exact request that caused it. Token verification is
 deferred: Tier 1 sends the whole corpus first and then verifies all tokens
 in ONE shared bounded window (`oob.WaitForCallbacks`, 10 s / 2 polls);
 JS plugins call `host.oracles.oobAny(ids)` for the same shared window.
@@ -95,6 +95,34 @@ RuleID GASH-004/GASH-000) because the mutation corpus is not oracle-specific;
 per-request token rotation beyond the refresh cap may leave later probes
 rejected and therefore unmeasured (false negatives by design). New engine
 stat: `form_requests`.
+
+## Multi-step workflow replay (`--flow-seed`): supported (`--active` only)
+
+`--flow-seed` starts a form-driven workflow discovery: every step page is
+re-fetched, its first eligible form (POST preferred; GET allowed;
+urlencoded/multipart; at least one injectable field) is submitted with clean
+values, and redirects are followed manually (max 5 hops; https->http
+downgrade and non-http(s) schemes abort). Only same-origin form actions are
+submitted, and the seed must share the target's scope (fail-closed preflight:
+an out-of-scope seed sends zero requests). Replays use a fresh run-local
+cookie jar, re-GET every step page to refresh CSRF tokens, mutate exactly one
+non-token, non-password, non-file field at one step, and complete downstream
+steps cleanly; a deviation is reported as `Stopped`, never as a finding.
+Evaluation starts at the mutation step: error signatures (GASH-004),
+executable-context reflections (GASH-001), and N=1 material body divergence
+(GASH-005) are possible; the differential is only emitted when no stronger
+signal exists. The session-bypass screen (GASH-068, CWE-841) requires >=2
+steps, a fresh jar without seed cookies, a 2xx response, no password form,
+and >=0.95 normalized similarity to the authenticated final page. Every flow
+finding is `tentative` (synthetic `flow-replay` spec without fixtures, R-06)
+and severity is capped at medium. Limits: one seed per scan, at most 6 steps
+(default 4), at most 10 SQLi probes per step (default 6) plus three XSS
+canaries, 120 requests per flow including discovery, replay, and bypass; v1
+mutates only the first injectable field per step; forms built by JavaScript,
+multi-origin wizards, JSON/token APIs, file uploads, and MFA/CAPTCHA steps
+are out of scope. Discovery failure produces one honest `flow` skip record.
+New engine stats: `flow_seed`, `flow_steps`, `flow_replays`, `flow_findings`,
+`flow_bypass_checked`, `flow_requests`.
 
 ## Chunked Transfer-Encoding / request smuggling: supported (raw-TCP, written authorization required)
 
@@ -320,6 +348,40 @@ The engine consumes it through the opt-in browser-verify pass
 findings and through the stored binding's `controlUrl` option for the
 two-step plugin; without browser evidence both ceilings stay unchanged.
 
+## SPA-rendered surface discovery (`--browser-crawl`): bounded, GET-only
+
+SPA surface discovery is engine-owned recon (no new detector, oracle, or rule
+ID; this feature adds no plugin). It renders crawled HTML app shells through
+`internal/headless` (`headless.RenderPage`) and harvests the resulting DOM plus
+observed Document/XHR/Fetch URLs (`discovery.HarvestRendered`). Deliberate
+limits:
+
+- Requires the `-tags deep` build and a Chrome binary. The default build and a
+  host without Chrome each emit one honest `browser-crawl` skip; no synthetic
+  rendered surface is fabricated.
+- At most `--browser-crawl-pages` pages are rendered (default 5, hard cap 10).
+  Candidates are crawl results with a 2xx HTML response, deduplicated and
+  ranked by SPA hints; the crawler's page budget still applies.
+- Each render is one navigation with a bounded settle (readyState complete plus
+  500 ms quiet, 3 s maximum). Click/type/navigation replay is not performed, so
+  routes that require user interaction, hash-only routes, and lazy content that
+  appears after the settle window are out of scope v1.
+- Only auth-context cookies are seeded into the browser. `Authorization` and
+  basic-auth headers are not forwarded, so apps that rely on header auth may
+  render an anonymous surface.
+- Browser traffic is GET/HEAD only. The engine always supplies a scope filter,
+  and Fetch interception fails every non-GET/HEAD request before it leaves the
+  browser; out-of-scope requests are likewise blocked. This is why the pass
+  does not require `--active`.
+- Harvest caps: 200 observed network URLs per page, 200 endpoints per page,
+  and at most 25 parameterless endpoints followed with a one-page crawl.
+  Endpoints are scope-filtered before they enter the injection surface; forms
+  merge into the existing crawl surface. The HTML body is capped by the scan's
+  response-size limit.
+- Renderer errors are non-fatal: the scan continues and the first error becomes
+  one `browser-crawl` skip record. The pass never upgrades confidence or creates
+  findings by itself.
+
 ## Lab batch 2 detectors (GASH-057..066): honest boundaries
 
 - phpinfo exposure (GASH-057): signature-only proof (PHP configuration marker
@@ -369,6 +431,78 @@ two-step plugin; without browser evidence both ceilings stay unchanged.
   `"version": 3` plus one of `sources`/`mappings`/`names`/`sourcesContent`
   with a clean soft-404 control. Maps referenced only through `//# sourceMappingURL`
   comments on paths not in the list, or served behind auth, are not fetched.
+
+## Framework-specific detectors (GASH-069..072): honest boundaries
+
+- Next.js middleware bypass (GASH-069, CVE-2025-29927): fixed five-path list
+  (`/admin`, `/dashboard`, `/api/user`, `/account`, `/settings`) and four
+  `x-middleware-subrequest` values. A finding requires an access-denied
+  control (401/403 or a login/session redirect) and a 2xx, materially
+  different masked body. Public endpoints (200-to-200), patched builds,
+  header echo without status change, WAF pages, and apps without Next.js
+  middleware produce no finding. The proof is an authorization-boundary
+  bypass on a read-only GET; no authenticated data access or impact beyond
+  the observed divergence is claimed.
+- Next.js image optimizer SSRF (GASH-070): only the default
+  `/_next/image` route with `url={{OOB_URL}}` plus `w`/`q`; proof is a single
+  OOB callback. Internal, metadata, and cloud-metadata targets are never
+  attempted; a callback confirms an outbound fetch, not internal reachability.
+  Custom image loaders, upstream allowlists, signed URLs, or disabled
+  optimization produce no callback (false negatives). Without
+  `--oob-server` the plugin skips honestly (`oob-not-configured`).
+- SPA embedded-state secrets (GASH-071): static parse of known containers
+  (`__NEXT_DATA__`, `__NUXT__`/`__NUXT_DATA__`, `__INITIAL_STATE__`,
+  `__PRELOADED_STATE__`, `__APOLLO_STATE__`, `ng-state`,
+  `self.__next_f.push`). State fetched or assembled at runtime after the
+  initial HTML, custom serializations, and the plain-JS-object Nuxt form are
+  not parsed. Values are masked and never validated against the live
+  credential; placeholder/env references are filtered (false negatives by
+  design). No extra requests are made: only crawled page bodies and already
+  fetched external JS are scanned, and inline JS is deduplicated.
+- Development build markers (GASH-072): the marker table is intentionally
+  narrow (`react-dom.development.js`, `react.development.js`, `jsxDEV(`,
+  `vue.global.js` but not `.prod.js`, `ng.probe(`, `ng.getComponent(`).
+  Devtools hooks (`__REACT_DEVTOOLS_GLOBAL_HOOK__`,
+  `__VUE_DEVTOOLS_GLOBAL_HOOK__`), `isDevMode()`, and generic warnings are
+  rejected because production bundles commonly retain them. Renamed or
+  minified builds can hide markers (false negatives); a marker is an
+  informational build-hygiene fact, not proof of an exploitable debug
+  endpoint, and severity stays low.
+
+## Login automation (`--login-*`): honest boundaries
+
+Form-based login (`internal/auth/login.go`, engine `runLogin`) handles one
+classic HTML login form only. The following are deliberate gaps, not coverage:
+
+- No OAuth/OIDC/SAML/SSO flows, no JS-rendered or CAPTCHA-protected widgets,
+  no multi-page wizards (username page → password page), and no JSON/token
+  login APIs. A page whose form is built by JavaScript yields
+  `no-password-form` and the scan continues unauthenticated.
+- One credential set only, at most 2 POST attempts by default (hard cap 3).
+  There is no password guessing, spraying, or credential stuffing. `2FA`
+  (`OTP`/`TOTP`/`MFA`/`CAPTCHA` fields) is detected and the flow gives up
+  immediately — solving or bypassing MFA is out of scope.
+- No re-login: sessions are established once before the scan; a session that
+  expires mid-scan is not refreshed (plugins then see whatever the target
+  returns for expired cookies).
+- Success verification is heuristic: no password field **plus** a difference
+  from an anonymous control fetch (token-like `value="..."` contents
+  normalized). A site that renders login and post-login variants of the same
+  URL indistinguishably (identical markup for anonymous users, cosmetic
+  dynamic content that survives normalization) can therefore be declared
+  `unverified-session` or `login-failed` even when a session exists — pick
+  `--login-verify-url` carefully for such sites. Conversely, a failed login
+  on a target whose anonymous page changes structurally between two fetches
+  could be misread as success; verify URLs that are stable when logged out
+  are the safe choice.
+- Cookies are replayed only to the exact host that set them (`Domain`
+  attribute sharing across sibling hosts is not honored), an `https → http`
+  redirect downgrade aborts the flow (`redirect-downgrade-blocked`), and
+  credential-bearing requests are never replayed through WAF-bypass
+  mutations.
+- In `--target-file` bulk scans the login flow runs once per target engine
+  against the same explicit `--login-url`; there is no bulk-specific
+  credential mapping.
 
 ## Compose-lab recall: BLOCKED where docker is absent
 

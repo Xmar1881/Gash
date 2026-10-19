@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -252,6 +253,27 @@ func Evaluate(ctx context.Context, oracleName string, f Fixture, oobEnabled bool
 			ControlBody:  f.ControlBody,
 			SignatureSet: signatureSet,
 			Mode:         mode,
+		})
+	case "middleware-bypass", "middleware_bypass", "middlewarebypass":
+		var o oracle.MiddlewareBypassOracle
+		path := f.Target
+		if u, err := url.Parse(f.Target); err == nil && u.Path != "" {
+			path = u.Path
+		}
+		headerValue := ""
+		if vs := getStringSliceParam(oracleParams, "header_values"); len(vs) > 0 {
+			headerValue = vs[0]
+		}
+		return o.Verify(ctx, cls, false, oracle.MiddlewareBypassParams{
+			ControlStatus:   f.ControlStatus,
+			ControlLocation: controlLocation(f.ControlHeaders),
+			ControlBody:     f.ControlBody,
+			BypassStatus:    f.Status,
+			BypassHeaders:   toHeader(f.Headers),
+			BypassBody:      f.Body,
+			Header:          getStringParam(oracleParams, "header", "x-middleware-subrequest"),
+			HeaderValue:     headerValue,
+			Path:            path,
 		})
 	case "differential":
 		var o oracle.DifferentialOracle

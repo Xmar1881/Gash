@@ -1,0 +1,9 @@
+{
+  "name": "image optimizer route is not exposed",
+  "target": "http://target.test/_next/image?w=640&q=75",
+  "status": 404,
+  "headers": {"Content-Type": "text/html"},
+  "body": "<html><body>Not Found</body></html>",
+  "oob_callback": false,
+  "expected_verdict": "reject"
+}

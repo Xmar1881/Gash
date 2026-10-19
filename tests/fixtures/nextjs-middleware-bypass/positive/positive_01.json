@@ -1,0 +1,12 @@
+{
+  "name": "login redirect bypassed to admin dashboard",
+  "target": "http://target.test/admin",
+  "status": 200,
+  "headers": {"Content-Type": "text/html"},
+  "body": "<html><body><h1>Admin dashboard</h1><p>User management, audit settings, and billing controls.</p></body></html>",
+  "control_status": 302,
+  "control_headers": {"Location": "/login?next=/admin"},
+  "control_body": "<html><body>Redirecting to sign in</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

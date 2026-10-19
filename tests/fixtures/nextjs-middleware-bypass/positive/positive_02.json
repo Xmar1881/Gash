@@ -1,0 +1,12 @@
+{
+  "name": "unauthorized control bypassed to protected account page",
+  "target": "http://target.test/account",
+  "status": 200,
+  "headers": {"Content-Type": "text/html"},
+  "body": "<html><body><h1>Your account</h1><p>Profile details and saved payment methods are available here.</p></body></html>",
+  "control_status": 401,
+  "control_headers": {},
+  "control_body": "Unauthorized",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

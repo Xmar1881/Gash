@@ -53,8 +53,14 @@ permission to test (`--scope` opts into a strict allowlist; see Legal).
 
 ## What's New / Highlights
 
-- **73 detectors** — verify with `go run ./cmd/gash plugins list`
-  (65 YAML, 7 sandboxed JS, 1 native PoC; see Detector Summary below).
+- **75 detectors** — verify with `go run ./cmd/gash plugins list`
+  (67 YAML, 7 sandboxed JS, 1 native PoC; see Detector Summary below).
+- **Framework-specific detectors (GASH-069..072)** — Next.js middleware
+  authorization bypass (CVE-2025-29927) via a control-vs-bypass differential,
+  Next.js image optimizer blind SSRF via OOB callback, secrets serialized into
+  SPA state (Next/Nuxt/Redux/Apollo/Angular), and development-only build
+  artifact markers. Secret values remain masked; no extra requests are made
+  for the two engine-owned content scans.
 - **Lab batch 2 (GASH-057..066)** — phpinfo/management-endpoint/directory-listing/
   source-map/SSI error signatures, Log4Shell JNDI OOB (header + query vectors),
   expression-language arithmetic canary, JSONP callback reflection, OAuth open
@@ -65,6 +71,16 @@ permission to test (`--scope` opts into a strict allowlist; see Legal).
   differential with dual-channel proof (follow-up divergence *and* delay),
   `firm` ceiling, aggressive-gated, bounded to 10 requests on one keep-alive
   connection.
+- **Login automation** — `--login-url` plus one credential set
+  (`--login-pass-env` preferred) establishes a real form session through the
+  policy pipeline; success requires an anonymous-control diff with no password
+  field, failures become honest skip records (2FA/CAPTCHA never retries), and
+  credentials never appear in reports or logs.
+- **Multi-step workflow replay** — `--flow-seed` discovers a same-origin form
+  workflow, replays it with fresh CSRF tokens, mutates one field, and checks
+  downstream error/reflection/divergence plus an unauthenticated direct-access
+  screen (GASH-068); every flow finding stays `tentative` and the flow feature
+  adds no plugin of its own.
 - **Operator-responsibility scope (Nuclei/ZAP-style)** — scans run open by
   default with a one-line authorization notice; `--scope` opts into a strict
   allowlist with DNS-rebinding pinning and upgrade-only http→https.
@@ -72,6 +88,12 @@ permission to test (`--scope` opts into a strict allowlist; see Legal).
   shared budgets, BFS crawler (`--max-pages`, `--depth`), content discovery
   with soft-404 learning, `gash diff` regression tracking, and `--proxy` for
   Burp/ZAP integration.
+- **SPA-rendered surface discovery** — `--browser-crawl` (deep build + Chrome)
+  renders crawled HTML app shells through the bounded headless browser,
+  harvests script-created forms/links and observed XHR/Fetch endpoints, and
+  feeds the normal injection surface. Cookie-only session seeding, GET/HEAD-only
+  browser traffic, out-of-scope blocking, hard page/endpoint caps, and an honest
+  skip when the build or browser is unavailable.
 - **Aggressive profile** — full offensive opt-in: all detectors, all
   methods, 50k req/target, 100 req/s. Use only with written authorization.
 - **WAF-aware, not stealthy** — WAF blocks become `WAFDetected` stats, never
@@ -116,7 +138,7 @@ remain tracked work in [`docs/known-limits.md`](docs/known-limits.md).
 
 ## How It Differs
 
-Honest comparison — Gash is experimental (`v0.1.0-dev`, 73 reference
+Honest comparison — Gash is experimental (`v0.1.0-dev`, 75 reference
 plugins) and competes on verification discipline, not on maturity or library
 size. No Gash-versus-Nuclei benchmark has been run (not compared); see
 `docs/metrics/nuclei-comparison-2026-10-14.md`.
@@ -230,8 +252,8 @@ only shows help and waits for `Enter`; run it from a terminal instead:
 
 ## Detector Summary
 
-73 detectors via `go run ./cmd/gash plugins list`
-(65 Tier 1 YAML, 7 Tier 2 sandboxed JS, 1 Tier 3 native PoC).
+75 detectors via `go run ./cmd/gash plugins list`
+(67 Tier 1 YAML, 7 Tier 2 sandboxed JS, 1 Tier 3 native PoC).
 Full oracle/plugin catalog: `docs/detector-inventory.md`.
 
 | Class | Count | Examples |
@@ -251,14 +273,16 @@ Full oracle/plugin catalog: `docs/detector-inventory.md`.
 | Subdomain takeover (unclaimed-service bodies) | 1 | `subdomain-takeover-basic` |
 | Web cache poisoning | 2 | `web-cache-poisoning-basic`, `cache-poisoning-host-header` |
 | Injection (JNDI, expression language, SSI, JSONP, prototype pollution) | 5 | `log4shell-jndi`, `expression-language-injection`, `ssi-injection`, `jsonp-callback-injection`, `prototype-pollution-differential` |
+| Framework-specific (Next.js middleware bypass, image optimizer SSRF) | 2 | `nextjs-middleware-bypass`, `nextjs-image-optimizer-ssrf` |
 | Native PoC (Tier 3, explicit trust) | 1 | `poc-native-header-check` |
-| **Total** | **73** | `go run ./cmd/gash plugins list` |
+| **Total** | **75** | `go run ./cmd/gash plugins list` |
 
 Engine-recon probes ship outside the plugin set: request smuggling
 (GASH-033, `internal/smuggle`), content discovery (GASH-028,
-`internal/discovery`), and passive JavaScript reconnaissance (GASH-067,
+`internal/discovery`), passive JavaScript reconnaissance (GASH-067,
 `internal/discovery` + `internal/engine`; endpoint feeding plus masked
-hardcoded-secret findings).
+hardcoded-secret findings), SPA embedded-state secrets (GASH-071), and
+development build markers (GASH-072).
 
 Evidence ladder: `tentative` -> `firm` / `static-execution-evidence` ->
 `confirmed`. Timing caps at `firm`; browser `confirmed` needs the headless
@@ -275,11 +299,11 @@ match. Counts above are plugin inventory, not real-target recall.
 | `docs/js-plugin-spec.md` | Tier 2 JS reference (timing + execution bindings) |
 | `docs/native-plugin-spec.md` | Tier 3 native reference |
 | `docs/architecture.md` | Full engine design (Phase 1) |
-| `docs/evidence-standard.md` | Per-class proof rules (Faz 1 detail GASH-001..021; inventory through GASH-067) |
+| `docs/evidence-standard.md` | Per-class proof rules (Faz 1 detail GASH-001..021; inventory through GASH-072) |
 | `docs/design/00-scope.md` | Phase 0 scope decisions |
 | `docs/SECURITY.md` | Responsible use and reporting |
 | `docs/user-guide-tr.md` | Turkish beginner guide (Türkçe, profiles + aggressive) |
-| `docs/auth.md` | Auth contexts and dual-user BOLA matrix |
+| `docs/auth.md` | Auth contexts, dual-user BOLA matrix, and form login automation |
 | `docs/api-discovery.md` | OpenAPI test-plan flow |
 | `docs/proto-checks.md` | DNS/TLS/TCP checks and CAA gap |
 | `docs/known-limits.md` | BLOCKED and gap register (lab recall, benchmark, browser limits) |
