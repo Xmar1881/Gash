@@ -74,7 +74,7 @@ type gashScanOutput struct {
 
 // RunGash executes one Gash scan run and parses the JSON report.
 func RunGash(ctx context.Context, bin, repoDir, target, auth string, args []string, timeout time.Duration, tmpDir string) (*ToolRun, []NormalizedFinding) {
-	run := &ToolRun{Tool: "gash", Target: target, Auth: auth}
+	run := &ToolRun{Tool: "gash", Target: target, Auth: redactAuth(auth)}
 	if timeout <= 0 {
 		timeout = 3 * time.Minute
 	}
@@ -84,7 +84,7 @@ func RunGash(ctx context.Context, bin, repoDir, target, auth string, args []stri
 	outPath := filepath.Join(tmpDir, fmt.Sprintf("gash-%s.json", sanitize(target+auth)))
 	cmdArgs := []string{"scan", "--target", target, "--format", "json", "--output", outPath}
 	cmdArgs = append(cmdArgs, args...)
-	run.Command = append([]string{bin}, cmdArgs...)
+	run.Command = redactedCommand(bin, cmdArgs)
 
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -162,7 +162,10 @@ func RunGash(ctx context.Context, bin, repoDir, target, auth string, args []stri
 	return run, findings
 }
 
-var nucleiVersionRe = regexp.MustCompile(`v?(\d+\.\d+[\.\d]*)`)
+var (
+	nucleiVersionLineRe = regexp.MustCompile(`(?i)nuclei\s+engine\s+version\s*:\s*v?(\d+\.\d+[\.\d]*)`)
+	nucleiVersionRe     = regexp.MustCompile(`(?i)(?:engine\s+version\s*:\s*|[^a-z0-9])v(\d+\.\d+[\.\d]*)`)
+)
 
 // DetectNuclei resolves the nuclei binary and its version.
 func DetectNuclei(bin string) (string, string, error) {
@@ -184,6 +187,9 @@ func DetectNuclei(bin string) (string, string, error) {
 }
 
 func versionFromText(text, fallback string) string {
+	if m := nucleiVersionLineRe.FindStringSubmatch(text); len(m) > 1 {
+		return "v" + m[1]
+	}
 	if m := nucleiVersionRe.FindStringSubmatch(text); len(m) > 1 {
 		return "v" + m[1]
 	}
@@ -205,8 +211,8 @@ type nucleiLine struct {
 }
 
 // RunNuclei executes one nuclei run and parses the JSONL stream.
-func RunNuclei(ctx context.Context, bin, target, auth string, cfg NucleiConfig, timeout time.Duration) (*ToolRun, []NormalizedFinding) {
-	run := &ToolRun{Tool: "nuclei", Target: target, Auth: auth}
+func RunNuclei(ctx context.Context, bin, target, auth string, seeds []string, cfg NucleiConfig, timeout time.Duration) (*ToolRun, []NormalizedFinding) {
+	run := &ToolRun{Tool: "nuclei", Target: target, Auth: redactAuth(auth)}
 	rate := cfg.RateLimit
 	if rate <= 0 {
 		rate = 50
@@ -214,8 +220,13 @@ func RunNuclei(ctx context.Context, bin, target, auth string, cfg NucleiConfig, 
 	if timeout <= 0 {
 		timeout = 3 * time.Minute
 	}
-	args := []string{"-u", target, "-jsonl", "-silent", "-no-color", "-disable-update-check",
-		"-rate-limit", fmt.Sprintf("%d", rate), "-timeout", "10"}
+	args := []string{"-jsonl", "-silent", "-no-color", "-disable-update-check",
+		"-rate-limit", fmt.Sprintf("%d", rate), "-timeout", "10", "-u", target}
+	for _, seed := range seeds {
+		if strings.TrimSpace(seed) != "" {
+			args = append(args, "-u", seed)
+		}
+	}
 	if len(cfg.Tags) > 0 {
 		args = append(args, "-tags", strings.Join(cfg.Tags, ","))
 	}
@@ -223,7 +234,7 @@ func RunNuclei(ctx context.Context, bin, target, auth string, cfg NucleiConfig, 
 		args = append(args, "-H", auth)
 	}
 	args = append(args, cfg.Args...)
-	run.Command = append([]string{bin}, args...)
+	run.Command = redactedCommand(bin, args)
 
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -339,13 +350,99 @@ func hasFlag(args []string, flag string) bool {
 func normalizePath(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Path == "" {
-		return strings.Split(strings.TrimSpace(raw), "?")[0]
+		return trimTrailingSlash(strings.Split(strings.TrimSpace(raw), "?")[0])
+	}
+	if frag := u.Fragment; strings.HasPrefix(frag, "/") || strings.HasPrefix(frag, "!") {
+		route := strings.TrimPrefix(frag, "!")
+		route, _, _ = strings.Cut(route, "?")
+		if route == "" {
+			route = "/"
+		}
+		if !strings.HasPrefix(route, "/") {
+			route = "/" + route
+		}
+		base := strings.TrimSuffix(u.Path, "/")
+		if base == "" {
+			return trimTrailingSlash(route)
+		}
+		return trimTrailingSlash(base + route)
 	}
 	path := u.Path
 	if path == "" {
 		path = "/"
 	}
+	return trimTrailingSlash(path)
+}
+
+// DedupeNormalizedFindings collapses findings repeated across auth runs while
+// preserving the strongest evidence tier. Exact fingerprints are the primary
+// identity; tools without them fall back to path/title.
+func DedupeNormalizedFindings(in []NormalizedFinding) []NormalizedFinding {
+	out := make([]NormalizedFinding, 0, len(in))
+	index := make(map[string]int, len(in))
+	for _, f := range in {
+		key := normalizedFindingKey(f)
+		if pos, ok := index[key]; ok {
+			if confidenceRank(f.Confidence) > confidenceRank(out[pos].Confidence) {
+				out[pos] = f
+			}
+			continue
+		}
+		index[key] = len(out)
+		out = append(out, f)
+	}
+	return out
+}
+
+func normalizedFindingKey(f NormalizedFinding) string {
+	base := strings.ToLower(strings.TrimSpace(f.Tool)) + "|" +
+		strings.ToLower(strings.TrimSpace(f.Target)) + "|" +
+		f.PluginID + "|" + f.RuleID + "|" + f.TemplateID
+	if f.Fingerprint != "" {
+		return base + "|fp:" + f.Fingerprint
+	}
+	return base + "|" + normalizePath(f.Path) + "|" + strings.ToLower(strings.TrimSpace(f.Title))
+}
+
+func confidenceRank(confidence string) int {
+	switch strings.ToLower(strings.TrimSpace(confidence)) {
+	case "confirmed":
+		return 3
+	case "firm":
+		return 2
+	case "tentative":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func trimTrailingSlash(path string) string {
+	if len(path) > 1 {
+		return strings.TrimRight(path, "/")
+	}
 	return path
+}
+
+func redactAuth(auth string) string {
+	if strings.TrimSpace(auth) == "" {
+		return ""
+	}
+	return "<redacted>"
+}
+
+func redactedCommand(bin string, args []string) []string {
+	out := append([]string{bin}, args...)
+	for i := 1; i < len(out); i++ {
+		switch out[i] {
+		case "--auth-header", "--auth-user-a", "--auth-user-b", "-H":
+			if i+1 < len(out) {
+				out[i+1] = "<redacted>"
+				i++
+			}
+		}
+	}
+	return out
 }
 
 func sanitize(s string) string {

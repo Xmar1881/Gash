@@ -40,7 +40,7 @@ type SPAHarvest struct {
 // the synthetic CommonCandidateParams fallback is intentionally not applied.
 func HarvestRendered(page headless.RenderedPage) SPAHarvest {
 	var out SPAHarvest
-	pageURL := headless.NormalizeObservedURL(page.URL)
+	pageURL := headless.NormalizeRenderedURL(page.URL)
 	body := []byte(page.HTML)
 	if pageURL != "" && len(body) > 0 {
 		out.Forms = ExtractForms(pageURL, body)
@@ -50,6 +50,14 @@ func HarvestRendered(page headless.RenderedPage) SPAHarvest {
 	seenPoints := make(map[string]bool, len(out.Points))
 	for _, p := range out.Points {
 		seenPoints[spaPointKey(p)] = true
+	}
+	for _, p := range searchHashFallbackPoints(pageURL, body) {
+		key := spaPointKey(p)
+		if seenPoints[key] {
+			continue
+		}
+		seenPoints[key] = true
+		out.Points = append(out.Points, p)
 	}
 	seenEndpoints := make(map[string]bool)
 	if pageURL != "" {
@@ -104,4 +112,73 @@ func HarvestRendered(page headless.RenderedPage) SPAHarvest {
 // spaPointKey mirrors the engine's point dedupe key.
 func spaPointKey(p InjectionPoint) string {
 	return strings.ToUpper(p.Method) + "|" + p.URL + "|" + p.ParamLocation + "|" + p.ParamName
+}
+
+const spaMaxSearchHashFallbackPoints = 12
+
+// searchHashFallbackPoints derives a tiny query vocabulary for rendered
+// search-like hash routes that expose no explicit query. Hash-routed SPAs
+// often render nav links such as "#/search" without a term; a browser-only
+// probe can safely try the conventional names because a finding is emitted
+// only after a real execution and a clean control.
+func searchHashFallbackPoints(pageURL string, body []byte) []InjectionPoint {
+	base, err := url.Parse(pageURL)
+	if err != nil || base.Host == "" {
+		return nil
+	}
+	var out []InjectionPoint
+	seen := map[string]bool{}
+	add := func(raw *url.URL) {
+		if raw == nil || !strings.EqualFold(raw.Hostname(), base.Hostname()) {
+			return
+		}
+		route, rawQuery, hasQuery := strings.Cut(raw.Fragment, "?")
+		if strings.TrimSpace(route) == "" || (hasQuery && strings.TrimSpace(rawQuery) != "") {
+			return
+		}
+		if !searchLikeHashRoute(route) {
+			return
+		}
+		clean := *raw
+		clean.Fragment = route
+		urlKey := clean.String()
+		for _, name := range []string{"q", "query", "search"} {
+			key := urlKey + "|" + name
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, InjectionPoint{
+				URL:           urlKey,
+				Method:        "GET",
+				ParamName:     name,
+				ParamLocation: "fragment",
+			})
+			if len(out) >= spaMaxSearchHashFallbackPoints {
+				return
+			}
+		}
+	}
+	add(base)
+	for _, href := range extractLinks(body) {
+		ref, err := url.Parse(strings.TrimSpace(href))
+		if err != nil {
+			continue
+		}
+		add(base.ResolveReference(ref))
+		if len(out) >= spaMaxSearchHashFallbackPoints {
+			break
+		}
+	}
+	return out
+}
+
+func searchLikeHashRoute(route string) bool {
+	lower := strings.ToLower(strings.Trim(route, "/"))
+	for _, marker := range []string{"search", "find", "query", "lookup"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }

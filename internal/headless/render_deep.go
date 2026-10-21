@@ -37,7 +37,7 @@ const (
 // caps keep the pass deterministic, and the scope gate ensures the browser
 // never produces third-party or out-of-scope traffic.
 func RenderPage(ctx context.Context, pageURL string, opts RenderOptions) (RenderedPage, error) {
-	target := NormalizeObservedURL(pageURL)
+	target := NormalizeRenderedURL(pageURL)
 	if target == "" {
 		return RenderedPage{}, fmt.Errorf("headless: render requires an absolute http(s) URL, got %q", pageURL)
 	}
@@ -224,7 +224,7 @@ func renderTarget(ctx context.Context, t *chromedp.Target, target string, opts R
 	}
 	stopObservers()
 	if finalURL != "" {
-		finalURL = NormalizeObservedURL(finalURL)
+		finalURL = NormalizeRenderedURL(finalURL)
 	}
 	return RenderedPage{URL: finalURL, HTML: html, NetworkURLs: collector.URLs()}, nil
 }

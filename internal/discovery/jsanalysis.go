@@ -42,6 +42,8 @@ const (
 	jsMaxInlinePerScript = 256 * 1024
 	// jsMaxInlineTotal crawl başına toplam inline JS tavanıdır (1 MB).
 	jsMaxInlineTotal = 1024 * 1024
+	// jsMaxHashRoutesPerFile keeps hash-route discovery bounded on bundles.
+	jsMaxHashRoutesPerFile = 20
 )
 
 // JSEndpoint JS içinde keşfedilen HTTP uç noktasıdır.
@@ -50,6 +52,14 @@ type JSEndpoint struct {
 	Resolved string   // base URL'e göre çözülmüş mutlak URL
 	Method   string   // GET/POST/... (çağrıdan yakalanamazsa GET)
 	Params   []string // sorgu parametre adları (tekilleştirilmiş, sıralı)
+}
+
+// JSHashRoute is a hash-router route found in JavaScript literals. Hash routes
+// never reach the server, so the engine turns them into fragment points for a
+// browser probe rather than HTTP requests.
+type JSHashRoute struct {
+	Path   string   // route after "#" (e.g. "/search")
+	Params []string // explicit query names, or conventional search names
 }
 
 // Secret JS gövdesinde bulunan gömülü sır adayıdır.
@@ -75,6 +85,7 @@ type JSStats struct {
 // JSReport pasif JS analizinin çıktısıdır.
 type JSReport struct {
 	Endpoints  []JSEndpoint
+	HashRoutes []JSHashRoute
 	Secrets    []Secret
 	SourceMaps []string
 	Stats      JSStats
@@ -107,6 +118,10 @@ var (
 	reAbsJSURL = regexp.MustCompile(`(?i)\bhttps?://[^\s"'` + "`" + `<>(){}]{3,1000}`)
 	// reJSString rota-benzeri literalleri taramak için tırnaklı string taramasıdır.
 	reJSString = regexp.MustCompile(jsQuoteClass + `(` + jsInnerClass + `{1,512})` + jsQuoteClass)
+	// reBacktickURL template literals are scanned separately: large minified
+	// bundles can make the generic quote scan miss a valid backtick route
+	// (measured on Juice Shop main.js), hiding its query parameter surface.
+	reBacktickURL = regexp.MustCompile("`([^`\\n]{1,512})`")
 	// reSourceMap `//# sourceMappingURL=` / `//@ sourceMappingURL=` yorumlarıdır.
 	reSourceMap = regexp.MustCompile(`(?m)//[#@]\s*sourceMappingURL=([^\s'"]+)`)
 	// reTemplateVar şablon ifadeleridir (${...} -> "1", deterministik).
@@ -200,6 +215,7 @@ func AnalyzeJS(baseURL string, body []byte) JSReport {
 
 	text := string(body)
 	secrets, scrubs := scanSecrets(text, baseURL)
+	rep.HashRoutes = findJSHashRoutes(text)
 	rep.Secrets = secrets
 	rep.SourceMaps = findSourceMaps(base, body)
 	for i, m := range rep.SourceMaps {
@@ -396,6 +412,64 @@ func shannonEntropy(s string) float64 {
 	return e
 }
 
+// findJSHashRoutes extracts hash-router literals such as "#/search" or
+// "#/search?q=". It only keeps explicit query routes and search-like routes;
+// every ordinary "#section" anchor is ignored to keep this surface precise.
+func findJSHashRoutes(s string) []JSHashRoute {
+	var out []JSHashRoute
+	byPath := map[string]int{}
+	add := func(raw string) {
+		if len(out) >= jsMaxHashRoutesPerFile {
+			return
+		}
+		lit := strings.TrimSpace(raw)
+		if !strings.HasPrefix(lit, "#/") {
+			return
+		}
+		route, rawQuery, hasQuery := strings.Cut(strings.TrimPrefix(lit, "#"), "?")
+		if route == "" || strings.ContainsAny(route, " \t\n") {
+			return
+		}
+		var params []string
+		if hasQuery {
+			vals, err := url.ParseQuery(rawQuery)
+			if err != nil {
+				return
+			}
+			for name := range vals {
+				params = append(params, name)
+			}
+			sort.Strings(params)
+		}
+		explicit := len(params) > 0
+		if !explicit {
+			if !searchLikeHashRoute(route) {
+				return
+			}
+			params = []string{"q", "query", "search"}
+		}
+		if pos, ok := byPath[route]; ok {
+			if explicit && isFallbackHashParams(out[pos].Params) {
+				out[pos] = JSHashRoute{Path: route, Params: params}
+			}
+			return
+		}
+		byPath[route] = len(out)
+		out = append(out, JSHashRoute{Path: route, Params: params})
+	}
+	for _, m := range reJSString.FindAllStringSubmatch(s, -1) {
+		add(stripLeadingTemplateHost(m[1]))
+	}
+	for _, m := range reBacktickURL.FindAllStringSubmatch(s, -1) {
+		add(stripLeadingTemplateHost(m[1]))
+	}
+	return out
+}
+
+func isFallbackHashParams(params []string) bool {
+	return len(params) == 3 && params[0] == "q" && params[1] == "query" && params[2] == "search"
+}
+
 // endpointCandidate ham yakalanan URL + işaret edilen HTTP fiilidir.
 type endpointCandidate struct {
 	raw    string
@@ -430,11 +504,43 @@ func collectEndpointCandidates(s string) []endpointCandidate {
 		add(trimJSPunctuation(raw), "GET")
 	}
 	for _, m := range reJSString.FindAllStringSubmatch(s, -1) {
-		if looksLikeRoutePath(m[1]) {
-			add(m[1], "GET")
+		lit := stripLeadingTemplateHost(m[1])
+		if looksLikeRoutePath(lit) {
+			add(lit, "GET")
+		}
+	}
+	for _, m := range reBacktickURL.FindAllStringSubmatch(s, -1) {
+		lit := stripLeadingTemplateHost(m[1])
+		if looksLikeRoutePath(lit) {
+			add(lit, "GET")
 		}
 	}
 	return out
+}
+
+// stripLeadingTemplateHost removes a leading host/base template expression so
+// literals like `${this.hostServer}/rest/products/search?q=${q}` become
+// `/rest/products/search?q=${q}`. Without this the template prefix was
+// replaced with "1", producing a bogus `1/rest/...` endpoint that hid the
+// real query parameter from the injection surface (Juice Shop).
+func stripLeadingTemplateHost(raw string) string {
+	for strings.HasPrefix(raw, "${") {
+		end := strings.IndexByte(raw, '}')
+		if end < 0 {
+			break
+		}
+		expr := strings.ToLower(raw[2:end])
+		if !strings.Contains(expr, "host") && !strings.Contains(expr, "base") &&
+			!strings.Contains(expr, "server") && !strings.Contains(expr, "origin") {
+			break
+		}
+		rest := raw[end+1:]
+		if !strings.HasPrefix(rest, "/") && !strings.HasPrefix(rest, "${") {
+			break
+		}
+		raw = rest
+	}
+	return raw
 }
 
 // looksLikeEndpointLiteral URL alanı ("url:" konfig) için "/" veya şema şartıdır.

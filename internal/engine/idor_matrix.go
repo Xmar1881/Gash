@@ -76,6 +76,9 @@ func (e *Engine) runCrossUserMatrix(ctx context.Context, client *probe.Client, p
 		if checked >= maxMatrixPoints {
 			break
 		}
+		if strings.EqualFold(strings.TrimSpace(p.ParamLocation), "fragment") {
+			continue
+		}
 		if !idorLikeParam[strings.ToLower(strings.TrimSpace(p.ParamName))] {
 			continue
 		}

@@ -53,6 +53,49 @@ func TestFormRequestBodyFullForm(t *testing.T) {
 	}
 }
 
+func TestPointValueURLFragment(t *testing.T) {
+	p := loader.JSPoint{ParamName: "q", ParamLocation: "fragment"}
+	payload := `"><iframe src="javascript:alert(window.__gashCanary=true)"></iframe>`
+	got := pointValueURL("http://example.com/app#/search?q=apple&page=2", p, payload)
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "/search?page=2&q=" + payload
+	if u.Fragment != want {
+		t.Fatalf("fragment = %q, want %q", u.Fragment, want)
+	}
+	if strings.Contains(got, "%2522") {
+		t.Fatalf("fragment is double-encoded: %q", got)
+	}
+	if u.RawQuery != "" {
+		t.Fatalf("fragment injection must not touch the server query: %q", u.RawQuery)
+	}
+	if got == pointValueURL("http://example.com/app#/search?q=apple&page=2", p, controlNeutralValue) {
+		t.Fatal("payload and control URLs must differ")
+	}
+}
+
+func TestPointQueryURLReplaysFormFields(t *testing.T) {
+	p := loader.JSPoint{
+		ParamName:     "id",
+		ParamLocation: "query",
+		FormValues: map[string]string{
+			"Submit": "Submit",
+			"id":     "1",
+		},
+	}
+	got := pointQueryURL("http://example.com/sqli", p, "1'")
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	if q.Get("id") != "1'" || q.Get("Submit") != "Submit" {
+		t.Fatalf("query replay wrong: %q", got)
+	}
+}
+
 func TestFormRequestBodyMultipart(t *testing.T) {
 	p := loader.JSPoint{
 		ParamName: "q",

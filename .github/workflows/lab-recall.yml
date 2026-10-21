@@ -3,7 +3,8 @@
 # Module: github.com/Xmar1881/Gash
 #
 # File: .github/workflows/lab-recall.yml
-# What: Manual compose-lab recall (DVWA / Juice Shop / WebGoat, localhost-only).
+# What: Manual compose-lab recall + Gash/Nuclei comparison (DVWA / Juice Shop /
+#   WebGoat, localhost-only).
 # Why: Seeded-lab precision/recall is measured on demand via workflow_dispatch;
 #   the PR gate (plugin-ci.yml) never runs aggressive scans and stays fast.
 #   No schedule on purpose: aggressive scans run only when a human clicks
@@ -37,7 +38,7 @@ concurrency:
 jobs:
   lab-recall:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -48,6 +49,28 @@ jobs:
 
       - name: Build scanner
         run: go build ./...
+
+      - name: Install Chrome (for browser verification)
+        run: |
+          if ! command -v google-chrome &>/dev/null && [ ! -x "/usr/bin/google-chrome" ]; then
+            sudo apt-get update && sudo apt-get install -y google-chrome-stable
+          fi
+          CHROME_BIN="$(command -v google-chrome || echo /usr/bin/google-chrome)"
+          echo "Using Chrome: $CHROME_BIN"
+          "$CHROME_BIN" --version
+          echo "CHROME_BIN=$CHROME_BIN" >> "$GITHUB_ENV"
+
+      - name: Build deep scanner
+        run: |
+          mkdir -p bin
+          go build -tags deep -o bin/gash-deep ./cmd/gash
+
+      - name: Install nuclei (with templates)
+        run: |
+          go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+          "$(go env GOPATH)/bin/nuclei" -version
+          "$(go env GOPATH)/bin/nuclei" -update-templates -silent
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Scope guard (red line, fail-closed)
         # Kırmızı çizgi: taranacak her hedef 127.0.0.1 loopback olmalı.
@@ -97,6 +120,23 @@ jobs:
 
       - name: Scan WebGoat (localhost only)
         run: go run ./cmd/gash scan --target http://127.0.0.1:8083/WebGoat --scope 127.0.0.1 --aggressive --format json --output lab-webgoat.json
+
+      - name: Benchmark comparison (compose lab, deep browser verification)
+        # Same pinned localhost lab, same seeds and budgets for both tools.
+        # The deep binary verifies browser-exec scenarios with Chrome.
+        run: |
+          ./bin/gash-deep bench run \
+            --dataset bench/datasets/compose-lab.yaml \
+            --gash-bin "$PWD/bin/gash-deep" \
+            --tool gash,nuclei \
+            --out bench/results/lab-comparison
+
+      - name: Show benchmark comparison summary
+        if: always()
+        run: |
+          if [ -f bench/results/lab-comparison/summary.md ]; then
+            cat bench/results/lab-comparison/summary.md
+          fi
 
       - name: Summarize (counts only, TP/FP manual)
         # SADECE ham sayım: findings toplamı + rule_id/confidence kırılımı +
@@ -150,6 +190,7 @@ jobs:
             lab-juiceshop.json
             lab-webgoat.json
             recall-summary.md
+            bench/results/lab-comparison
           retention-days: 30
 
       - name: PR diff talimati (docs update is manual)
@@ -158,7 +199,8 @@ jobs:
         run: |
           cat <<'EOF'
           === LAB-RECALL PR TALIMATI (manuel, review'li) ===
-          1. Bu job'un "lab-recall" artifact'ini indir (lab-*.json + recall-summary.md).
+          1. Bu job'un "lab-recall" artifact'ini indir (lab-*.json + recall-summary.md
+             + bench/results/lab-comparison/).
           2. Seed listesini sabitle: docker images --digests ciktisi + imaj surumleri
              (DVWA 2.0 / Juice Shop 17.1.0 / WebGoat 2023.8).
           3. Her hedef icin TP/FP'yi EL ILE hukme bagla:

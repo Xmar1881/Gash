@@ -1,0 +1,507 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# Native-lab dataset: OWASP Juice Shop, DVWA and WebGoat running as local
+# processes (no Docker). This is the Docker-free counterpart of compose-lab.
+# It only exists because Docker is unavailable on the benchmark host; results
+# are labelled "native lab" and must not be presented as compose results.
+#
+# DVWA session cookies are environment-specific. Mind the login flow
+# (CSRF user_token, see docs/metrics/native-lab-2026-10-20.md) and replace the
+# placeholders below with freshly minted sessions:
+#
+#   Cookie: PHPSESSID=<session-id>; security=low
+#
+# Scenarios marked auth: user-a/user-b are only verifiable with valid sessions.
+
+version: "1"
+name: native-lab
+kind: native
+description: |
+  Docker-free native lab on 127.0.0.1: Juice Shop 17.1.0 (:8082),
+  DVWA 2.0.1 on PHP 8.3 + MariaDB 10.11 (:8081), WebGoat 2023.8 (:8083).
+  DVWA lessons need a logged-in session (admin/gordonb) and security=low.
+
+allow_hosts: [127.0.0.1, "::1", localhost]
+
+gash:
+  timeout: 12m
+  args:
+    - --profile
+    - standard
+    - --active
+    - --rate-limit
+    - "80"
+    - --plugin-timeout
+    - 20s
+    - --request-timeout
+    - 2s
+    - --max-requests-total
+    - "6000"
+    - --max-requests-per-target
+    - "3000"
+    - --scope
+    - "127.0.0.1,localhost"
+
+nuclei:
+  timeout: 10m
+  rate_limit: 80
+  tags: [xss, sqli, lfi, rce, redirect, exposure]
+  args:
+    - -dast
+    - -fa
+    - high
+
+unscored_plugins:
+  - missing-security-headers
+  - clickjacking-frameable
+  - cookie-flags
+  - csrf-token-absence
+  - server-version-disclosure
+  - error-message-disclosure
+  - directory-listing
+  - source-map-exposure
+  - management-endpoint-exposure
+  - verb-tampering-bypass
+  - hpp-parameter-pollution
+  - hpp-duplicate-emission
+  - cors-misconfig
+  - insecure-cors-preflight
+  - cache-poisoning-host-header
+  - web-cache-poisoning-basic
+  - host-header-injection
+  - crlf-header-injection
+  - http-response-splitting
+  - template-injection-reflection
+  - expression-language-injection
+  - ssti-blind-timing
+  - xpath-injection-error
+  - ldap-injection-differential
+  - ldap-injection-blind
+  - nosql-injection-error
+  - nosql-auth-bypass-differential
+  - sqli-stacked-time
+  - sqli-time-based
+  - blind-sqli-oob
+  - xxe-reflected-basic
+  - xxe-oob
+  - xml-external-entity-blind
+  - ssrf-cloud-metadata
+  - ssrf-internal-port-scan
+  - ssrf-blind-oob
+  - log4shell-jndi
+  - file-inclusion-rfi
+  - rfi-remote-include
+  - file-upload-unrestricted
+  - insecure-deserialization-error
+  - jsonp-callback-injection
+  - prototype-pollution-differential
+  - graphql-endpoint-discovery
+  - graphql-introspection-enabled
+  - jwt-alg-confusion
+  - jwt-none-alg-confusion
+  - jwt-token-exposure
+  - cve-dependency-scan
+  - webdav-enabled
+  - mass-assignment-basic
+  - ssi-injection
+  - nextjs-middleware-bypass
+  - nextjs-image-optimizer-ssrf
+
+targets:
+  - id: juiceshop
+    base_url: "http://127.0.0.1:8082"
+    notes: "Official juice-shop-17.1.0_node22_win32_x64 release served by Node.js 22"
+    # Nuclei is a template scanner, not a crawler. Supplying the lab surface
+    # explicitly gives both tools the same chance without hiding Gash's crawl.
+    nuclei_seeds:
+      - /rest/products/search?q=apple
+      - /metrics
+      - /api-docs/
+      - /README.md
+      - /.gitignore
+      - /.github/workflows/main.yml
+      - /phpinfo.php
+      - /swagger.json
+  - id: dvwa
+    base_url: "http://127.0.0.1:8081"
+    notes: "DVWA 2.0.1 source on native PHP 8.3.35 + MariaDB 10.11.9; replace session placeholders"
+    nuclei_seeds:
+      - /vulnerabilities/sqli/?id=1&Submit=Submit
+      - /vulnerabilities/sqli_blind/?id=1&Submit=Submit
+      - /vulnerabilities/xss_r/?name=hello
+      - /vulnerabilities/xss_d/?default=English
+      - /vulnerabilities/fi/?page=include.php
+      - /README.md
+      - /.gitignore
+      - /.github/workflows/main.yml
+      - /phpinfo.php
+    auth:
+      user-a: "Cookie: PHPSESSID=<dvwa-admin-session>; security=low"
+      user-b: "Cookie: PHPSESSID=<dvwa-gordonb-session>; security=low"
+  - id: webgoat
+    base_url: "http://127.0.0.1:8083"
+    notes: "webgoat-2023.8.jar on portable JDK 17 (WEBGOAT_PORT=8083, WEBWOLF_PORT=9090)"
+
+scenarios:
+  - id: juiceshop-sqli-search
+    category: sqli
+    subcategory: error-based
+    cwe: CWE-89
+    target_id: juiceshop
+    path: /rest/products/search?q=apple
+    expected: vulnerable
+    verify:
+      kind: http-error
+      param: q
+      payload: "apple'"
+      expect_contains: ["SQLITE_ERROR", "syntax error"]
+      timeout: 20s
+    match:
+      plugin_ids: [sqli-error-based, sqli-boolean-differential]
+      nuclei_tags: [sqli]
+
+  - id: juiceshop-xss-dom-search
+    category: xss-dom
+    subcategory: search-route
+    cwe: CWE-79
+    target_id: juiceshop
+    path: "/#/search?q=apple"
+    expected: vulnerable
+    notes: |
+      Juice Shop's documented DOM XSS in the search route; confirmed only by
+      browser execution, so execution_required is set.
+    xss: {kind: dom, context: html, execution_required: true}
+    verify:
+      kind: browser-exec
+      path: "/#/search?q={payload}"
+      payload: '<iframe src="javascript:alert(window.__gashCanary=true)">'
+      timeout: 60s
+    match:
+      plugin_ids: [dom-sink-basic]
+      nuclei_tags: [xss]
+
+  - id: juiceshop-metrics-exposure
+    category: exposure
+    subcategory: prometheus-metrics
+    cwe: CWE-200
+    target_id: juiceshop
+    path: /metrics
+    expected: vulnerable
+    notes: "Real Prometheus exposition; stock Nuclei's prometheus template does not match Juice Shop's metric names."
+    verify:
+      kind: http-exposure
+      expect_contains: ["# HELP", "# TYPE"]
+      timeout: 20s
+    match:
+      plugin_ids: [engine-content-discovery]
+      nuclei_tags: [exposure]
+
+  - id: juiceshop-api-docs-exposure
+    category: exposure
+    subcategory: api-documentation
+    cwe: CWE-200
+    target_id: juiceshop
+    path: /api-docs/
+    expected: vulnerable
+    verify:
+      kind: http-exposure
+      expect_contains: ["Swagger UI", "swagger"]
+      timeout: 20s
+    match:
+      plugin_ids: [engine-content-discovery]
+      nuclei_tags: [exposure]
+
+  - id: juiceshop-readme-soft404
+    category: clean
+    subcategory: spa-soft404
+    target_id: juiceshop
+    path: /README.md
+    expected: clean
+    notes: "Juice Shop serves its SPA shell with 200 for this path; there is no README file."
+    verify:
+      kind: http-soft404
+      expect_contains: ["<app-root"]
+      timeout: 20s
+    match:
+      plugin_ids: [engine-content-discovery, backup-file-exposure]
+      nuclei_tags: [exposure]
+
+  - id: juiceshop-gitignore-soft404
+    category: clean
+    subcategory: spa-soft404
+    target_id: juiceshop
+    path: /.gitignore
+    expected: clean
+    verify:
+      kind: http-soft404
+      expect_contains: ["<app-root"]
+      timeout: 20s
+    match:
+      plugin_ids: [engine-content-discovery, backup-file-exposure]
+      nuclei_tags: [exposure]
+
+  - id: juiceshop-workflow-soft404
+    category: clean
+    subcategory: spa-soft404
+    target_id: juiceshop
+    path: /.github/workflows/main.yml
+    expected: clean
+    verify:
+      kind: http-soft404
+      expect_contains: ["<app-root"]
+      timeout: 20s
+    match:
+      plugin_ids: [engine-content-discovery, backup-file-exposure]
+      nuclei_tags: [exposure]
+
+  - id: juiceshop-phpinfo-soft404
+    category: clean
+    subcategory: spa-soft404
+    target_id: juiceshop
+    path: /phpinfo.php
+    expected: clean
+    verify:
+      kind: http-soft404
+      expect_contains: ["<app-root"]
+      timeout: 20s
+    match:
+      plugin_ids: [engine-content-discovery, phpinfo-exposure, backup-file-exposure]
+      nuclei_tags: [exposure]
+
+  - id: juiceshop-swagger-soft404
+    category: clean
+    subcategory: spa-soft404
+    target_id: juiceshop
+    path: /swagger.json
+    expected: clean
+    verify:
+      kind: http-soft404
+      expect_contains: ["<app-root"]
+      timeout: 20s
+    match:
+      plugin_ids: [engine-content-discovery, backup-file-exposure]
+      nuclei_tags: [exposure]
+
+  - id: dvwa-sqli
+    category: sqli
+    subcategory: error-based
+    cwe: CWE-89
+    target_id: dvwa
+    auth: user-a
+    path: /vulnerabilities/sqli/?id=1&Submit=Submit
+    expected: vulnerable
+    verify:
+      kind: http-error
+      param: id
+      payload: "1'"
+      expect_contains: ["You have an error in your SQL syntax"]
+      timeout: 20s
+    match:
+      plugin_ids: [sqli-error-based, sqli-boolean-differential]
+      nuclei_tags: [sqli]
+
+  - id: dvwa-xss-reflected
+    category: xss-reflected
+    subcategory: html-body
+    cwe: CWE-79
+    target_id: dvwa
+    auth: user-a
+    path: /vulnerabilities/xss_r/?name=hello
+    expected: vulnerable
+    xss: {kind: reflected, context: html}
+    verify:
+      kind: http-reflection
+      param: name
+      payload: "<script>{marker}</script>"
+      timeout: 20s
+    match:
+      plugin_ids: [xss-reflected-basic]
+      nuclei_tags: [xss]
+
+  - id: dvwa-sqli-blind
+    category: sqli
+    subcategory: blind-boolean
+    cwe: CWE-89
+    target_id: dvwa
+    auth: user-a
+    path: /vulnerabilities/sqli_blind/?id=1&Submit=Submit
+    expected: vulnerable
+    verify:
+      kind: http-error
+      param: id
+      payload: "1'"
+      expect_contains: ["You have an error in your SQL syntax"]
+      timeout: 20s
+    match:
+      plugin_ids: [sqli-boolean-differential, sqli-error-based]
+      nuclei_tags: [sqli]
+
+  - id: dvwa-xss-dom
+    category: xss-dom
+    subcategory: document-write
+    cwe: CWE-79
+    target_id: dvwa
+    auth: user-a
+    path: /vulnerabilities/xss_d/?default=English
+    expected: vulnerable
+    notes: "Low-security DVWA DOM XSS: location.href source is written via document.write."
+    xss: {kind: dom, context: html, execution_required: false}
+    verify:
+      kind: browser-exec
+      path: /vulnerabilities/xss_d/?default={payload}
+      payload: "'><svg onload=\"window.__gashCanary=true\">"
+      timeout: 60s
+    match:
+      plugin_ids: [dom-sink-basic]
+      nuclei_tags: [xss]
+
+  - id: dvwa-lfi
+    category: lfi
+    subcategory: path-traversal
+    cwe: CWE-22
+    target_id: dvwa
+    auth: user-a
+    path: /vulnerabilities/fi/?page=include.php
+    expected: vulnerable
+    verify:
+      kind: http-error
+      param: page
+      payload: 'C:\Windows\win.ini'
+      expect_contains: ["[fonts]", "for 16-bit app support"]
+      timeout: 20s
+    match:
+      plugin_ids: [path-traversal-error]
+      nuclei_tags: [lfi]
+
+  - id: dvwa-readme-exposure
+    category: exposure
+    subcategory: readme
+    cwe: CWE-200
+    target_id: dvwa
+    auth: user-a
+    path: /README.md
+    expected: vulnerable
+    verify:
+      kind: http-exposure
+      expect_contains: ["# DAMN VULNERABLE WEB APPLICATION", "Damn Vulnerable Web Application"]
+      timeout: 20s
+    match:
+      plugin_ids: [engine-content-discovery]
+      nuclei_tags: [exposure]
+
+  - id: dvwa-gitignore-exposure
+    category: exposure
+    subcategory: gitignore
+    cwe: CWE-200
+    target_id: dvwa
+    auth: user-a
+    path: /.gitignore
+    expected: vulnerable
+    verify:
+      kind: http-exposure
+      expect_contains: ["config/config.inc.php.bak", "Dockerfile"]
+      timeout: 20s
+    match:
+      plugin_ids: [engine-content-discovery]
+      nuclei_tags: [exposure]
+
+  - id: dvwa-workflow-exposure
+    category: exposure
+    subcategory: github-workflow
+    cwe: CWE-200
+    target_id: dvwa
+    auth: user-a
+    path: /.github/workflows/main.yml
+    expected: vulnerable
+    verify:
+      kind: http-exposure
+      expect_contains: ["name: CI", "on:"]
+      timeout: 20s
+    match:
+      plugin_ids: [engine-content-discovery]
+      nuclei_tags: [exposure]
+
+  - id: dvwa-phpinfo-exposure
+    category: exposure
+    subcategory: phpinfo
+    cwe: CWE-200
+    target_id: dvwa
+    auth: user-a
+    path: /phpinfo.php
+    expected: vulnerable
+    verify:
+      kind: http-exposure
+      expect_contains: ["PHP Version", "phpinfo()"]
+      timeout: 20s
+    match:
+      plugin_ids: [phpinfo-exposure, engine-content-discovery]
+      nuclei_tags: [exposure]
+
+  - id: dvwa-about-clean
+    category: clean
+    subcategory: static-page
+    target_id: dvwa
+    auth: user-a
+    path: /about.php
+    expected: clean
+    verify:
+      kind: http-clean
+      param: probe
+      payload: "<script>alert(1)</script>"
+      expect_not_contains: ["<script>alert(1)</script>"]
+      timeout: 20s
+    match:
+      plugin_ids: [xss-reflected-basic, sqli-error-based, open-redirect-param]
+      nuclei_tags: [xss, sqli]
+
+  - id: dvwa-about-clean-user-b
+    category: clean
+    subcategory: static-page
+    target_id: dvwa
+    auth: user-b
+    path: /about.php
+    expected: clean
+    notes: "Same page under a second session: catches session-dependent false positives."
+    verify:
+      kind: http-clean
+      param: probe
+      payload: "<script>alert(1)</script>"
+      expect_not_contains: ["<script>alert(1)</script>"]
+      timeout: 20s
+    match:
+      plugin_ids: [xss-reflected-basic, sqli-error-based, open-redirect-param]
+      nuclei_tags: [xss, sqli]
+
+  - id: dvwa-login-page-clean
+    category: clean
+    subcategory: login-page
+    target_id: dvwa
+    path: /login.php
+    expected: clean
+    verify:
+      kind: http-clean
+      param: probe
+      payload: "<script>alert(1)</script>"
+      expect_not_contains: ["<script>alert(1)</script>"]
+      timeout: 20s
+    match:
+      plugin_ids: [xss-reflected-basic, sqli-error-based, open-redirect-param]
+      nuclei_tags: [xss, sqli]
+
+  - id: webgoat-login-page-clean
+    category: clean
+    subcategory: login-page
+    target_id: webgoat
+    path: /WebGoat/login
+    expected: clean
+    verify:
+      kind: http-clean
+      param: probe
+      payload: "<script>alert(1)</script>"
+      expect_not_contains: ["<script>alert(1)</script>"]
+      timeout: 20s
+    match:
+      plugin_ids: [xss-reflected-basic, sqli-error-based, open-redirect-param]
+      nuclei_tags: [xss, sqli]

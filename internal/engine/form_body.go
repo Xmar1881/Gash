@@ -14,12 +14,77 @@ import (
 	"github.com/Xmar1881/Gash/internal/plugin/loader"
 )
 
+const controlNeutralValue = "gash-control-neutral"
+
 // formRequestBody builds headers and body for one body-location injection.
 // What: full-form replay when the point carries FormValues (target field =
 // payload, every other field verbatim, tokens included); legacy single-field
 // urlencoded body otherwise, or the raw value when no parameter name exists.
 // Why: real forms enforce server-side state and CSRF checks, so single-field
 // bodies are rejected before the vulnerable sink is reached.
+// pointQueryURL builds a query-location request URL with full-form replay:
+// the target field carries value and every co-field keeps its browser value.
+// Why: PHP handlers commonly gate on the submit button (?Submit=Submit), so
+// mutating only the text field never reaches the vulnerable sink.
+func pointQueryURL(rawURL string, p loader.JSPoint, value string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	q := u.Query()
+	for k, v := range p.FormValues {
+		if k != p.ParamName {
+			q.Set(k, v)
+		}
+	}
+	if p.ParamName != "" {
+		q.Set(p.ParamName, value)
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// pointValueURL applies one value to either the server query or a hash-route
+// query. A fragment never reaches the server, so callers must use it only for
+// browser navigation, never for an HTTP request.
+func pointValueURL(rawURL string, p loader.JSPoint, value string) string {
+	if strings.EqualFold(strings.TrimSpace(p.ParamLocation), "fragment") {
+		return fragmentQueryURL(rawURL, p, value)
+	}
+	return pointQueryURL(rawURL, p, value)
+}
+
+func fragmentQueryURL(rawURL string, p loader.JSPoint, value string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	route, rawQuery, _ := strings.Cut(u.Fragment, "?")
+	if strings.TrimSpace(route) == "" {
+		return rawURL
+	}
+	q, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		q = url.Values{}
+	}
+	for k, v := range p.FormValues {
+		if k != p.ParamName {
+			q.Set(k, v)
+		}
+	}
+	if p.ParamName != "" {
+		q.Set(p.ParamName, value)
+	}
+	// Build the fragment manually: URL.String re-escapes percent signs in
+	// Fragment, which would turn an encoded payload into %2522... and break
+	// raw location.hash consumers. Keep the server query untouched.
+	encodedRoute := (&url.URL{Fragment: route}).EscapedFragment()
+	base := *u
+	base.Fragment = ""
+	base.RawFragment = ""
+	return base.String() + "#" + encodedRoute + "?" + strings.ReplaceAll(q.Encode(), "+", "%20")
+}
+
 func formRequestBody(p loader.JSPoint, param, value string) (map[string]string, []byte) {
 	if param != "" && len(p.FormValues) > 0 {
 		if strings.Contains(strings.ToLower(p.FormEnctype), "multipart/form-data") {

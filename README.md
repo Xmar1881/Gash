@@ -106,11 +106,14 @@ permission to test (`--scope` opts into a strict allowlist; see Legal).
   `oob: required` plugins skip honestly (`oob-not-configured`). Multi-variant
   corpora use single-use tokens verified in one shared bounded window; no
   callback means no finding.
-- **Headless-deep path** — static DOM sinks report up to `firm` today;
-  browser `confirmed` requires the headless build (`internal/headless`,
-  `deep` build path) plus a clean control. `--browser-verify` (needs
-  `--active`) re-checks eligible reflected-XSS findings in a real browser and
-  upgrades to `confirmed` only on trigger with clean control.
+- **Headless-deep path** — static DOM sinks report up to `firm`; browser
+  `confirmed` requires the headless build (`internal/headless`, `deep` build
+  path) plus a clean control. Fragment/hash routes (`#/route?q=...`) are
+  discovered from links, rendered SPA surfaces, and JS string literals, then
+  exercised through `--browser-verify`; `dom-sink-basic` collapses duplicate
+  per-route sink evidence. `--browser-verify` (needs `--active`) also
+  re-checks eligible reflected-XSS findings and upgrades to `confirmed` only
+  on trigger with clean control.
 - **JUnit + SARIF** — SARIF 2.1.0 primary for CI code scanning, plus JSON,
   text, HTML, and JUnit. Tentative stays hidden unless `--show-tentative`.
 - **Supply-chain + static gates in CI** — `govulncheck` dependency CVE scan
@@ -133,14 +136,22 @@ dataset reports `TP=2 FP=0 TN=8 FN=0` at `static-execution-evidence`. That is a
 corpus result, not a claim of real-world recall across every framework,
 browser, WAF, or application shape.
 Headless execution is implemented behind `-tags deep` (chromedp, verified
-against real Chrome); a compose-lab recall run and a Nuclei comparison
-remain tracked work in [`docs/known-limits.md`](docs/known-limits.md).
+against real Chrome). The 2026-10-20 native lab (Juice Shop, DVWA, WebGoat)
+measured all 22 independently verified scenarios: Gash standard
+`TP=11 FP=0 TN=9 FN=2` (P=1.000, R=0.846), Gash deep `TP=12 FP=0 TN=9 FN=1`
+(P=1.000, R=0.923), and Nuclei `TP=5 FP=0 TN=9 FN=8` (P=1.000, R=0.385).
+Those are lab-scoped numbers, not a general superiority claim. They predate
+the 2026-10-21 hash-route/browser-probe and benchmark-dedupe changes, so they
+must be re-measured before being quoted as the current result; see
+[`docs/metrics/native-lab-2026-10-20.md`](docs/metrics/native-lab-2026-10-20.md).
 
 ## How It Differs
 
 Honest comparison — Gash is experimental (`v0.1.0-dev`, 75 reference
 plugins) and competes on verification discipline, not on maturity or library
-size. No Gash-versus-Nuclei benchmark has been run (not compared); see
+size. A same-target Gash-versus-Nuclei measurement now exists on the native
+lab and fixture lab; it is small and lab-scoped, not a general parity claim.
+See `docs/metrics/native-lab-2026-10-20.md` and
 `docs/metrics/nuclei-comparison-2026-10-14.md`.
 
 | Capability | Gash | Nuclei | OWASP ZAP | Burp Suite |
@@ -337,11 +348,11 @@ gates regressions against `bench/baselines/fixtures.json`
 `docs/metrics/benchmark-fixtures-2026-10-19.md`). Lab procedures
 (`docker-compose.lab.yml`: DVWA 2.0, Juice Shop 17.1.0, WebGoat 2023.8) are
 manual and recorded per report. The first measured recall is the localhost
-synthetic lab (`docs/metrics/lab-aggressive-local-2026-10-14.md`); the
-compose lab is BLOCKED without docker
-(`docs/metrics/lab-compose-dvwa-juiceshop-2026-10-14.md`); Nuclei comparison
-is explicitly not compared
-(`docs/metrics/nuclei-comparison-2026-10-14.md`).
+synthetic lab (`docs/metrics/lab-aggressive-local-2026-10-14.md`). The full
+native lab is now measured (`docs/metrics/native-lab-2026-10-20.md`); Docker
+compose reproduction remains unavailable in this environment
+(`docs/metrics/lab-compose-2026-10-15.md`). Nuclei was compared on both the
+native and fixture labs (`docs/metrics/nuclei-comparison-2026-10-14.md`).
 
 ## Responsible Use
 

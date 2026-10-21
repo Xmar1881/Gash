@@ -67,6 +67,8 @@ func ruleAndCWE(oracleName string) (string, string) {
 		return "GASH-001", "CWE-79"
 	case "stored", "storedexecution", "stored-execution", "stored_execution":
 		return "GASH-002", "CWE-79"
+	case "execution", "dom-xss", "dom-sink", "dom":
+		return "GASH-003", "CWE-79"
 	case "error", "differential":
 		return "GASH-004", "CWE-89"
 	case "redirect":
@@ -113,6 +115,8 @@ func ruleForPlugin(pluginID, oracleName string) (string, string) {
 		return "GASH-008", "CWE-918"
 	case strings.Contains(id, "content") || strings.Contains(id, "exposed-path"):
 		return "GASH-028", "CWE-200"
+	case strings.Contains(id, "path-traversal") || strings.Contains(id, "traversal"):
+		return "GASH-017", "CWE-22"
 	case strings.Contains(id, "idor") || strings.Contains(id, "bola"):
 		return "GASH-005", "CWE-639"
 	// Lab-batch dedektörleri (çakışma yok; yeni ID'ler 029-032):
@@ -254,7 +258,8 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 	// Pasif JS recon sayaçları (crawl kapalı/başarısızken 0).
 	jsReconStats := map[string]int{
 		"js_files_fetched": 0, "js_endpoints_found": 0,
-		"js_secrets_found": 0, "js_maps_fetched": 0,
+		"js_hash_routes_found": 0,
+		"js_secrets_found":     0, "js_maps_fetched": 0,
 	}
 	// GASH-071/072 content scans (crawl kapalı/başarısızken 0).
 	spaStateStats := map[string]int{"spa_state_pages": 0, "spa_state_secrets": 0}
@@ -565,10 +570,11 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 			"flow_bypass_checked": flowStats["flow_bypass_checked"],
 			"flow_requests":       flowStats["flow_requests"],
 			// Pasif JS recon sayaçları (crawl kapalı/başarısızken 0).
-			"js_files_fetched":   jsReconStats["js_files_fetched"],
-			"js_endpoints_found": jsReconStats["js_endpoints_found"],
-			"js_secrets_found":   jsReconStats["js_secrets_found"],
-			"js_maps_fetched":    jsReconStats["js_maps_fetched"],
+			"js_files_fetched":     jsReconStats["js_files_fetched"],
+			"js_endpoints_found":   jsReconStats["js_endpoints_found"],
+			"js_hash_routes_found": jsReconStats["js_hash_routes_found"],
+			"js_secrets_found":     jsReconStats["js_secrets_found"],
+			"js_maps_fetched":      jsReconStats["js_maps_fetched"],
 			// GASH-071/072 embedded-state and dev-build content scans.
 			"spa_state_pages":   spaStateStats["spa_state_pages"],
 			"spa_state_secrets": spaStateStats["spa_state_secrets"],
@@ -636,6 +642,22 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 			results, err := loader.ExecuteTier1WithOptions(pctx, &spec, file, target, sender, loader.Tier1Options{OOB: e.oobSource()})
 			if err != nil {
 				return nil, err
+			}
+			// Keşif geri beslemesi (ölçülmüş recall boşluğu): kökte sonuç
+			// yoksa, keşfedilmiş injection noktalarında yalnızca eşleşen tek
+			// parametre denenir; ilk isabette durulur. Bütçe plugin
+			// politikasıyla aynı kapıdan geçer; bir adayın bütçe hatası
+			// sonraki adayların sonuçlarını düşürmez.
+			if len(results) == 0 {
+				for _, dp := range tier1DiscoveryPoints(target, file.Request.ParamNames, points) {
+					pointFile := *file
+					pointFile.Request.ParamNames = []string{dp.Param}
+					pointResults, _ := loader.ExecuteTier1WithOptions(pctx, &spec, &pointFile, dp.URL, sender, loader.Tier1Options{OOB: e.oobSource()})
+					results = append(results, pointResults...)
+					if len(pointResults) > 0 {
+						break
+					}
+				}
 			}
 			for _, r := range results {
 				rule, cwe := ruleForPlugin(spec.ID, r.Candidate.OracleName)
@@ -798,13 +820,13 @@ func (e *Engine) jsEnvForScan(pctx context.Context, target string, client *probe
 			}
 		case "header":
 			reqHeaders = map[string]string{p.ParamName: value}
+		case "fragment":
+			// Fragments are never sent to the server. Only the browser probe
+			// binding may exercise them; an HTTP replay here would silently
+			// test the base page and could fabricate unrelated evidence.
+			return loader.JSResponse{URL: rawURL}, nil
 		default: // "query"
-			if p.ParamName != "" {
-				built, err := withScanQueryParam(rawURL, p.ParamName, value)
-				if err == nil {
-					rawURL = built
-				}
-			}
+			rawURL = pointQueryURL(rawURL, p, value)
 		}
 
 		resp, err := client.Send(pctx, method, rawURL, reqHeaders, reqBody)
@@ -876,6 +898,24 @@ func (e *Engine) jsEnvForScan(pctx context.Context, target string, client *probe
 				return true, res.Triggered, res.ControlClean, nil
 			}
 		}
+		if verifier, _ := e.browserVerifier(); verifier != nil {
+			env.BrowserProbe = func(p loader.JSPoint, payload string) (bool, bool, bool, error) {
+				base := strings.TrimSpace(p.URL)
+				if base == "" {
+					base = target
+				}
+				payloadURL := pointValueURL(base, p, payload)
+				controlURL := pointValueURL(base, p, controlNeutralValue)
+				if payloadURL == "" || controlURL == "" || payloadURL == controlURL {
+					return false, false, false, fmt.Errorf("browser probe: payload and control URL must differ")
+				}
+				triggered, clean, err := verifier(pctx, payloadURL, controlURL)
+				if err != nil {
+					return false, false, false, err
+				}
+				return true, triggered, clean, nil
+			}
+		}
 	}
 	return env
 }
@@ -891,6 +931,71 @@ func readOnlyJSPoints(points []loader.JSPoint) []loader.JSPoint {
 		case "", http.MethodGet, http.MethodHead, http.MethodOptions:
 			out = append(out, p)
 		}
+	}
+	return out
+}
+
+// tier1DiscoveryPointCap bounds discovery feedback per Tier 1 plugin run.
+// What: At most this many discovered points get a root-miss fallback attempt.
+// Why: Keeps the added requests bounded even on large discovered surfaces.
+const tier1DiscoveryPointCap = 6
+
+// tier1DiscoveryPoint pairs a discovered injection-point URL with the single
+// query parameter that matched the plugin's declared parameter list.
+type tier1DiscoveryPoint struct {
+	URL   string
+	Param string
+}
+
+// tier1DiscoveryPoints returns discovered query injection points carrying a
+// parameter name the Tier 1 plugin declared.
+// What: Bounded, parameter-matched discovery feedback for root-only probing.
+// Why: Multi-endpoint surfaces made root-only probing miss real findings
+// (measured recall gap). Each point pins exactly one declared parameter so the
+// fallback costs one parameter's probes instead of the full matrix; host,
+// method, and location filters keep the extra requests targeted and in-scope.
+func tier1DiscoveryPoints(target string, paramNames []string, points []loader.JSPoint) []tier1DiscoveryPoint {
+	if len(paramNames) == 0 || len(points) == 0 {
+		return nil
+	}
+	want := make(map[string]bool, len(paramNames))
+	for _, p := range paramNames {
+		if p = strings.ToLower(strings.TrimSpace(p)); p != "" {
+			want[p] = true
+		}
+	}
+	if len(want) == 0 {
+		return nil
+	}
+	tu, err := url.Parse(target)
+	if err != nil {
+		return nil
+	}
+	var out []tier1DiscoveryPoint
+	seen := map[string]bool{}
+	for _, pt := range points {
+		if len(out) >= tier1DiscoveryPointCap {
+			break
+		}
+		if pt.URL == "" || pt.URL == target || seen[pt.URL] {
+			continue
+		}
+		param := strings.ToLower(strings.TrimSpace(pt.ParamName))
+		if !want[param] {
+			continue
+		}
+		if pt.ParamLocation != "" && !strings.EqualFold(pt.ParamLocation, "query") {
+			continue
+		}
+		if m := strings.ToUpper(strings.TrimSpace(pt.Method)); m != "" && m != http.MethodGet {
+			continue
+		}
+		pu, err := url.Parse(pt.URL)
+		if err != nil || !strings.EqualFold(pu.Host, tu.Host) {
+			continue
+		}
+		seen[pt.URL] = true
+		out = append(out, tier1DiscoveryPoint{URL: pt.URL, Param: param})
 	}
 	return out
 }

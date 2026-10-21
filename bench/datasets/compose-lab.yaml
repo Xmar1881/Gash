@@ -116,8 +116,8 @@ scenarios:
     expected: vulnerable
     verify:
       kind: http-error
-      payload: "'"
-      expect_contains: ["SQLITE_ERROR", "SQL syntax", "error"]
+      payload: "apple'"
+      expect_contains: ["SQLITE_ERROR", "syntax error"]
       timeout: 20s
     match:
       plugin_ids: [sqli-error-based, sqli-boolean-differential]
@@ -137,7 +137,7 @@ scenarios:
     verify:
       kind: browser-exec
       path: "/#/search?q={payload}"
-      payload: '<iframe src="javascript:window.__gashCanary=true">'
+      payload: '<iframe src="javascript:alert(window.__gashCanary=true)">'
       timeout: 60s
     match:
       plugin_ids: [dom-sink-basic]

@@ -7,6 +7,7 @@ package discovery
 import (
 	"bytes"
 	"net/url"
+	"sort"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -17,7 +18,7 @@ type InjectionPoint struct {
 	URL           string
 	Method        string
 	ParamName     string
-	ParamLocation string // "query", "body", "header"
+	ParamLocation string // "query", "fragment", "body", "header"
 	Value         string
 	// FormValues, when non-nil, marks this point as living inside an HTML form
 	// and holds every other field's current value so the engine replays the
@@ -119,6 +120,7 @@ func extractSurface(targetURL string, body []byte, allowFallback bool) []Injecti
 			Value:         val,
 		})
 	}
+	addFragmentQueryPoints(targetParsed, addPoint)
 
 	// 2. Parse HTML forms and links if body is provided
 	if len(body) > 0 {
@@ -171,6 +173,9 @@ func handleForm(form *html.Node, base *url.URL, addPoint func(InjectionPoint)) {
 	if !ok {
 		return
 	}
+	if isStateTogglingURL(f.ActionURL) {
+		return
+	}
 
 	paramLoc := "query"
 	if f.Method == "POST" || f.Method == "PUT" || f.Method == "PATCH" {
@@ -179,6 +184,8 @@ func handleForm(form *html.Node, base *url.URL, addPoint func(InjectionPoint)) {
 
 	// Replayable co-fields: every other field a browser would submit. File
 	// inputs are recorded but never replayed; text/plain forms stay legacy.
+	// Submit buttons are replayed (DVWA/PHP handlers gate on $_GET['Submit'])
+	// but are never fuzzed as injection targets.
 	coFields := make([]FormField, 0, len(f.Fields))
 	if f.Enctype == "application/x-www-form-urlencoded" || f.Enctype == "multipart/form-data" {
 		for _, fld := range f.Fields {
@@ -189,6 +196,9 @@ func handleForm(form *html.Node, base *url.URL, addPoint func(InjectionPoint)) {
 	}
 
 	for _, fld := range f.Fields {
+		if fld.InputType == "submit" {
+			continue
+		}
 		point := InjectionPoint{
 			URL:           f.ActionURL,
 			Method:        f.Method,
@@ -196,7 +206,7 @@ func handleForm(form *html.Node, base *url.URL, addPoint func(InjectionPoint)) {
 			ParamLocation: paramLoc,
 			Value:         fld.Value,
 		}
-		if paramLoc == "body" && len(coFields) > 1 {
+		if len(coFields) > 1 {
 			vals := make(map[string]string, len(coFields)-1)
 			for _, other := range coFields {
 				if other.Name == fld.Name {
@@ -233,7 +243,7 @@ func ExtractForms(pageURL string, body []byte) []Form {
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode && strings.EqualFold(n.Data, "form") {
-			if f, ok := parseForm(n, base); ok {
+			if f, ok := parseForm(n, base); ok && !isStateTogglingURL(f.ActionURL) {
 				forms = append(forms, f)
 			}
 		}
@@ -247,8 +257,10 @@ func ExtractForms(pageURL string, body []byte) []Form {
 
 // parseForm builds the replayable Form model for one <form> element.
 // Only controls that a browser would submit are captured: named inputs minus
-// submit/image/button/reset, checked checkboxes/radios, selected select
-// options, and textarea text. File inputs are recorded but never replayed.
+// image/button/reset, checked checkboxes/radios, selected select options, and
+// textarea text. Submit buttons are kept as replay-only co-fields (never
+// fuzzed) because PHP-style handlers gate on their name. File inputs are
+// recorded but never replayed.
 // ok is false for forms without any replayable field.
 func parseForm(form *html.Node, base *url.URL) (Form, bool) {
 	f := Form{
@@ -337,7 +349,7 @@ func parseInputField(n *html.Node) (FormField, bool) {
 		return FormField{}, false
 	}
 	switch inputType {
-	case "submit", "image", "button", "reset":
+	case "image", "button", "reset":
 		return FormField{}, false
 	case "checkbox", "radio":
 		if !checked {
@@ -415,6 +427,9 @@ func handleLink(href string, base *url.URL, addPoint func(InjectionPoint)) {
 	if !strings.EqualFold(resolved.Hostname(), base.Hostname()) {
 		return
 	}
+	if isStateTogglingURL(resolved.String()) {
+		return
+	}
 	for param, vals := range resolved.Query() {
 		val := ""
 		if len(vals) > 0 {
@@ -428,6 +443,41 @@ func handleLink(href string, base *url.URL, addPoint func(InjectionPoint)) {
 			ParamName:     param,
 			ParamLocation: "query",
 			Value:         val,
+		})
+	}
+	addFragmentQueryPoints(resolved, addPoint)
+}
+
+// addFragmentQueryPoints turns a hash-route query into fragment injection
+// points. The browser never sends a fragment to the server, so these points
+// are meaningful only through a real browser probe; their URL keeps the route
+// (e.g. http://host/#/search) and the value travels in the fragment query.
+func addFragmentQueryPoints(resolved *url.URL, addPoint func(InjectionPoint)) {
+	if resolved == nil {
+		return
+	}
+	route, rawQuery, ok := strings.Cut(resolved.Fragment, "?")
+	if !ok || strings.TrimSpace(route) == "" || strings.TrimSpace(rawQuery) == "" {
+		return
+	}
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil || len(values) == 0 {
+		return
+	}
+	base := *resolved
+	base.Fragment = route
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		addPoint(InjectionPoint{
+			URL:           base.String(),
+			Method:        "GET",
+			ParamName:     name,
+			ParamLocation: "fragment",
+			Value:         values.Get(name),
 		})
 	}
 }

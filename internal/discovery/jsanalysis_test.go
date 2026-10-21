@@ -63,6 +63,44 @@ const g = ` + "`/api/${userId}/items`" + `;
 	}
 }
 
+func TestAnalyzeJSHashRoutes(t *testing.T) {
+	body := []byte(`
+const a = "#/search";
+const b = "#/search?q=apple";
+const c = "#section-anchor";
+const d = "#!/not-a-route";
+const e = "#/product?id=5";
+`)
+	rep := AnalyzeJS("https://app.example.com/static/app.js", body)
+	got := map[string][]string{}
+	for _, hr := range rep.HashRoutes {
+		got[hr.Path] = hr.Params
+	}
+	if len(got) != 2 {
+		t.Fatalf("hash routes = %+v, want /search and /product", rep.HashRoutes)
+	}
+	if params := got["/search"]; len(params) != 1 || params[0] != "q" {
+		t.Fatalf("explicit search params must win over fallback: %v", params)
+	}
+	if params := got["/product"]; len(params) != 1 || params[0] != "id" {
+		t.Fatalf("product params = %v", params)
+	}
+	if _, ok := got["/section-anchor"]; ok {
+		t.Fatal("ordinary anchors must not become hash routes")
+	}
+}
+
+func TestAnalyzeJSHashRouteFallback(t *testing.T) {
+	rep := AnalyzeJS("https://app.example.com/static/app.js", []byte(`const route = "#/search";`))
+	if len(rep.HashRoutes) != 1 {
+		t.Fatalf("hash routes = %+v", rep.HashRoutes)
+	}
+	params := rep.HashRoutes[0].Params
+	if len(params) != 3 || params[0] != "q" || params[1] != "query" || params[2] != "search" {
+		t.Fatalf("fallback params = %v", params)
+	}
+}
+
 // TestAnalyzeJSSecretsMaskedAndPlaceholders sır kural tablosunu, maskelemeyi
 // ve yer tutucu/entropi filtrelerini kanıtlar.
 // What: Stripe/AWS/generic/JWT ateşler; placeholder/pk_test_/2-segment JWT söner.
@@ -164,4 +202,20 @@ func TestAnalyzeSecretsLocation(t *testing.T) {
 	if strings.Contains(secrets[0].Context, key) {
 		t.Fatal("bağlamda tam değer sızmamalı")
 	}
+}
+
+// TestAnalyzeJSTemplateHostKeepsQueryParam proves a template host prefix does
+// not corrupt the endpoint/query surface (Juice Shop main.js pattern).
+func TestAnalyzeJSTemplateHostKeepsQueryParam(t *testing.T) {
+	body := []byte("search(e){return this.http.get(`${this.hostServer}/rest/products/search?q=${e}`)}")
+	rep := AnalyzeJS("http://shop.local/main.js", body)
+	for _, ep := range rep.Endpoints {
+		if ep.Resolved == "http://shop.local/rest/products/search?q=1" {
+			if len(ep.Params) != 1 || ep.Params[0] != "q" {
+				t.Fatalf("params = %v, want [q]", ep.Params)
+			}
+			return
+		}
+	}
+	t.Fatalf("template endpoint missing: %+v", rep.Endpoints)
 }

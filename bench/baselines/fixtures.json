@@ -3,19 +3,19 @@
   "tool": "gash",
   "dataset": "fixtures",
   "dataset_sha256": "17b2ef81cd4de93cd30d4a8399dbe91f788cfa5f2b3d2177f5fcd866af43d6af",
-  "generated_at": "2026-10-19T15:49:31Z",
+  "generated_at": "2026-10-19T17:40:01Z",
   "score": {
-    "tp": 5,
+    "tp": 10,
     "fp": 0,
     "tn": 12,
-    "fn": 5,
+    "fn": 0,
     "weak_evidence": 0,
     "unverified": 1,
     "not_run": 0,
     "confirmed_tp": 0,
     "precision": 1,
-    "recall": 0.5,
-    "f1": 0.6666666666666666
+    "recall": 1,
+    "f1": 1
   },
   "by_category": {
     "auth": {
@@ -45,56 +45,56 @@
       "f1": null
     },
     "command-injection": {
-      "tp": 0,
+      "tp": 1,
       "fp": 0,
       "tn": 0,
-      "fn": 1,
+      "fn": 0,
       "weak_evidence": 0,
       "unverified": 0,
       "not_run": 0,
       "confirmed_tp": 0,
-      "precision": null,
-      "recall": 0,
-      "f1": null
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
     },
     "open-redirect": {
-      "tp": 0,
+      "tp": 1,
       "fp": 0,
       "tn": 0,
-      "fn": 1,
+      "fn": 0,
       "weak_evidence": 0,
       "unverified": 0,
       "not_run": 0,
       "confirmed_tp": 0,
-      "precision": null,
-      "recall": 0,
-      "f1": null
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
     },
     "path-traversal": {
-      "tp": 0,
+      "tp": 1,
       "fp": 0,
       "tn": 0,
-      "fn": 1,
+      "fn": 0,
       "weak_evidence": 0,
       "unverified": 0,
       "not_run": 0,
       "confirmed_tp": 0,
-      "precision": null,
-      "recall": 0,
-      "f1": null
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
     },
     "sqli": {
-      "tp": 0,
+      "tp": 1,
       "fp": 0,
       "tn": 0,
-      "fn": 1,
+      "fn": 0,
       "weak_evidence": 0,
       "unverified": 0,
       "not_run": 0,
       "confirmed_tp": 0,
-      "precision": null,
-      "recall": 0,
-      "f1": null
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
     },
     "trap-denied": {
       "tp": 0,
@@ -175,19 +175,19 @@
       "f1": 1
     },
     "xss-stored": {
-      "tp": 0,
+      "tp": 1,
       "fp": 0,
       "tn": 0,
-      "fn": 1,
+      "fn": 0,
       "weak_evidence": 0,
       "unverified": 0,
       "not_run": 0,
       "confirmed_tp": 0,
-      "precision": null,
-      "recall": 0,
-      "f1": null
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
     }
   },
-  "requests": 4309,
-  "duration_ms": 88138
+  "requests": 4812,
+  "duration_ms": 92307
 }

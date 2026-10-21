@@ -190,6 +190,7 @@ const maxSignalBytes = 32 * 1024
 // signalOf gövde penceresinden içerik sinyalini sınıflar.
 func signalOf(path, window string) (signal string, strong bool) {
 	lower := strings.ToLower(window)
+	pathLower := strings.ToLower(strings.ReplaceAll(path, "\\", "/"))
 	containsAny := func(list []string) bool {
 		for _, m := range list {
 			if strings.Contains(lower, m) {
@@ -200,6 +201,31 @@ func signalOf(path, window string) (signal string, strong bool) {
 	}
 	if strings.Contains(lower, "ref:") && (strings.Contains(lower, "refs/") || strings.Contains(lower, "commit")) {
 		return "git-marker", true
+	}
+	// Known high-signal disclosure artifacts. Path + content pair keeps this a
+	// deterministic marker, not a generic "body is long" heuristic.
+	if (pathLower == "/metrics" || pathLower == "/metrics/" || strings.HasSuffix(pathLower, "/metrics")) &&
+		(strings.Contains(lower, "# help") || strings.Contains(lower, "# type")) {
+		return "prometheus-metrics", true
+	}
+	if (strings.Contains(pathLower, "api-docs") || strings.Contains(pathLower, "swagger")) &&
+		(strings.Contains(lower, "swagger-ui") || strings.Contains(lower, "swagger ui") || strings.Contains(lower, "openapi")) {
+		return "api-docs", true
+	}
+	if strings.HasSuffix(pathLower, ".md") && strings.HasPrefix(strings.TrimSpace(window), "# ") {
+		return "markdown-doc", true
+	}
+	if strings.HasSuffix(pathLower, ".gitignore") &&
+		(strings.Contains(lower, "node_modules") || strings.Contains(lower, ".php") || strings.Contains(lower, "dockerfile") || strings.Contains(lower, ".env")) {
+		return "gitignore-content", true
+	}
+	if strings.Contains(pathLower, "/.github/workflows/") &&
+		strings.Contains(lower, "on:") && (strings.Contains(lower, "jobs:") || strings.Contains(lower, "runs-on:")) {
+		return "workflow-yaml", true
+	}
+	if strings.HasSuffix(pathLower, "phpinfo.php") &&
+		strings.Contains(lower, "php version") && strings.Contains(lower, "phpinfo()") {
+		return "phpinfo", true
 	}
 	if containsAny(configPatterns) {
 		return "config-pattern", true

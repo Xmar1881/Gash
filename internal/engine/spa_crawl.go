@@ -149,9 +149,9 @@ func (e *Engine) runSPACrawl(ctx context.Context, target string, client *probe.C
 			}
 			continue
 		}
-		finalURL := headless.NormalizeObservedURL(res.URL)
+		finalURL := headless.NormalizeRenderedURL(res.URL)
 		if finalURL == "" {
-			finalURL = headless.NormalizeObservedURL(page.URL)
+			finalURL = headless.NormalizeRenderedURL(page.URL)
 		}
 		if finalURL == "" {
 			stats["spa_skipped"]++

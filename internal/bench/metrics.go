@@ -5,6 +5,8 @@
 package bench
 
 import (
+	"net"
+	"net/url"
 	"sort"
 	"strings"
 )
@@ -55,10 +57,18 @@ func scenarioPath(sc *Scenario) string {
 	return normalizePath(raw)
 }
 
-// matchFinding reports whether a finding claims the scenario's path and class.
-func matchFinding(f NormalizedFinding, sc *Scenario, tool string) bool {
+// matchFinding reports whether a finding claims the scenario's path, origin, and class.
+// Origin matching is mandatory: two lab targets can expose the same path (for
+// example /phpinfo.php), and a DVWA finding must never satisfy a Juice Shop
+// scenario merely because the path string is identical.
+func matchFinding(ds *Dataset, f NormalizedFinding, sc *Scenario, tool string) bool {
 	if normalizePath(f.Path) != scenarioPath(sc) {
 		return false
+	}
+	if f.Target != "" {
+		if scenarioURL, err := ds.ResolveURL(sc); err == nil && scenarioURL != "" && !sameOrigin(f.Target, scenarioURL) {
+			return false
+		}
 	}
 	switch tool {
 	case "gash":
@@ -128,7 +138,7 @@ func BuildOutcomes(ds *Dataset, tool string, available bool, findings []Normaliz
 		var matched []NormalizedFinding
 		var idx []int
 		for i, f := range findings {
-			if matchFinding(f, sc, tool) {
+			if matchFinding(ds, f, sc, tool) {
 				matched = append(matched, f)
 				idx = append(idx, i)
 			}
@@ -174,6 +184,28 @@ func BuildOutcomes(ds *Dataset, tool string, available bool, findings []Normaliz
 		unmatched = append(unmatched, f)
 	}
 	return outcomes, unmatched, excludedOut
+}
+
+// sameOrigin compares scheme-independent host:port pairs so http/https
+// redirects on the same lab port still match, while distinct ports do not.
+func sameOrigin(a, b string) bool {
+	return originKey(a) != "" && originKey(a) == originKey(b)
+}
+
+func originKey(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Hostname() == "" {
+		return ""
+	}
+	port := u.Port()
+	if port == "" {
+		if strings.EqualFold(u.Scheme, "https") {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	return net.JoinHostPort(strings.ToLower(u.Hostname()), port)
 }
 
 func detectorNames(findings []NormalizedFinding) []string {

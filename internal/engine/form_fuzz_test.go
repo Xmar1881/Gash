@@ -277,3 +277,21 @@ func TestRunActiveFormFuzzGates(t *testing.T) {
 		t.Fatalf("GET form trafik ÜRETMEMELİ: %d/%d", len(got3), reqs3)
 	}
 }
+
+func TestFormHasTextInput(t *testing.T) {
+	toggle := []discovery.FormField{
+		{Name: "security", InputType: "select"},
+		{Name: "php_ids", InputType: "select"},
+		{Name: "seclev_submit", InputType: "submit"},
+	}
+	if formHasTextInput(toggle) {
+		t.Fatal("select-only settings form must not be fuzzed")
+	}
+	text := []discovery.FormField{
+		{Name: "id", InputType: "text"},
+		{Name: "Submit", InputType: "submit"},
+	}
+	if !formHasTextInput(text) {
+		t.Fatal("text form must be fuzzable")
+	}
+}

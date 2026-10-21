@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -83,8 +84,10 @@ func (v *Verifier) verify(ctx context.Context, ds *Dataset, sc *Scenario, marker
 		return v.httpTimeout(ctx, base, sc, marker, auth)
 	case VerifyHTTPRedirect:
 		return v.httpRedirect(ctx, base, sc, auth)
+	case VerifyHTTPExposure:
+		return v.httpExposure(ctx, base, sc, marker, auth)
 	case VerifyBrowserExec:
-		return v.browserExec(ctx, base, sc)
+		return v.browserExec(ctx, base, sc, auth)
 	default:
 		return Verification{Error: "unsupported verify kind " + sc.Verify.Kind}
 	}
@@ -162,7 +165,7 @@ func (v *Verifier) httpReflection(ctx context.Context, base string, sc *Scenario
 	if err != nil {
 		return Verification{Error: err.Error()}
 	}
-	target = injectParam(target, payload, marker)
+	target = injectParam(target, payload, marker, sc.Verify.Param)
 	resp := v.do(ctx, sc.Verify.Method, target, auth, verifyTimeout(sc))
 	if resp.err != nil {
 		return Verification{Error: resp.err.Error()}
@@ -185,7 +188,7 @@ func (v *Verifier) httpError(ctx context.Context, base string, sc *Scenario, mar
 	if err != nil {
 		return Verification{Error: err.Error()}
 	}
-	attackURL := injectParam(target, payload, marker)
+	attackURL := injectParam(target, payload, marker, sc.Verify.Param)
 	resp := v.do(ctx, sc.Verify.Method, attackURL, auth, verifyTimeout(sc))
 	if resp.err != nil {
 		return Verification{Error: resp.err.Error()}
@@ -217,7 +220,7 @@ func (v *Verifier) httpStored(ctx context.Context, base string, sc *Scenario, ma
 	if err != nil {
 		return Verification{Error: err.Error()}
 	}
-	storeURL = injectParam(storeURL, payload, marker)
+	storeURL = injectParam(storeURL, payload, marker, sc.Verify.Param)
 	resp := v.do(ctx, http.MethodGet, storeURL, auth, verifyTimeout(sc))
 	if resp.err != nil {
 		return Verification{Error: "store request: " + resp.err.Error()}
@@ -246,7 +249,7 @@ func (v *Verifier) httpJSONRaw(ctx context.Context, base string, sc *Scenario, m
 	if err != nil {
 		return Verification{Error: err.Error()}
 	}
-	target = injectParam(target, payload, marker)
+	target = injectParam(target, payload, marker, sc.Verify.Param)
 	resp := v.do(ctx, sc.Verify.Method, target, auth, verifyTimeout(sc))
 	if resp.err != nil {
 		return Verification{Error: resp.err.Error()}
@@ -271,7 +274,7 @@ func (v *Verifier) httpClean(ctx context.Context, base string, sc *Scenario, mar
 	if err != nil {
 		return Verification{Error: err.Error()}
 	}
-	target = injectParam(target, payload, marker)
+	target = injectParam(target, payload, marker, sc.Verify.Param)
 	resp := v.do(ctx, sc.Verify.Method, target, auth, verifyTimeout(sc))
 	if resp.err != nil {
 		return Verification{Error: resp.err.Error()}
@@ -336,7 +339,7 @@ func (v *Verifier) httpWAF(ctx context.Context, base string, sc *Scenario, auth 
 	if err != nil {
 		return Verification{Error: err.Error()}
 	}
-	target = injectParam(target, payload, "wafprobe")
+	target = injectParam(target, payload, "wafprobe", sc.Verify.Param)
 	resp := v.do(ctx, sc.Verify.Method, target, auth, verifyTimeout(sc))
 	if resp.err != nil {
 		return Verification{Error: resp.err.Error()}
@@ -388,7 +391,7 @@ func (v *Verifier) httpRedirect(ctx context.Context, base string, sc *Scenario, 
 	if err != nil {
 		return Verification{Error: err.Error()}
 	}
-	target = injectParam(target, payload, "redirect")
+	target = injectParam(target, payload, "redirect", sc.Verify.Param)
 	client := &http.Client{Timeout: verifyTimeout(sc), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(mustRequest(ctx, target, auth))
 	if err != nil {
@@ -415,7 +418,51 @@ func (v *Verifier) httpRedirect(ctx context.Context, base string, sc *Scenario, 
 	return Verification{Verified: true, Detail: "external redirect confirmed (Location=" + loc + ")"}
 }
 
-func (v *Verifier) browserExec(ctx context.Context, base string, sc *Scenario) Verification {
+// httpExposure verifies a directly reachable sensitive artifact: the expected
+// status and content markers must be present on the scenario path, and the
+// same markers must be absent from a random soft-404 control path.
+func (v *Verifier) httpExposure(ctx context.Context, base string, sc *Scenario, marker, auth string) Verification {
+	if len(sc.Verify.ExpectContains) == 0 {
+		return Verification{Error: "http-exposure requires verify.expect_contains"}
+	}
+	target, err := scenarioRequest(sc, base, "", marker)
+	if err != nil {
+		return Verification{Error: err.Error()}
+	}
+	resp := v.do(ctx, sc.Verify.Method, target, auth, verifyTimeout(sc))
+	if resp.err != nil {
+		return Verification{Error: resp.err.Error()}
+	}
+	if !statusOK(sc.Verify.ExpectStatus, resp.status, 200) {
+		return Verification{Detail: fmt.Sprintf("status=%d", resp.status), Error: "unexpected status"}
+	}
+	for _, want := range sc.Verify.ExpectContains {
+		if !strings.Contains(resp.body, want) {
+			return Verification{Detail: fmt.Sprintf("status=%d", resp.status), Error: fmt.Sprintf("exposure body missing %q", want)}
+		}
+	}
+	for _, banned := range sc.Verify.ExpectNotContains {
+		if strings.Contains(resp.body, banned) {
+			return Verification{Detail: fmt.Sprintf("status=%d", resp.status), Error: fmt.Sprintf("exposure body contains forbidden %q", banned)}
+		}
+	}
+	controlURL, err := scenarioRequest(sc, base, "/gash-bench-missing-"+marker, marker)
+	if err != nil {
+		return Verification{Error: "control path: " + err.Error()}
+	}
+	ctrl := v.do(ctx, http.MethodGet, controlURL, auth, verifyTimeout(sc))
+	if ctrl.err != nil {
+		return Verification{Error: "control request: " + ctrl.err.Error()}
+	}
+	for _, want := range sc.Verify.ExpectContains {
+		if strings.Contains(ctrl.body, want) {
+			return Verification{Detail: fmt.Sprintf("status=%d", resp.status), Error: fmt.Sprintf("control path also contains %q; exposure marker is not distinguishing", want)}
+		}
+	}
+	return Verification{Verified: true, Detail: fmt.Sprintf("exposure confirmed (status=%d, control=%d)", resp.status, ctrl.status)}
+}
+
+func (v *Verifier) browserExec(ctx context.Context, base string, sc *Scenario, auth string) Verification {
 	payload := sc.Verify.Payload
 	if payload == "" {
 		return Verification{Error: "browser-exec requires verify.payload"}
@@ -430,7 +477,7 @@ func (v *Verifier) browserExec(ctx context.Context, base string, sc *Scenario) V
 	base = strings.TrimSuffix(base, "/")
 	payloadURL := base + strings.ReplaceAll(path, "{payload}", url.PathEscape(payload))
 	controlURL := base + strings.ReplaceAll(path, "{payload}", "bench-clean-control")
-	executed, err := browserVerify(ctx, payloadURL, controlURL)
+	executed, err := browserVerify(ctx, payloadURL, controlURL, auth)
 	if err != nil {
 		return Verification{Error: err.Error()}
 	}
@@ -450,19 +497,23 @@ func mustRequest(ctx context.Context, rawURL, auth string) *http.Request {
 	return req
 }
 
-func injectParam(rawURL, value, fallback string) string {
+func injectParam(rawURL, value, fallback, param string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return rawURL
 	}
 	q := u.Query()
-	if len(q) == 0 {
+	if param != "" {
+		q.Set(param, value)
+	} else if len(q) == 0 {
 		q.Set(fallback, value)
 	} else {
+		keys := make([]string, 0, len(q))
 		for k := range q {
-			q.Set(k, value)
-			break
+			keys = append(keys, k)
 		}
+		sort.Strings(keys)
+		q.Set(keys[0], value)
 	}
 	u.RawQuery = q.Encode()
 	return u.String()

@@ -83,6 +83,12 @@ func (e *Engine) runActiveFormFuzz(ctx context.Context, target string, client *p
 		default:
 			continue
 		}
+		// Settings/toggle forms (selects + hidden + submit only) are state
+		// changers, not injection surface: replaying them enabled DVWA's
+		// PHPIDS during a benchmark scan and invalidated later results.
+		if !formHasTextInput(form.Fields) {
+			continue
+		}
 		actionParsed, aerr := url.Parse(strings.TrimSpace(form.ActionURL))
 		if aerr != nil || !sameSiteOrigin(targetParsed, actionParsed) {
 			continue
@@ -93,6 +99,20 @@ func (e *Engine) runActiveFormFuzz(ctx context.Context, target string, client *p
 		used++
 	}
 	return out, total
+}
+
+// formHasTextInput reports whether the form exposes a user-editable text field.
+// Why: select-only/toggle forms mutate application settings (security level,
+// PHPIDS) instead of reaching an injection sink; replaying them changes lab
+// state and poisons later benchmark scans.
+func formHasTextInput(fields []discovery.FormField) bool {
+	for _, f := range fields {
+		switch strings.ToLower(f.InputType) {
+		case "text", "password", "search", "email", "number", "url", "tel", "textarea":
+			return true
+		}
+	}
+	return false
 }
 
 // fuzzOneForm tek formu tam-replay fuzz'lar.
@@ -159,10 +179,21 @@ func (e *Engine) fuzzOneForm(ctx context.Context, target string, client *probe.C
 		refreshTokens() // ilk tazeleme: kontrol isteği kabul edilsin
 	}
 
+	ctrlIdx := -1
+	for i, f := range fields {
+		if f.InputType != "submit" && !f.IsToken {
+			ctrlIdx = i
+			break
+		}
+	}
+	if ctrlIdx < 0 {
+		return nil, 0
+	}
+
 	pctx := plugin.WithPlugin(ctx, "form-fuzz", false, nil)
 	buildControl := func() (map[string]string, []byte) {
-		p := withTokens(fields[0].Name, fields[0].Value)
-		return formRequestBody(p, fields[0].Name, fields[0].Value)
+		p := withTokens(fields[ctrlIdx].Name, fields[ctrlIdx].Value)
+		return formRequestBody(p, fields[ctrlIdx].Name, fields[ctrlIdx].Value)
 	}
 	ctrlHeaders, ctrlBody := buildControl()
 	control, cerr := client.Send(pctx, method, form.ActionURL, ctrlHeaders, ctrlBody)
@@ -207,7 +238,7 @@ func (e *Engine) fuzzOneForm(ctx context.Context, target string, client *probe.C
 	var out []*finding.Finding
 	tried := 0
 	for _, fld := range fields {
-		if fld.IsToken || ctx.Err() != nil {
+		if fld.IsToken || fld.InputType == "submit" || ctx.Err() != nil {
 			continue
 		}
 		if tried >= maxFormFuzzFields {

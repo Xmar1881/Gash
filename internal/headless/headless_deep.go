@@ -9,10 +9,13 @@ package headless
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
@@ -107,6 +110,16 @@ const xssCanaryProbe = `(function(){try{return (document.getElementById('__gash_
 // so the page keeps loading and the DOM probe still runs. No network egress
 // beyond the two supplied URLs: payloads are expected to stay local/DOM-only.
 func VerifyXSS(ctx context.Context, payloadURL, controlURL string, timeout time.Duration) (Result, error) {
+	return VerifyXSSWithAuth(ctx, payloadURL, controlURL, "", timeout)
+}
+
+// VerifyXSSWithAuth runs the same controlled browser proof with one auth header
+// applied to both the payload and control contexts.
+// What: Parses "Name: value"; Cookie headers become CDP cookies, other headers
+// are applied with Network.setExtraHTTPHeaders before navigation.
+// Why: Authenticated scenarios (DVWA sessions) otherwise land on the login page
+// and can never execute the payload, producing an unverified result.
+func VerifyXSSWithAuth(ctx context.Context, payloadURL, controlURL, authHeader string, timeout time.Duration) (Result, error) {
 	if payloadURL == "" || controlURL == "" {
 		return Result{}, fmt.Errorf("headless: payload/control URLs required")
 	}
@@ -134,15 +147,71 @@ func VerifyXSS(ctx context.Context, payloadURL, controlURL string, timeout time.
 	allocCtx, allocCancel := chromedp.NewExecAllocator(ctx, opts...)
 	defer allocCancel()
 
-	payloadHit, err := xssPhase(allocCtx, payloadURL)
+	payloadHit, err := xssPhase(allocCtx, payloadURL, authHeader)
 	if err != nil {
 		return Result{}, fmt.Errorf("headless: xss payload phase: %w", err)
 	}
-	controlHit, err := xssPhase(allocCtx, controlURL)
+	controlHit, err := xssPhase(allocCtx, controlURL, authHeader)
 	if err != nil {
 		return Result{}, fmt.Errorf("headless: xss control phase: %w", err)
 	}
 	return Result{Triggered: payloadHit, ControlClean: !controlHit}, nil
+}
+
+// authActions converts one auth header into CDP actions for a target URL.
+// What: Cookie headers are split into Network.setCookies entries; any other
+// header is applied as an extra HTTP header.
+// Why: Chrome ignores an extra "Cookie" header in newer protocol versions, so
+// session cookies need the cookie store rather than a header override.
+func authActions(target, authHeader string) (chromedp.Action[chromedp.Void], error) {
+	authHeader = strings.TrimSpace(authHeader)
+	if authHeader == "" {
+		return nil, nil
+	}
+	name, value, ok := strings.Cut(authHeader, ":")
+	if !ok {
+		return nil, fmt.Errorf("headless: auth header must be 'Name: value'")
+	}
+	name = strings.TrimSpace(name)
+	value = strings.TrimSpace(value)
+	if name == "" {
+		return nil, fmt.Errorf("headless: auth header name is empty")
+	}
+	if !strings.EqualFold(name, "Cookie") {
+		return chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			_, err := cdp.Call(ctx, t, network.SetExtraHTTPHeaders, network.SetExtraHTTPHeadersParams{
+				Headers: network.Headers{name: value},
+			})
+			return err
+		}), nil
+	}
+
+	u, err := url.Parse(target)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return nil, fmt.Errorf("headless: auth target URL %q is not absolute", target)
+	}
+	cookieURL := u.Scheme + "://" + u.Host + "/"
+	var cookies []*network.CookieParam
+	for _, raw := range strings.Split(value, ";") {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		key, val, ok := strings.Cut(raw, "=")
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
+		if !ok || key == "" {
+			continue
+		}
+		cookies = append(cookies, &network.CookieParam{Name: key, Value: val, URL: cookieURL})
+	}
+	if len(cookies) == 0 {
+		return nil, fmt.Errorf("headless: auth Cookie header contains no cookies")
+	}
+	return chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+		_, err := cdp.Call(ctx, t, network.SetCookies, network.SetCookiesParams{Cookies: cookies})
+		return err
+	}), nil
 }
 
 // xssPhase runs one navigation and observes the dialog/canary triggers.
@@ -153,9 +222,19 @@ func VerifyXSS(ctx context.Context, payloadURL, controlURL string, timeout time.
 // observer uses the chromedp v0.21 event API (cdp.Events replaces the old
 // ListenTarget) and accepts dialogs so the renderer keeps loading; a dialog
 // observed is already a trigger even if accepting races the load.
-func xssPhase(allocCtx context.Context, target string) (bool, error) {
+func xssPhase(allocCtx context.Context, target, authHeader string) (bool, error) {
 	browserCtx, cancel := chromedp.NewContext(allocCtx)
 	defer cancel()
+
+	authAction, err := authActions(target, authHeader)
+	if err != nil {
+		return false, err
+	}
+	if authAction != nil {
+		if _, err := chromedp.Run(browserCtx, authAction); err != nil {
+			return false, fmt.Errorf("chromedp auth setup %s: %w", target, err)
+		}
+	}
 
 	hit, err := chromedp.Run(browserCtx, func(ctx context.Context, t *chromedp.Target) (bool, error) {
 		var mu sync.Mutex

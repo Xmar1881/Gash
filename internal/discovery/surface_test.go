@@ -28,6 +28,36 @@ func TestExtractSurface_URLParams(t *testing.T) {
 	}
 }
 
+func TestExtractSurface_HashRouteQuery(t *testing.T) {
+	points := ExtractSurface("http://example.com/app#/search?q=apple", nil)
+	if len(points) != 1 {
+		t.Fatalf("expected one fragment point, got %+v", points)
+	}
+	p := points[0]
+	if p.ParamName != "q" || p.ParamLocation != "fragment" || p.Value != "apple" {
+		t.Fatalf("unexpected fragment point: %+v", p)
+	}
+	if p.URL != "http://example.com/app#/search" {
+		t.Fatalf("fragment point URL must retain the route: %q", p.URL)
+	}
+}
+
+func TestExtractSurface_HashRouteLink(t *testing.T) {
+	points := ExtractSurface("http://example.com/", []byte(`<a href="#/search?q=apple">search</a>`))
+	found := false
+	for _, p := range points {
+		if p.ParamLocation == "fragment" && p.ParamName == "q" && p.Value == "apple" {
+			found = true
+			if p.URL != "http://example.com/#/search" {
+				t.Fatalf("unexpected fragment URL: %q", p.URL)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("hash-route link did not produce a fragment point: %+v", points)
+	}
+}
+
 func TestExtractSurface_HTMLForm(t *testing.T) {
 	u := "http://example.com/app"
 	htmlDoc := []byte(`
@@ -58,6 +88,30 @@ func TestExtractSurface_HTMLForm(t *testing.T) {
 	}
 	if !foundUser || !foundPass || !foundLink {
 		t.Fatalf("expected to extract form and link inputs, got %+v", points)
+	}
+}
+
+func TestExtractSurface_GETFormReplaysSubmitButton(t *testing.T) {
+	u := "http://example.com/sqli/"
+	points := ExtractSurface(u, []byte(`<form action="/sqli" method="GET">
+		<input type="text" name="id" value="1">
+		<input type="submit" name="Submit" value="Submit">
+	</form>`))
+	var idPoint *InjectionPoint
+	for i := range points {
+		p := &points[i]
+		if p.ParamName == "Submit" {
+			t.Fatalf("submit button must never be an injection target: %+v", p)
+		}
+		if p.ParamName == "id" {
+			idPoint = p
+		}
+	}
+	if idPoint == nil {
+		t.Fatalf("missing id point: %+v", points)
+	}
+	if idPoint.FormValues["Submit"] != "Submit" {
+		t.Fatalf("submit co-field missing from replay values: %+v", idPoint.FormValues)
 	}
 }
 

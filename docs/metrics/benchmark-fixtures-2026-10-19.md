@@ -39,6 +39,32 @@ Commands: `gash bench run --dataset bench/datasets/fixtures.yaml --tool gash`
 and the same with `bench/datasets/fixtures-deep.yaml` from a
 `go build -tags deep` binary (reports archived under `dist/bench-*` locally).
 
+## Update (2026-10-19, after the three recall fixes)
+
+The FNs attributed below were treated as engine defects and fixed the same
+day. Every fix was measured before/after with the same harness, dataset, and
+budgets (standard profile, 3 auth runs, `--no-browser-verify` unless noted):
+
+| Fix | Root cause (evidence) | Before | After | Report |
+|---|---|---|---|---|
+| Endpoint discovery feedback | Tier 1 plugins probed only the target root. The feedback loop fed accepted URL rules back, but the per-plugin request budget (30) was exhausted by the 4th declared param (`return_to`) and the executor discarded partial results (`n=0 err=budget exceeded`), so discovered `/redirect` params were never re-probed. Fixed by probing one `(URL, param)` pair per cloned request, deduped, cap 6, first-hit stop. | TP=5 R=0.500 | TP=8 R=0.800, req 5124/5133 (+18.9%), 110.2s | `dist/bench-fix1-redesign` |
+| Tier 2 send-budget fairness | `sqli-error-based.js` spent 13 sends/point and returned after 4 points (~52/60), never reaching `/sqli/error` (point 9 of 79). Fixed with lazy per-point controls and round-robin probe order; a tail-trigger regression test asserts the budget reaches late points (sends=54). | TP=8 R=0.800 | TP=9 R=0.900, req 4945/4954 (+15.0%), 119s | `dist/bench-fix2b` |
+| Stored XSS timeout + control | Plugin iterated 79 points x (store+render) = 158 sends > 20s plugin timeout; additionally the binding fetched the control from the same render URL (persisted canary -> dirty control -> reject). Fixed with base-grouped round-robin (60 sends), clean sibling-page control, and a browser proof gated to static-accept attempts only (ungated Chrome launches also timed out the deep run). | TP=9 R=0.900 | TP=10 R=1.000, req 4816/4825 (+12.0%), 110.8s | `dist/bench-fix3` |
+
+Final standard run with the final binary: **TP=10, FP=0, TN=12, FN=0,
+weak=0, P=R=F1=1.000**, findings=59, requests 4812 reported / 4821 observed,
+wall clock 1m32.3s. One scenario (`xss-dom-hash-sink`) is excluded as
+unverified because the default build has no browser verification. The
+committed baseline (`bench/baselines/fixtures.json`) was regenerated from this
+run (TP=10) and `bench compare` reports no regression.
+
+Deep run with the final `-tags deep` binary (real Chrome):
+**TP=10, FP=0, TN=12, FN=0, weak=1, P=1.000, R=0.909, F1=0.952**, findings=65,
+requests 6416/6570, 3m55s. `xss-stored-render` now reaches
+`browser-confirmed`; the one remaining weak outcome is `xss-dom-hash-sink`
+(firm static source-to-sink evidence, not browser-confirmed by the engine) --
+reported as recall loss, never as confirmed XSS.
+
 ## The bug run 1 surfaced (fixed)
 
 The first run scored tentative candidates, and firm reflected-XSS findings
@@ -51,12 +77,12 @@ every executable reflection evidence. Fixed by neutralizing all query values to
 `internal/bench/plugin_live_test.go` (`TestReflectedXSSPluginAgainstFixtureLab`).
 Reflected XSS then scored 5 TP / 0 FP with two clean look-alikes TN.
 
-## Precision
+## Precision (initial runs, pre-fix)
 
 Standard: 1.000 (5 TP, 0 FP; two clean scenarios stayed clean, all six traps
 stayed TN). Deep: 1.000 (36 findings, 0 FP). Gate floor 0.99: PASS.
 
-## Recall
+## Recall (initial runs, pre-fix)
 
 Standard: 0.500 (5/10 positives; xss-dom unverified in the default build and
 excluded). Deep: 0.455 (xss-dom detected with static evidence only, scored
@@ -73,6 +99,10 @@ engine behavior, not harness faults:
   direct scan of that path confirms detection.
 - `xss-stored-render`: stored two-step plugin timed out under the standard
   profile's plugin timeout (deep dataset raises the timeout; still FN).
+
+All three engine limits above were fixed the same day and re-measured; see
+"Update (2026-10-19, after the three recall fixes)" above for the before/after
+numbers, the gated browser-proof change, and the refreshed baseline.
 
 ## Corpus
 

@@ -348,6 +348,15 @@ The engine consumes it through the opt-in browser-verify pass
 findings and through the stored binding's `controlUrl` option for the
 two-step plugin; without browser evidence both ceilings stay unchanged.
 
+2026-10-21: fragment/hash routes joined the same evidence path. Hash-route
+query points discovered from links, rendered SPA fallbacks, or JS string
+literals are sent to `host.oracles.browserExecution` only; static
+`host.oracles.execution` cannot prove a fragment because it never reaches the
+server. `browserEligible` also accepts GASH-003 findings, the deep browser
+probe requires `Triggered` plus `ControlClean`, and `dom-sink-basic` emits one
+finding per route/sink/source instead of one per query parameter. Without the
+deep build or `--browser-verify`, fragment points are not turned into guesses.
+
 ## SPA-rendered surface discovery (`--browser-crawl`): bounded, GET-only
 
 SPA surface discovery is engine-owned recon (no new detector, oracle, or rule
@@ -364,8 +373,15 @@ limits:
   ranked by SPA hints; the crawler's page budget still applies.
 - Each render is one navigation with a bounded settle (readyState complete plus
   500 ms quiet, 3 s maximum). Click/type/navigation replay is not performed, so
-  routes that require user interaction, hash-only routes, and lazy content that
-  appears after the settle window are out of scope v1.
+  routes that require user interaction, arbitrary hash-router conventions, and
+  lazy content that appears after the settle window are out of scope v1.
+- Fragment/hash routes are discovered separately: links with `#/route?param=`
+  become `fragment` injection points, rendered SPA search routes get bounded
+  `q`/`query`/`search` fallback points, and JS string/backtick literals add
+  explicit hash-route parameters (cap 20 per file). A hash route never reaches
+  the server, so it can only be confirmed through a real browser probe
+  (`--browser-verify`, deep build + Chrome); without that pass it stays
+  undetected rather than guessed.
 - Only auth-context cookies are seeded into the browser. `Authorization` and
   basic-auth headers are not forwarded, so apps that rely on header auth may
   render an anonymous surface.
@@ -504,34 +520,48 @@ classic HTML login form only. The following are deliberate gaps, not coverage:
   against the same explicit `--login-url`; there is no bulk-specific
   credential mapping.
 
-## Compose-lab recall: BLOCKED where docker is absent
+## Native-lab recall: full 22-scenario run measured; Docker compose still BLOCKED
 
-DVWA/Juice Shop/WebGoat recall (`docker-compose.lab.yml`) runs only where a
-docker runtime exists. Without docker the status is BLOCKED with a filed
-procedure, never a number. See
-`docs/metrics/lab-compose-dvwa-juiceshop-2026-10-14.md` and
-`docs/metrics/lab-compose-2026-10-15.md` (2026-10-15: docker absent,
-procedure updated for DVWA 2.0 / Juice Shop 17.1.0 / WebGoat 2023.8 with
-`--aggressive --scope 127.0.0.1`, no fake result).
+The 2026-10-20 native lab ran Juice Shop 17.1.0, DVWA, and WebGoat 2023.8 as
+native Windows services (no Docker). All 22 scenarios were independently
+verified before scoring (`unverified=0`). Gash standard scored
+`TP=11 FP=0 TN=9 FN=2` (P=1.000, R=0.846); Gash deep scored
+`TP=12 FP=0 TN=9 FN=1` (P=1.000, R=0.923); Nuclei v3.11.1 scored
+`TP=5 FP=0 TN=9 FN=8` (P=1.000, R=0.385). At that time the only deep Gash miss
+was the Juice Shop hash-route DOM XSS; the standard build also missed DVWA DOM
+XSS. Hash-route/fragment discovery and browser probing were implemented after
+that run and have not yet been re-measured, so those numbers are the last
+measured state, not current behavior. Nuclei missed all 6 exposure scenarios
+and both DOM scenarios. These are lab-scoped results, not general superiority
+claims. Conditions, hashes, and limitations:
+`docs/metrics/native-lab-2026-10-20.md`.
 
-## Nuclei benchmark: not compared (harness exists, comparison unmeasured)
+The compose procedure (`docker-compose.lab.yml`) remains reproducible only
+where Docker exists; this environment still has no Docker runtime. The native
+run does not replace the compose procedure, and both are reported separately:
+`docs/metrics/lab-compose-2026-10-15.md`.
 
-No same-target, same-budget, same-scope Gash-versus-Nuclei benchmark has run
-in this repository. The README compares capabilities honestly without parity
-claims. Update 2026-10-19: the measurement harness now exists
-(`gash bench`, `docs/benchmark.md`) and has produced first measured Gash-only
-runs (`docs/metrics/benchmark-fixtures-2026-10-19.md`); the comparison itself
-stays unmeasured until the nightly workflow (`bench-nightly.yml`) files a
-real run with nuclei installed. See
-`docs/metrics/nuclei-comparison-2026-10-14.md`.
+## Nuclei benchmark: measured on the fixture and native labs
+
+A same-target, same-budget, same-scope Gash-versus-Nuclei comparison ran
+locally on the fixture lab (nuclei v3.11.1, 14,102 templates): Gash scored
+TP=10 FP=0 FN=0 (P=R=1.000) versus Nuclei TP=0 FP=0 FN=10 (recall 0.000)
+across the classes both tools claim, with no disagreements on the negative
+side. That is one synthetic-app measurement, not a general superiority claim;
+Nuclei's template breadth targets known products. Full tables and conditions:
+`docs/metrics/nuclei-comparison-2026-10-14.md`. The native-lab comparison is
+in `docs/metrics/native-lab-2026-10-20.md`; it seeded Nuclei explicitly, so
+it does not measure Nuclei's discovery ability. The nightly workflow
+(`bench-nightly.yml`) reruns the fixture comparison automatically.
 
 ## Benchmark-measured engine limits (reported, not hidden)
 
-The fixture benchmark measures and lists, rather than works around, these
-engine behaviors: Tier 1 YAML plugins probe the target root plus declared
-parameters only (miss discovered multi-endpoint surfaces); Tier 2 JS plugins
-can exhaust their per-plugin send budget before the vulnerable injection
-point; the stored two-step plugin can time out under the standard profile's
-plugin timeout; DOM XSS evidence stays static unless a real browser confirms
-execution. Details and the fixed control-request bug:
+The fixture benchmark measured three engine limits on 2026-10-19; all three
+were fixed the same day and re-measured (standard recall 0.500 -> 1.000, deep
+0.455 -> 0.909): Tier 1 endpoint discovery now feeds accepted URL rules back
+through a bounded per-parameter probe; Tier 2 JS plugins use a lazy-control
+round-robin send budget so tail injection points are reached; the stored
+two-step plugin groups by base, uses a clean sibling page as control, and runs
+the browser proof only after a static accept. The DOM XSS weak-evidence
+boundary above remains. Details and before/after numbers:
 `docs/metrics/benchmark-fixtures-2026-10-19.md`.

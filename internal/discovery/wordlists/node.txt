@@ -16,3 +16,8 @@ config.json
 .env.local
 backup.json
 node_modules
+metrics
+api-docs/
+README.md
+.gitignore
+.github/workflows/main.yml

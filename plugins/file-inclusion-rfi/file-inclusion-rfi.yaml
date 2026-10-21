@@ -26,4 +26,4 @@ oracle:
   params:
     canary: "http://127.0.0.1:9/gash-canary.txt"
     contexts: [html, attr, url]
-    require_executable_context: false
+    require_executable_context: true

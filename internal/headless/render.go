@@ -57,6 +57,17 @@ type RenderOptions struct {
 // deterministic form keeps harvest dedupe stable and avoids leaking auth
 // material embedded in userinfo.
 func NormalizeObservedURL(raw string) string {
+	return normalizeObservedURL(raw, false)
+}
+
+// NormalizeRenderedURL canonicalizes a rendered document URL while preserving
+// its fragment. Hash-routed SPAs carry query parameters after "#"; stripping
+// the fragment would erase the only copy of that route surface.
+func NormalizeRenderedURL(raw string) string {
+	return normalizeObservedURL(raw, true)
+}
+
+func normalizeObservedURL(raw string, keepFragment bool) string {
 	s := strings.TrimSpace(raw)
 	if s == "" || len(s) > maxObservedURLLen {
 		return ""
@@ -72,7 +83,9 @@ func NormalizeObservedURL(raw string) string {
 	u.Scheme = scheme
 	u.Host = strings.ToLower(u.Host)
 	u.User = nil
-	u.Fragment = ""
+	if !keepFragment {
+		u.Fragment = ""
+	}
 	return u.String()
 }
 

@@ -18,6 +18,60 @@ import (
 // güven tavanı (GASH-031). Fixture kapısı (TestMetricGate) uçtan-uca
 // ölçer; burası saf oracle mantığını ve korpus sessizliğini pinler.
 
+func TestPathTraversalContentSignatures(t *testing.T) {
+	var o ErrorSignatureOracle
+	ctx := context.Background()
+	pos := []struct {
+		body string
+		sig  string
+	}{
+		{"<pre>root:x:0:0:root:/root:/bin/bash</pre>", "unix_passwd"},
+		{"<pre>[fonts]\r\nfor 16-bit app support</pre>", "windows_ini"},
+	}
+	for _, tc := range pos {
+		ev, err := o.Verify(ctx, cls(), false, ErrorSignatureParams{
+			Body: tc.body, ControlBody: "<p>clean</p>", Mode: "path_traversal",
+			SignatureSet: []string{"unix_passwd", "windows_ini"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ev.Verdict != VerdictAccept || ev.ConfidenceContribution != plugin.ConfidenceConfirmed {
+			t.Fatalf("%s confirmed bekleniyordu: %+v", tc.sig, ev)
+		}
+		if ev.Artifacts["signature"] != tc.sig {
+			t.Fatalf("signature=%q, want %q", ev.Artifacts["signature"], tc.sig)
+		}
+	}
+	// Reflected traversal text and include warnings alone are not file proof.
+	for _, body := range []string{
+		"<p>Requested file: ../../../etc/passwd</p>",
+		"Warning: include(gash-control-neutral): failed to open stream: No such file or directory",
+	} {
+		ev, err := o.Verify(ctx, cls(), false, ErrorSignatureParams{
+			Body: body, ControlBody: "<p>clean</p>", Mode: "path_traversal",
+			SignatureSet: []string{"unix_passwd", "windows_ini"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ev.Verdict == VerdictAccept {
+			t.Fatalf("reflection/warning must not count as file content: %+v", ev)
+		}
+	}
+	// Same successful content in the control means the marker is not distinguishing.
+	ev, err := o.Verify(ctx, cls(), false, ErrorSignatureParams{
+		Body: "<pre>[fonts]</pre>", ControlBody: "<pre>[fonts]</pre>", Mode: "path_traversal",
+		SignatureSet: []string{"unix_passwd", "windows_ini"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Verdict != VerdictReject {
+		t.Fatalf("control-equal content reject olmalı: %+v", ev)
+	}
+}
+
 func TestDeserializationSignature(t *testing.T) {
 	var o ErrorSignatureOracle
 	ctx := context.Background()

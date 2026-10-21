@@ -61,7 +61,8 @@ const (
 func (e *Engine) runJSRecon(ctx context.Context, target string, client *probe.Client, crawlRes *discovery.CrawlResult) ([]*finding.Finding, []loader.JSPoint, map[string]int) {
 	stats := map[string]int{
 		"js_files_fetched": 0, "js_endpoints_found": 0,
-		"js_secrets_found": 0, "js_maps_fetched": 0,
+		"js_hash_routes_found": 0,
+		"js_secrets_found":     0, "js_maps_fetched": 0,
 	}
 	if crawlRes == nil || client == nil {
 		return nil, nil, stats
@@ -107,6 +108,25 @@ func (e *Engine) runJSRecon(ctx context.Context, target string, client *probe.Cl
 		stats["js_endpoints_found"] += rep.Stats.Endpoints
 		for _, s := range rep.Secrets {
 			addSecret(s)
+		}
+
+		origin := targetParsed.Scheme + "://" + targetParsed.Host
+		for _, hr := range rep.HashRoutes {
+			routeURL := origin + "/#" + hr.Path
+			u, perr := url.Parse(routeURL)
+			if perr != nil || u.Host == "" {
+				continue
+			}
+			if !jsReconURLAllowed(targetParsed, u, e.cfg.Scope, sm) {
+				continue
+			}
+			stats["js_hash_routes_found"]++
+			for _, name := range hr.Params {
+				addPoint(loader.JSPoint{
+					URL: routeURL, Method: http.MethodGet,
+					ParamName: name, ParamLocation: "fragment",
+				})
+			}
 		}
 
 		for _, ep := range rep.Endpoints {

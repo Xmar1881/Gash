@@ -36,6 +36,25 @@ func TestNormalizeObservedURL(t *testing.T) {
 	}
 }
 
+func TestNormalizeRenderedURLKeepsHashRoute(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{in: "https://Example.com/app#/search?q=apple", want: "https://example.com/app#/search?q=apple"},
+		{in: "https://example.com/app#section", want: "https://example.com/app#section"},
+		{in: "https://example.com/app", want: "https://example.com/app"},
+	}
+	for _, tc := range tests {
+		if got := NormalizeRenderedURL(tc.in); got != tc.want {
+			t.Fatalf("NormalizeRenderedURL(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	if got := NormalizeObservedURL("https://example.com/app#/search?q=apple"); got != "https://example.com/app" {
+		t.Fatalf("observed URL must still drop the fragment, got %q", got)
+	}
+}
+
 func TestNetworkURLCollectorDedupesAndCaps(t *testing.T) {
 	c := NewNetworkURLCollector(2)
 	c.Add("http://example.com/a#one")

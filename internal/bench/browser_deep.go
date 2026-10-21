@@ -14,8 +14,8 @@ import (
 
 // browserVerify runs the controlled headless-Chrome proof: the payload URL
 // must trigger an observable canary while the neutral control stays clean.
-func browserVerify(ctx context.Context, payloadURL, controlURL string) (bool, error) {
-	res, err := headless.VerifyXSS(ctx, payloadURL, controlURL, headless.DefaultTimeout)
+func browserVerify(ctx context.Context, payloadURL, controlURL, auth string) (bool, error) {
+	res, err := headless.VerifyXSSWithAuth(ctx, payloadURL, controlURL, auth, headless.DefaultTimeout)
 	if err != nil {
 		return false, err
 	}
