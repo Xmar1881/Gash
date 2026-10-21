@@ -1,7 +1,7 @@
 /* ---
 id: dom-sink-basic
-name: DOM Sink (static, headless-free)
-description: Detects static DOM sinks with URL-controlled sources via the execution oracle without a browser. Headless absent, so the ceiling is firm.
+name: DOM Sink (static + browser-confirmed)
+description: Detects URL-controlled DOM sinks through the execution oracle; hash routes are exercised in a real browser when available.
 author: Gash contributors
 severity: medium
 tags: [xss, dom, client]
@@ -19,19 +19,70 @@ tests: tests/fixtures/dom-sink-basic/
 // Module: github.com/Xmar1881/Gash
 //
 // File: plugins/xss/dom-sink-basic.js
-// What: Tier 2 static DOM sink scanner backed by ExecutionOracle.
-// Why: Browser-free static sink/source analysis caps at firm; confirmed
-//   requires the headless build (documented BLOCKED without browser deps).
+// What: Tier 2 DOM sink scanner backed by ExecutionOracle.
+// Why: Static sink/source analysis caps at firm; fragment queries never reach
+//   the server, so those points require a real browser probe.
+
+const DOM_XSS_PAYLOAD = '"><iframe src="javascript:alert(window.__gashCanary=true)"></iframe>';
+
+function routeKey(raw) {
+  const s = String(raw || "");
+  const hash = s.indexOf("#");
+  const base = (hash >= 0 ? s.slice(0, hash) : s).split("?")[0];
+  const frag = (hash >= 0 ? s.slice(hash) : "").split("?")[0];
+  return base + frag;
+}
+
+function evidenceKey(point, location, ev) {
+  return [
+    routeKey(point.url), point.method, location,
+    ev.sink || "", ev.source || "",
+  ].join("|");
+}
 
 function run(probe, ctx) {
   const points = ctx.injectionPoints();
   const candidates = [];
+  const seen = new Set();
   for (const point of points) {
-    const resp = probe.send(point.withValue("gash-dom-probe"));
-    const ev = host.oracles.execution(resp);
-    if (ev) {
-      candidates.push(host.candidate(point, "dom-xss", ev));
+    const location = String(point.paramLocation || "").toLowerCase();
+    const target = point.withValue(DOM_XSS_PAYLOAD);
+    if (location === "fragment") {
+      if (!host.oracles.browserExecution) {
+        continue;
+      }
+      const ev = host.oracles.browserExecution(point, DOM_XSS_PAYLOAD);
+      if (!ev) {
+        continue;
+      }
+      const key = evidenceKey(point, location, ev);
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      candidates.push(host.candidate(target, "dom-xss", ev));
+      continue;
     }
+    const resp = probe.send(target);
+    let ev = host.oracles.execution(resp);
+    if (!ev) {
+      continue;
+    }
+    const key = evidenceKey(point, location, ev);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    if (host.oracles.browserExecution) {
+      const confirmed = host.oracles.browserExecution(point, DOM_XSS_PAYLOAD, {
+        sink: ev.sink,
+        source: ev.source,
+      });
+      if (confirmed) {
+        ev = confirmed;
+      }
+    }
+    candidates.push(host.candidate(target, "dom-xss", ev));
   }
   return candidates;
 }

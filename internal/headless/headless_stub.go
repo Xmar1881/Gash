@@ -36,9 +36,18 @@ func VerifyDOM(ctx context.Context, payloadURL, controlURL, probeExpr string, ti
 // Why: Reflected/stored XSS findings must keep their static tier in the
 // default build; confirmed requires `-tags deep` plus a real Chrome run.
 func VerifyXSS(ctx context.Context, payloadURL, controlURL string, timeout time.Duration) (Result, error) {
+	return VerifyXSSWithAuth(ctx, payloadURL, controlURL, "", timeout)
+}
+
+// VerifyXSSWithAuth is the default-build stub for authenticated browser proof.
+// What: Always errors; the auth header is never applied or reported.
+// Why: The default build has no browser driver and must stay honestly
+// unverified even when the scenario carries a session header.
+func VerifyXSSWithAuth(ctx context.Context, payloadURL, controlURL, authHeader string, timeout time.Duration) (Result, error) {
 	_ = ctx
 	_ = payloadURL
 	_ = controlURL
+	_ = authHeader
 	_ = timeout
 	return Result{}, fmt.Errorf("headless: browser verification requires -tags deep (chromedp pinned, default build links no browser)")
 }

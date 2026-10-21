@@ -77,6 +77,9 @@ func (e *Engine) runActiveFuzz(ctx context.Context, target string, client *probe
 		if ctx.Err() != nil {
 			break
 		}
+		if strings.EqualFold(strings.TrimSpace(points[i].ParamLocation), "fragment") {
+			continue // hash-only points are browser-probed, never HTTP-fuzzed
+		}
 		got, count := e.fuzzOnePoint(ctx, target, client, points[i], profile)
 		out = append(out, got...)
 		total += count

@@ -5,24 +5,26 @@ Module: github.com/Xmar1881/Gash
 
 File: docs/metrics/dom-sink-basic.md
 What: Precision and recall report for the static DOM sink plugin.
-Why: Proves sink/source static analysis caps at firm without a browser;
-confirmed requires headless execution (documented BLOCKED without deps).
+Why: Records the firm static ceiling and the opt-in headless execution path
+for query and fragment/hash injection points.
 -->
 
 # Metrics: dom-sink-basic
 
 ## Overview
 
-Tier 2 passive plugin. Oracle `execution` without a browser. The script sends
-one probe value and calls `host.oracles.execution(resp)`; the Go binding
+Tier 2 plugin. For server-reachable query/form/header points it sends the
+benign XSS probe and calls `host.oracles.execution(resp)`; the Go binding
 detects a static sink (`innerHTML`, `outerHTML`, `insertAdjacentHTML`,
 `document.write`/`writeln`, `eval(`, `setTimeout(`/`setInterval(` with string
 args, jQuery `.html(`, `new Function(`, `location.hash` assignment,
 `postMessage(`) plus a URL-controlled source (`location.hash`/`search`,
 `document.location`, `document.URL`, `document.referrer`, `URLSearchParams`,
-`window.name`, `postMessage`). Maximum confidence `firm` (headless absent).
-Headless `confirmed` path stays BLOCKED (no browser dependency in this build;
-see Lab).
+`window.name`, `postMessage`). Static evidence caps at `firm`. Fragment/hash
+points never reach the server, so they use `host.oracles.browserExecution`
+directly. The opt-in deep build (`--browser-verify`) can upgrade a point to
+`confirmed` only when the browser triggers and the neutral control stays
+clean; the standard build links no browser and keeps the static ceiling.
 
 ## Evidence Standard
 
@@ -49,10 +51,12 @@ reject as untrusted before sink analysis.
 Synthetic localhost lab does not render JavaScript, so DOM execution is not
 lab-measured. Browser confirmation (headless `Triggered` plus `ControlClean`)
 is implemented in `internal/headless` with `chromedp v0.21.0` behind `-tags
-deep` (default build still links no browser); the unit proof
-`TestDeepVerifiesDOMExecution` (real Chrome 155 headless, httptest payload +
-clean control → oracle `confirmed`) is the only browser evidence. Fixture and
-corpus claims stay at the static `firm` ceiling.
+deep` (default build still links no browser). `TestDeepVerifiesDOMExecution`
+covers a query-style DOM payload and `TestDeepVerifyXSSHashRoute` covers the
+`#/search?q=` fragment route with a real Chrome 155 headless browser; both
+require a clean control. The 2026-10-20 native-lab report still has
+`confirmed_tp=0`, so browser-confirmed recall remains unmeasured in the
+benchmark. Fixture and corpus claims stay at the static `firm` ceiling.
 
 ## Precision
 
@@ -71,5 +75,7 @@ sink-free shapes; browser-confirmed recall remains unmeasured.
 
 - Dataset hash: `8a12a2f9c78dace7e65fdd2004068948009c0d03e7a11881a8bbd7bcddde2e9b`
   (sha256 over all 4 fixture files under `tests/fixtures/dom-sink-basic/`).
-- Samples: TP=2, FP=0, TN=2, FN=0. Fixture-only measurement; browser lab BLOCKED above.
-  `TestMetricGate` fails the build if this hash drifts from the fixtures.
+- Samples: TP=2, FP=0, TN=2, FN=0. Fixture-only static measurement; the
+  browser path is covered by the deep-build tests above and has no separate
+  precision/recall table. `TestMetricGate` fails the build if this hash drifts
+  from the fixtures.

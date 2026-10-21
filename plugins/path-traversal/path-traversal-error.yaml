@@ -4,12 +4,12 @@
 #
 # File: plugins/path-traversal/path-traversal-error.yaml
 # What: Tier 1 path traversal file access detection via ErrorSignatureOracle.
-# Why: Detects path traversal vulnerabilities by identifying file access error
-#   signatures in responses; uses existing ErrorSignatureOracle with "path_traversal" mode.
+# Why: Proves traversal through successful target-file content (passwd/win.ini)
+#   instead of relying on include warnings that also appear for neutral controls.
 
 id: path-traversal-error
 name: Path Traversal File Access
-description: Detects path traversal vulnerabilities via file access error signatures in responses.
+description: Detects path traversal by matching successful target-file content in responses.
 author: GASH contributors
 severity: high
 tags: [path-traversal, file-access, lfi, error-signature]
@@ -24,13 +24,14 @@ tests: tests/fixtures/path-traversal-error/
 request:
   method: GET
   param_names: ["file", "path", "page", "include", "template"]
-  payload: "../../../etc/passwd"
+  payload: 'C:\Windows\win.ini'
   payloads:
-    - "..%2f..%2f..%2fetc%2fpasswd"
-    - "....//....//....//etc/passwd"
-    - "..%5c..%5c..%5cwindows%5cwin.ini"
+    - "/etc/passwd"
+    - "../../../../etc/passwd"
+    - "....//....//....//....//etc/passwd"
+    - '..\..\..\..\..\..\..\..\..\..\..\windows\win.ini'
 oracle:
   name: error
   params:
     mode: path_traversal
-    signature_set: ["path_traversal"]
+    signature_set: ["unix_passwd", "windows_ini"]

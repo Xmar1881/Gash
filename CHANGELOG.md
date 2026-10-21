@@ -100,7 +100,7 @@ Dates are UTC.
   retry on 403/419/422 plus token-wording match), same-origin action gate,
   and tentative findings only. New engine stat: `form_requests`.
 - Payload quality upgrade: a shared SQLi corpus (`internal/fuzz/sqli_corpus.go`)
-  with a boolean pair plus ten DBMS error probes (EXTRACTVALUE/UPDATEXML,
+  with a boolean pair plus fourteen DBMS error probes (EXTRACTVALUE/UPDATEXML,
   CONVERT, CAST, case-mixing, double-encoding, tab and MySQL versioned-comment
   WAF-bypass variants) now drives both the live engine and
   `sqli-error-based.js` (locked by a sync test); the MySQL signature set gained
@@ -209,13 +209,49 @@ Dates are UTC.
   (`bench-nightly.yml`). Tentative candidates are unscored by default.
 - Bench datasets and baselines: `bench/datasets/fixtures.yaml` (23 verified
   scenarios), `fixtures-deep.yaml` (deep profile + browser verification),
-  `compose-lab.yaml` (DVWA/Juice Shop/WebGoat), `bench/baselines/fixtures.json`.
+  `compose-lab.yaml` (DVWA/Juice Shop/WebGoat), `native-lab.yaml` (22 verified
+  native scenarios), `bench/baselines/fixtures.json`.
+- Pre-fix native-lab benchmark on Juice Shop 17.1.0, DVWA, and WebGoat 2023.8,
+  all 22 scenarios independently verified: Gash standard
+  `TP=11 FP=0 TN=9 FN=2` (P=1.000, R=0.846), Gash deep
+  `TP=12 FP=0 TN=9 FN=1` (P=1.000, R=0.923), Nuclei v3.11.1
+  `TP=5 FP=0 TN=9 FN=8` (P=1.000, R=0.385). Report:
+  `docs/metrics/native-lab-2026-10-20.md`. These numbers predate the
+  hash-route/dedupe changes and require re-measurement.
+- Fragment/hash-route DOM discovery: links with `#/route?param=` become
+  `fragment` injection points, rendered SPA search routes get bounded
+  `q`/`query`/`search` fallbacks, and JS string/backtick literals add explicit
+  hash-route parameters. Rendered URLs preserve the hash; fragment points are
+  never sent to the server and are skipped by active fuzz/IDOR matrices.
+- Browser execution probe: `host.oracles.browserExecution(point, payload[, opts])`
+  requires `--browser-verify` and the deep build; it returns evidence only when
+  the browser triggers and the neutral control stays clean. `ExecutionOracle`
+  accepts browser-only confirmation without inventing a static sink, and
+  `browserEligible` now covers GASH-003 firm/tentative findings.
+- Benchmark finding dedupe: exact normalized fingerprint (or Nuclei
+  path/title/template fallback) keeps the strongest-confidence row per tool,
+  and hash-aware path normalization makes `#/search?q=` match `/search`.
+- `dom-sink-basic` now uses the executable XSS payload, browser-probes
+  fragment points, and emits one finding per route/sink/source instead of one
+  per query parameter.
+- Tests for rendered hash normalization, surface/SPA/JS hash-route extraction,
+  fragment URL building, browser-only execution, browser execution binding,
+  hash-aware bench paths/dedupe, and a real-Chrome `#/search?q=` deep test.
 - Bench tests: unit suites plus an end-to-end critical-detector gate that runs
   a real gash binary against the fixture lab and fails on false positives,
   not-run outcomes, or reflected-XSS regressions.
+- The manual `lab-recall` GitHub workflow now runs the compose-lab Gash/Nuclei
+  benchmark with deep browser verification and uploads the report alongside the
+  raw recall scans.
 
 ### Fixed
 
+- Benchmark `injectParam` fallback was nondeterministic because it selected the
+  first key from a Go map; keys are now sorted, fixing the flaky
+  `TestInjectParamFallbacks`.
+- The deep fixture runner no longer asserts DOM detection under the standard
+  dataset profile (which intentionally disables the execution detector); the
+  browser hash-route proof remains covered by the deep headless tests.
 - Tier 2 execution control requests replayed the payload when
   `env.ControlSend` was unset: `controlFor` rebuilt the control from the
   payload-bearing response URL, the oracle saw a dirty control, and every
@@ -223,9 +259,52 @@ Dates are UTC.
   produced no firm reflected-XSS findings at all. Controls now neutralize all
   query values to `gash-control-neutral`; regression test
   `internal/bench/plugin_live_test.go`.
+- Tier 1 endpoint-discovery feedback discarded its own results: probing four
+  declared parameters exhausted the per-plugin request budget inside
+  `ExecuteTier1WithOptions`, which returned an error and no candidates, so
+  discovered endpoints (e.g. `/redirect?return_to=`) were never re-probed.
+  The feedback loop now probes one deduplicated `(URL, param)` pair per
+  cloned request (cap 6) and keeps results; fixture recall 0.500 -> 0.800
+  (bench-fix1-redesign).
+- Tier 2 send-budget starvation: `sqli-error-based.js` spent its 60-send
+  budget on the first points in document order and never reached
+  `/sqli/error` (point 9 of 79). Lazy per-point controls plus round-robin
+  probing with a tail-trigger regression test; recall 0.800 -> 0.900
+  (bench-fix2b).
+- Stored XSS two-step missed findings in real runs: the plugin issued 158
+  requests (79 points x store+render) and hit the plugin timeout, and its
+  binding fetched the control from the same render URL so the persisted
+  canary tainted the control. Base-grouped round-robin (60 sends), clean
+  sibling-page control, and browser proof gated to static-accept attempts
+  (ungated Chrome launches also timed out deep runs); standard recall
+  0.900 -> 1.000, deep stored finding now `browser-confirmed`
+  (bench-fix3 / bench-deep-fixes2).
+- Refreshed `bench/baselines/fixtures.json` from the final standard run
+  (TP=10, FP=0, precision=recall=1.000); `gash bench compare` passes.
+- Compose-lab verification definitions corrected against a live Juice Shop
+  v17.1.0 (official node22 release served natively, no docker): `q='` alone
+  returns 200, so the SQLi `http-error` payload now carries the value prefix
+  (`apple'`) and matches the real `SQLITE_ERROR ... syntax error` signature;
+  the DOM `browser-exec` payload uses the documented alert form because the
+  previous marker was set inside the iframe while the verifier probes the top
+  window. The final native lab supersedes the earlier two-scenario subset and
+  measures all three applications (`docs/metrics/native-lab-2026-10-20.md`).
+- RFI live evidence ceiling: `file-inclusion-rfi` and
+  `rfi-remote-include` now set `require_executable_context: true`, so loopback
+  URL reflection is capped at `tentative` instead of claiming inclusion.
+  Positive fixtures expect the same ceiling; live DVWA reflection with
+  `allow_url_include=Off` is no longer presented as firm proof.
+- Tier 2 SQLi corpus regression tests realigned with the prioritized
+  prefix-preserving probes; full `go test ./...` passes.
 
 ### Changed
 
+- The Gash/Nuclei fixture comparison is now measured (same target, pinned
+  budgets, three auth runs): TP=10/FP=0/FN=0 vs TP=0/FP=0/FN=10, no negative
+  disagreements; per-category tables filed in
+  `docs/metrics/nuclei-comparison-2026-10-14.md`. The 22-scenario native
+  comparison is also measured in `docs/metrics/native-lab-2026-10-20.md`.
+  Docker compose recall stays BLOCKED without docker.
 - Scope enforcement is now opt-in (Nuclei/ZAP-style operator responsibility).
   Without `--scope` the scan runs in open mode: no host is blocked, cross-host
   and cross-scheme redirects (including https→http) are followed, crawl links

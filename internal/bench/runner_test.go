@@ -83,11 +83,11 @@ func TestRunnerEndToEndFixtures(t *testing.T) {
 		}
 	}
 
-	domOut := outcomeByID(rep.Outcomes["gash"], "xss-dom-hash-sink")
-	if domOut != nil && domOut.Verification.Verified {
-		if domOut.Status != StatusTP && domOut.Status != StatusWeak {
-			t.Fatalf("verified DOM scenario must at least be detected (tp/weak), got %s", domOut.Status)
-		}
+	// The fixtures dataset runs the standard profile, which intentionally does
+	// not enable the execution detector. Browser-verified DOM detection is
+	// covered by TestDeepVerifyXSSHashRoute and the native benchmark instead.
+	if domOut := outcomeByID(rep.Outcomes["gash"], "xss-dom-hash-sink"); domOut != nil && domOut.Verification.Verified {
+		t.Logf("DOM scenario verified with standard-profile scan: status=%s (detection is deep-profile only)", domOut.Status)
 	}
 
 	for _, f := range []string{"report.json", "summary.md", "report.html", "findings.csv", "manifest.json"} {

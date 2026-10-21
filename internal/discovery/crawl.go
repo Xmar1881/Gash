@@ -135,7 +135,7 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 						continue
 					}
 					resolved := rootParsed.ResolveReference(rel)
-					if isURLInScope(ctx, resolved, targetParsed, policy, opts.Scope) {
+					if isURLInScope(ctx, resolved, targetParsed, policy, opts.Scope) && !isSessionDestructiveURL(resolved.String()) {
 						norm := normalizeURL(resolved)
 						skel := urlSkeleton(resolved)
 						if !visited[norm] && !seenParamSkeletons[skel] {
@@ -178,7 +178,7 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 							continue
 						}
 						resolved := rootParsed.ResolveReference(lu)
-						if isURLInScope(ctx, resolved, targetParsed, policy, opts.Scope) {
+						if isURLInScope(ctx, resolved, targetParsed, policy, opts.Scope) && !isSessionDestructiveURL(resolved.String()) {
 							norm := normalizeURL(resolved)
 							skel := urlSkeleton(resolved)
 							if !visited[norm] && !seenParamSkeletons[skel] {
@@ -233,8 +233,11 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 		}
 		result.Pages = append(result.Pages, page)
 
-		// Extract attack surface injection points from response
-		pts := ExtractSurface(item.rawURL, resp.Body)
+		// Extract attack surface injection points from response. Synthetic
+		// fallback params are added once by the engine when the whole surface
+		// is empty; per-page fallback invented points on CSS/favicon URLs and
+		// starved real points out of the plugin request budget.
+		pts := extractSurface(item.rawURL, resp.Body, false)
 		for _, pt := range pts {
 			k := strings.ToUpper(pt.Method) + "|" + pt.URL + "|" + pt.ParamLocation + "|" + pt.ParamName
 			if !seenPoints[k] {
@@ -306,6 +309,12 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 				}
 				resolved := pageParsed.ResolveReference(ref)
 				if !isURLInScope(ctx, resolved, targetParsed, policy, opts.Scope) {
+					continue
+				}
+				if isSessionDestructiveURL(resolved.String()) {
+					continue
+				}
+				if isStateTogglingURL(resolved.String()) {
 					continue
 				}
 				norm := normalizeURL(resolved)
@@ -459,6 +468,53 @@ func parseSitemapXML(body []byte) []string {
 		}
 	}
 	return urls
+}
+
+var sessionDestructivePath = regexp.MustCompile(`(?i)(?:^|/)(?:log[-_]?out|sign[-_]?out|log[-_]?off)(?:\.[a-z0-9]+)?$`)
+
+func isSessionDestructiveURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return sessionDestructivePath.MatchString(strings.TrimRight(u.Path, "/"))
+}
+
+// stateToggleKeys/Values identify GET links that flip application state when
+// merely visited (?phpids=on, ?debug=1, ?action=delete). Crawling or replaying
+// them mutates the target (DVWA enabled PHPIDS mid-scan and blocked later SQLi
+// probes), so they are never followed, surfaced, or form-replayed.
+var stateToggleKeys = map[string]bool{
+	"phpids": true, "php_ids": true, "ids": true, "debug": true,
+	"enable": true, "disable": true, "enabled": true, "disabled": true,
+	"logout": true, "action": true, "do": true, "confirm": true,
+	"delete": true, "remove": true, "reset": true, "activate": true,
+	"deactivate": true, "mode": true, "status": true, "state": true,
+	"toggle": true, "security": true, "level": true,
+}
+
+var stateToggleValues = map[string]bool{
+	"on": true, "off": true, "enable": true, "disable": true,
+	"enabled": true, "disabled": true, "logout": true, "delete": true,
+	"remove": true, "reset": true, "activate": true, "deactivate": true,
+}
+
+func isStateTogglingURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	for k, vals := range u.Query() {
+		if stateToggleKeys[strings.ToLower(strings.TrimSpace(k))] {
+			return true
+		}
+		for _, v := range vals {
+			if stateToggleValues[strings.ToLower(strings.TrimSpace(v))] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // extractLinks parses HTML and returns all href, action, and src links.

@@ -16,6 +16,26 @@ func TestWAFUntrusted(t *testing.T) {
 	}
 }
 
+func TestGenericSecurityWordsOnNormalPageAreNotAWAF(t *testing.T) {
+	body := []byte(`<html><nav><a href="/vulnerabilities/captcha/">Insecure CAPTCHA</a></nav><p>WAF and challenge docs</p></html>`)
+	if c := ClassifyStatic(200, http.Header{}, body); c.Untrusted {
+		t.Fatalf("normal 200 page with security words marked untrusted: %+v", c)
+	}
+	if c := ClassifyStatic(403, http.Header{}, []byte("<html>captcha challenge</html>")); !c.Untrusted {
+		t.Fatal("403 captcha challenge page must be untrusted")
+	}
+}
+
+func TestGenericBlockPhraseOnStaticDocIsNotAWAF(t *testing.T) {
+	body := []byte("# Access control\n\nThe server returns access denied or request blocked for protected paths.\n")
+	if c := ClassifyStatic(200, http.Header{}, body); c.Untrusted {
+		t.Fatalf("static documentation with block phrases must not be untrusted: %+v", c)
+	}
+	if c := ClassifyStatic(403, http.Header{}, body); !c.Untrusted {
+		t.Fatal("403 with a block phrase must be untrusted")
+	}
+}
+
 func TestNormal(t *testing.T) {
 	c := ClassifyStatic(200, http.Header{}, []byte("<html>hello</html>"))
 	if c.Untrusted || c.Soft404 {

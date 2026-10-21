@@ -37,12 +37,12 @@ func TestSQLiCorpusShape(t *testing.T) {
 	if len(SQLiBooleanProbes) != 2 {
 		t.Fatalf("boolean pair must be exactly 2 probes, got %d", len(SQLiBooleanProbes))
 	}
-	if len(SQLiErrorProbes) != 10 {
-		t.Fatalf("error probe corpus must be exactly 10, got %d", len(SQLiErrorProbes))
+	if len(SQLiErrorProbes) != 14 {
+		t.Fatalf("error probe corpus must be exactly 14, got %d", len(SQLiErrorProbes))
 	}
 	probes := SQLiProbes()
-	if len(probes) != 12 {
-		t.Fatalf("full corpus must be 12 probes (engine per-field cap), got %d", len(probes))
+	if len(probes) != 16 {
+		t.Fatalf("full corpus must be 16 probes (engine per-field cap), got %d", len(probes))
 	}
 	if probes[0] != SQLiBooleanProbes[0] || probes[1] != SQLiBooleanProbes[1] {
 		t.Fatalf("boolean pair must run first: %v", probes[:2])

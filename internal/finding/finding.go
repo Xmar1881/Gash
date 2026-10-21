@@ -224,7 +224,8 @@ func normalizeURL(raw string) string {
 	if err != nil {
 		return raw
 	}
-	u.Fragment = ""
+	// Preserve the fragment: hash-routed SPAs expose distinct surfaces at
+	// /#/a and /#/b, and dropping it would collapse their findings.
 	if (u.Scheme == "http" && u.Port() == "80") || (u.Scheme == "https" && u.Port() == "443") {
 		u.Host = u.Hostname()
 	}

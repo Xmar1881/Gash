@@ -34,3 +34,4 @@ oracle:
   params:
     canary: "http://127.0.0.1:9/gash-rfi-canary.txt"
     contexts: [html, attr, url]
+    require_executable_context: true

@@ -118,4 +118,131 @@ func TestXSSStoredTwoStepE2E(t *testing.T) {
 			t.Fatalf("filtered backend must not confirm, got %d", len(cands))
 		}
 	})
+
+	t.Run("sibling render is the clean control, not the persisted page", func(t *testing.T) {
+		const canary = "gash_store_e2e_3"
+		var stored string
+		env := &loader.JSEnv{
+			Points: []loader.JSPoint{
+				{URL: "http://example.com/victim", Method: "GET", ParamName: "message", ParamLocation: "query"},
+				{URL: "http://example.com/sibling", Method: "GET", ParamName: "q", ParamLocation: "query"},
+			},
+			Canary: canary,
+			Send: func(p loader.JSPoint) (loader.JSResponse, error) {
+				h := map[string]string{"Content-Type": "text/html"}
+				if p.ParamName == "message" && strings.Contains(p.Value, "alert("+canary+")") {
+					stored = p.Value
+					return loader.JSResponse{Status: 200, Headers: h, Body: "<html><body>stored</body></html>", URL: p.URL}, nil
+				}
+				if p.ParamName == "" && strings.HasSuffix(p.URL, "/victim") {
+					// The persisted render page now holds the payload, so a
+					// same-URL control would always be dirty.
+					return loader.JSResponse{Status: 200, Headers: h, Body: "<html><body><div>" + stored + "</div></body></html>", URL: p.URL}, nil
+				}
+				return loader.JSResponse{Status: 200, Headers: h, Body: "<html><body><div>nice post</div></body></html>", URL: p.URL}, nil
+			},
+		}
+		cands, err := loader.ExecuteJS(context.Background(), spec, string(src), env, 10*time.Second)
+		if err != nil {
+			t.Fatalf("execute: %v", err)
+		}
+		if len(cands) != 1 {
+			t.Fatalf("persisted payload with clean sibling control must confirm, got %d", len(cands))
+		}
+		if got := cands[0].Candidate.InjectionPoint.URL; !strings.HasSuffix(got, "/victim") {
+			t.Fatalf("candidate must come from the victim base, got %q", got)
+		}
+		if ev := cands[0].Evidence; ev == nil || ev.ConfidenceContribution != plugin.ConfidenceStaticExecution {
+			t.Fatalf("static-execution-evidence required, got %+v", cands[0].Evidence)
+		}
+	})
+
+	t.Run("fair budget reaches a tail base on a large surface", func(t *testing.T) {
+		const canary = "gash_store_e2e_4"
+		var points []loader.JSPoint
+		for i := 0; i < 20; i++ {
+			base := "http://example.com/p" + string(rune('a'+i))
+			name := "id"
+			if i == 19 {
+				name = "message"
+			}
+			points = append(points,
+				loader.JSPoint{URL: base, Method: "GET", ParamName: name, ParamLocation: "query"},
+				loader.JSPoint{URL: base, Method: "GET", ParamName: "q", ParamLocation: "query"},
+			)
+		}
+		var stored string
+		sends := 0
+		env := &loader.JSEnv{
+			Points: points,
+			Canary: canary,
+			Send: func(p loader.JSPoint) (loader.JSResponse, error) {
+				sends++
+				h := map[string]string{"Content-Type": "text/html"}
+				if p.ParamName == "message" && strings.Contains(p.Value, "alert("+canary+")") {
+					stored = p.Value
+					return loader.JSResponse{Status: 200, Headers: h, Body: "<html><body>stored</body></html>", URL: p.URL}, nil
+				}
+				if p.ParamName == "" && strings.HasSuffix(p.URL, "/pt") {
+					return loader.JSResponse{Status: 200, Headers: h, Body: "<html><body><div>" + stored + "</div></body></html>", URL: p.URL}, nil
+				}
+				return loader.JSResponse{Status: 200, Headers: h, Body: "<html><body><div>nice post</div></body></html>", URL: p.URL}, nil
+			},
+		}
+		cands, err := loader.ExecuteJS(context.Background(), spec, string(src), env, 10*time.Second)
+		if err != nil {
+			t.Fatalf("execute: %v", err)
+		}
+		if len(cands) != 1 {
+			t.Fatalf("tail base must be reached on a large surface, candidates = %d", len(cands))
+		}
+		if got := cands[0].Candidate.InjectionPoint.URL; !strings.HasSuffix(got, "/pt") {
+			t.Fatalf("candidate must come from the tail base, got %q", got)
+		}
+		if sends > 100 {
+			t.Fatalf("stored run must stay bounded, sends = %d", sends)
+		}
+	})
+
+	t.Run("browser proof runs only after a static accept", func(t *testing.T) {
+		const canary = "gash_store_e2e_5"
+		var stored string
+		browserCalls := 0
+		env := &loader.JSEnv{
+			Points: []loader.JSPoint{
+				{URL: "http://example.com/noisy-a", Method: "GET", ParamName: "q", ParamLocation: "query"},
+				{URL: "http://example.com/noisy-b", Method: "GET", ParamName: "q", ParamLocation: "query"},
+				{URL: "http://example.com/victim", Method: "GET", ParamName: "message", ParamLocation: "query"},
+			},
+			Canary: canary,
+			BrowserVerify: func(payloadURL, controlURL string) (bool, bool, bool, error) {
+				browserCalls++
+				return true, true, true, nil
+			},
+			Send: func(p loader.JSPoint) (loader.JSResponse, error) {
+				h := map[string]string{"Content-Type": "text/html"}
+				if p.ParamName == "message" && strings.Contains(p.Value, "alert("+canary+")") {
+					stored = p.Value
+					return loader.JSResponse{Status: 200, Headers: h, Body: "<html><body>stored</body></html>", URL: p.URL}, nil
+				}
+				if p.ParamName == "" && strings.HasSuffix(p.URL, "/victim") {
+					return loader.JSResponse{Status: 200, Headers: h, Body: "<html><body><div>" + stored + "</div></body></html>", URL: p.URL}, nil
+				}
+				return loader.JSResponse{Status: 200, Headers: h, Body: "<html><body><div>nice post</div></body></html>", URL: p.URL}, nil
+			},
+		}
+		cands, err := loader.ExecuteJS(context.Background(), spec, string(src), env, 10*time.Second)
+		if err != nil {
+			t.Fatalf("execute: %v", err)
+		}
+		if len(cands) != 1 {
+			t.Fatalf("one confirmed candidate expected, got %d", len(cands))
+		}
+		if ev := cands[0].Evidence; ev == nil || ev.ConfidenceContribution != plugin.ConfidenceConfirmed {
+			t.Fatalf("browser proof must lift the static accept to confirmed, got %+v", cands[0].Evidence)
+		}
+		if browserCalls != 1 {
+			t.Fatalf("browser proof must run once per accepted candidate, calls = %d", browserCalls)
+		}
+	})
 }

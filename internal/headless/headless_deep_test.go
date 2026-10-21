@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -77,6 +78,36 @@ func TestDeepVerifiesDOMExecution(t *testing.T) {
 	}
 	if ev2.Verdict == oracle.VerdictAccept && string(ev2.ConfidenceContribution) == "confirmed" {
 		t.Fatalf("tetiklenmeyen headless confirmed olmamali: %+v", ev2)
+	}
+}
+
+// TestDeepVerifyXSSHashRoute proves a fragment query can drive a DOM sink in
+// the browser even though the server never receives it.
+func TestDeepVerifyXSSHashRoute(t *testing.T) {
+	if !Available() {
+		if os.Getenv("CI") != "" {
+			t.Fatal("headless zorunlu: CI ortaminda chrome bulunamadi (no Chrome binary found in CI)")
+		}
+		t.Skip("headless yok: chrome bulunamadi, skip")
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><body><div id="sink"></div><script>
+var h = decodeURIComponent(location.hash.slice(1));
+document.getElementById("sink").innerHTML = h;
+</script></body></html>`)
+	}))
+	defer srv.Close()
+
+	payload := `"><iframe src="javascript:alert(window.__gashCanary=true)"></iframe>`
+	payloadURL := srv.URL + "/#" + url.PathEscape(payload)
+	controlURL := srv.URL + "/#gash-control-neutral"
+	res, err := VerifyXSS(context.Background(), payloadURL, controlURL, 30*time.Second)
+	if err != nil {
+		t.Fatalf("hash-route browser verification: %v", err)
+	}
+	if !res.Triggered || !res.ControlClean {
+		t.Fatalf("hash-route payload must trigger with a clean control: %+v", res)
 	}
 }
 

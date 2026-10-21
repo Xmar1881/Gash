@@ -61,6 +61,29 @@ func TestHarvestRenderedDOMAndNetwork(t *testing.T) {
 	}
 }
 
+func TestHarvestRenderedHashRouteQueryAndFallback(t *testing.T) {
+	got := HarvestRendered(headless.RenderedPage{
+		URL:  "https://example.com/app#/search?q=apple",
+		HTML: `<html><body><a href="#/search">Search</a></body></html>`,
+	})
+	foundExplicit := false
+	for _, p := range got.Points {
+		if p.ParamName == "q" && p.ParamLocation == "fragment" && p.Value == "apple" &&
+			p.URL == "https://example.com/app#/search" {
+			foundExplicit = true
+		}
+	}
+	if !foundExplicit {
+		t.Fatalf("rendered hash query was not harvested: %+v", got.Points)
+	}
+	if got := HarvestRendered(headless.RenderedPage{
+		URL:  "https://example.com/app#/search",
+		HTML: `<html><body><a href="#/search">Search</a></body></html>`,
+	}); len(got.Points) != 3 {
+		t.Fatalf("search fallback points = %d, want 3: %+v", len(got.Points), got.Points)
+	}
+}
+
 func TestHarvestRenderedDisablesSyntheticFallback(t *testing.T) {
 	got := HarvestRendered(headless.RenderedPage{
 		URL:  "https://example.com/plain",

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -25,8 +26,9 @@ func TestSQLiCorpusMatchesJSPlugin(t *testing.T) {
 		t.Fatal("SQLI_PROBES array not found in plugin")
 	}
 	var jsProbes []string
-	for _, m := range regexp.MustCompile(`"([^"]*)"`).FindAllSubmatch(arr[1], -1) {
-		jsProbes = append(jsProbes, string(m[1]))
+	literal := regexp.MustCompile(`"((?:\\.|[^"\\])*)"`)
+	for _, m := range literal.FindAllSubmatch(arr[1], -1) {
+		jsProbes = append(jsProbes, strings.ReplaceAll(string(m[1]), `\"`, `"`))
 	}
 	goProbes := SQLiProbes()
 	if len(jsProbes) != len(goProbes) {

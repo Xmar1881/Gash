@@ -332,6 +332,26 @@ func TestExecutionFirmWithoutHeadless(t *testing.T) {
 	}
 }
 
+func TestExecutionBrowserOnlyConfirmedWithoutStaticSink(t *testing.T) {
+	var o ExecutionOracle
+	ev, err := o.Verify(context.Background(), cls(), false, ExecutionParams{
+		HeadlessEnabled: true, Triggered: true, ControlClean: true,
+		Payload: "payload",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Verdict != VerdictAccept || ev.ConfidenceContribution != "confirmed" {
+		t.Fatalf("browser-only execution must confirm: %+v", ev)
+	}
+	if ev.Artifacts["browser"] != "execution" || ev.Artifacts["payload"] != "payload" {
+		t.Fatalf("browser-only evidence missing artifacts: %+v", ev.Artifacts)
+	}
+	if _, ok := ev.Artifacts["sink"]; ok {
+		t.Fatalf("browser-only evidence must not invent a sink: %+v", ev.Artifacts)
+	}
+}
+
 func TestOOBSkippedWhenDisabled(t *testing.T) {
 	o := OOBOracle{Enabled: false}
 	ev, _ := o.Verify(context.Background(), cls(), false, OOBParams{CorrelationID: "c_x", Namespace: "n"})

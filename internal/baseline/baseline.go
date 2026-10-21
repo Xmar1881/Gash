@@ -36,10 +36,20 @@ type Model struct {
 }
 
 var (
-	wafMarkers = []string{
-		"cf-chl", "cf-ray", "cloudflare", "akamai", "incapsula", "imperva",
-		"__cf_bm", "cf_chl", "recaptcha", "hcaptcha", "captcha",
-		"retry-after", "access denied", "request blocked", "waf", "challenge",
+	// strongWAFMarkers identify challenge/block pages by themselves. Generic
+	// phrases such as "access denied" are deliberately excluded: a static
+	// security document served with 200 can contain them without being a WAF.
+	strongWAFMarkers = []string{
+		"cf-chl", "cf_chl", "__cf_bm",
+		"just a moment...", "attention required! | cloudflare",
+		"sucuri website firewall",
+	}
+	blockMarkers = []string{
+		"access denied", "request blocked",
+	}
+	weakWAFMarkers = []string{
+		"cloudflare", "akamai", "incapsula", "imperva", "recaptcha",
+		"hcaptcha", "captcha", "retry-after", "waf", "challenge",
 	}
 	maskPatterns = []string{
 		`name="csrf[^"]*" value="[^"]*"`,
@@ -61,7 +71,7 @@ func NewDefaultModel() *Model {
 	return &Model{
 		Soft404Bodies: make(map[string]bool),
 		Soft404Status: make(map[int]bool),
-		WAFMarkers:    append([]string{}, wafMarkers...),
+		WAFMarkers:    append([]string{}, append(strongWAFMarkers, blockMarkers...)...),
 		MaskRe:        res,
 	}
 }
@@ -109,10 +119,22 @@ func (m *Model) Classify(status int, headers http.Header, body []byte) Classific
 
 func classifyWith(status int, headers http.Header, body []byte, m *Model) Classification {
 	lower := strings.ToLower(string(body))
-	for _, marker := range wafMarkers {
+	for _, marker := range strongWAFMarkers {
 		if strings.Contains(lower, marker) {
-			// 429 + Retry-After veya marker varlığı → Untrusted.
 			return Classification{Untrusted: true, WAFDetected: true, Note: "waf/block: " + marker}
+		}
+	}
+	blockStatus := status == http.StatusForbidden || status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable
+	if blockStatus {
+		for _, marker := range blockMarkers {
+			if strings.Contains(lower, marker) {
+				return Classification{Untrusted: true, WAFDetected: true, Note: "waf/block: " + marker}
+			}
+		}
+		for _, marker := range weakWAFMarkers {
+			if strings.Contains(lower, marker) {
+				return Classification{Untrusted: true, WAFDetected: true, Note: "waf/block: " + marker}
+			}
 		}
 	}
 	if status == http.StatusTooManyRequests {

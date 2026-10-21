@@ -40,7 +40,12 @@ var errorSignatures = map[string]*regexp.Regexp{
 	"firebird":       regexp.MustCompile(`(?i)(GDS Exception|isc_attach_database|Firebird.*error|dynamic SQL Error|violation of FOREIGN KEY)`),
 	"hql":            regexp.MustCompile(`(?i)(org\.hibernate|HibernateException|QuerySyntaxException|hql\.|unexpected token: )`),
 	"path_traversal": regexp.MustCompile(`(?i)(no such file or directory|file not found|path traversal|open .* failed|access denied|permission denied|is a directory|not a directory|invalid path|directory traversal|\.\./|\.\.\\|etc/passwd|boot\.ini|windows/win\.ini)`),
-	"generic_error":  regexp.MustCompile(`(?i)(stack trace|exception|traceback|at \w+\.\w+\(|line \d+|error:|fatal error|uncaught exception|internal server error|500 error|debug information|syntax error|runtime error|null pointer|index out of bounds|division by zero)`),
+	// Successful traversal file-content signatures. These prove that the
+	// response contains the target file rather than only an include warning:
+	// generic warnings also appear for neutral controls and must not qualify.
+	"unix_passwd":   regexp.MustCompile(`(?m)(?:^|[>\r\n])root:[^:\r\n]*:0:0:`),
+	"windows_ini":   regexp.MustCompile(`(?im)(?:^|[>\r\n])\[fonts\][ \t]*\r?$`),
+	"generic_error": regexp.MustCompile(`(?i)(stack trace|exception|traceback|at \w+\.\w+\(|line \d+|error:|fatal error|uncaught exception|internal server error|500 error|debug information|syntax error|runtime error|null pointer|index out of bounds|division by zero)`),
 	// xpath: XPath motoru hata imzaları (GASH-034, CWE-643).
 	// Yalnızca parser/derleyici hata dizeleri eşleşir; enjeksiyon payload'ı
 	// zararsız bir XPath kapanış denemesidir (dosya okuma/DOS YOK).
@@ -152,6 +157,9 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 	case "path_traversal":
 		confidence = plugin.ConfidenceConfirmed
 		note = "path traversal dosya erişim hatası tespit edildi"
+	case "unix_passwd", "windows_ini":
+		confidence = plugin.ConfidenceConfirmed
+		note = "path traversal hedef dosya içeriği tespit edildi"
 	case "generic_error":
 		confidence = plugin.ConfidenceFirm // Generic error disclosure is firm (informational)
 		note = "hata mesajı ifşası tespit edildi"
@@ -205,7 +213,7 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 	// Without control: path_traversal and generic_error are firm (need control for confirmed)
 	// SQLi without control is firm. deserialization/takeover/xpath/backup_file are
 	// firm by ceiling with or without control (single-channel signal, never confirmed).
-	if hit == "path_traversal" || hit == "generic_error" || hit == "deserialization" || hit == "takeover" || hit == "xpath" || hit == "backup_file" {
+	if hit == "path_traversal" || hit == "unix_passwd" || hit == "windows_ini" || hit == "generic_error" || hit == "deserialization" || hit == "takeover" || hit == "xpath" || hit == "backup_file" {
 		confidence = plugin.ConfidenceFirm
 	}
 	return &Evidence{

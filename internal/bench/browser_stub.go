@@ -13,7 +13,7 @@ import (
 
 // browserVerify is unavailable in the default build; scenarios that need a
 // browser are reported unverified instead of being scored.
-func browserVerify(ctx context.Context, payloadURL, controlURL string) (bool, error) {
+func browserVerify(ctx context.Context, payloadURL, controlURL, auth string) (bool, error) {
 	return false, fmt.Errorf("browser verification unavailable: default build links no browser (rebuild with -tags deep and Chrome); scenario stays unverified")
 }
 

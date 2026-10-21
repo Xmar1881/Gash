@@ -67,6 +67,7 @@ line</textarea>
 		{"vip", "on", "checkbox", false},
 		{"color", "red", "radio", false},
 		{"upload", "", "file", false},
+		{"go", "Send", "submit", false},
 	}
 	if len(f.Fields) != len(wants) {
 		t.Fatalf("expected %d fields, got %d: %+v", len(wants), len(f.Fields), f.Fields)

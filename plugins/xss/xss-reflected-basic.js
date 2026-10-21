@@ -208,7 +208,35 @@ function payloadsFor(context, c) {
 }
 
 function run(probe, ctx) {
-  const points = ctx.injectionPoints();
+  const HOT_PARAMS = /^(id|name|q|query|search|page|file|path|url|redirect|ip|cmd|user|username|password|txtname|mtxmessage|cat|item|input)$/;
+  const rank = (p) => {
+    const loc = String(p.paramLocation || "");
+    const hasQuery = String(p.url || "").includes("?");
+    const hasValue = String(p.value || "") !== "";
+    const hasForm = p.formValues && Object.keys(p.formValues).length > 0;
+    const hot = HOT_PARAMS.test(String(p.paramName || "").toLowerCase());
+    if (hasForm && (loc === "query" || loc === "body")) {
+      return hot ? 0 : 1;
+    }
+    if (loc === "query" && hasQuery && hasValue) {
+      return 2;
+    }
+    if (hasValue) {
+      return 3;
+    }
+    if (loc === "query" || loc === "body") {
+      return 4;
+    }
+    return 5;
+  };
+  const points = ctx.injectionPoints().filter((p) => {
+    const name = String(p.paramName || "").toLowerCase();
+    if (/^(submit|button|login|signin|reset|search-submit)$/.test(name)) {
+      return false;
+    }
+    const path = String(p.url || "").toLowerCase().split("?")[0];
+    return !/\.(css|js|mjs|map|png|jpe?g|gif|ico|svg|woff2?|ttf|eot|webp)$/.test(path);
+  }).sort((a, b) => rank(a) - rank(b));
 
   const candidates = [];
   const maxSends = 60; // request budget per run; corpus stays well under it

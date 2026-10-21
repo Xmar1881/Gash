@@ -1,0 +1,1 @@
+{"body": "<pre>[fonts]\nfor 16-bit app support\n[extensions]\n</pre>", "control_body": "Normal page content", "control_status": 200, "expected_confidence": "confirmed", "expected_verdict": "accept", "headers": {"Content-Type": "text/html"}, "name": "Path traversal - successful win.ini read", "status": 200, "target": "http://example.com/?page=C:\\Windows\\win.ini"}

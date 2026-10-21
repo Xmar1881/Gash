@@ -129,11 +129,6 @@ func (r *Runner) Run(ctx context.Context) (*Report, error) {
 	for _, g := range groups {
 		if r.wantTool("gash") {
 			args := append([]string{}, ds.Gash.Args...)
-			if !hasFlag(args, "--scope") {
-				if host := hostOf(g.baseURL); host != "" {
-					args = append(args, "--scope", host)
-				}
-			}
 			authArgs, err := authFlags(g.target, g.auth)
 			if err != nil {
 				return nil, err
@@ -160,12 +155,20 @@ func (r *Runner) Run(ctx context.Context) (*Report, error) {
 			if err != nil {
 				return nil, err
 			}
+			seeds := make([]string, 0, len(g.target.NucleiSeeds))
+			for _, seed := range g.target.NucleiSeeds {
+				u, err := joinURL(g.baseURL, seed)
+				if err != nil {
+					return nil, fmt.Errorf("bench: nuclei seed %q: %w", seed, err)
+				}
+				seeds = append(seeds, u)
+			}
 			var before int64
 			if lab != nil {
 				before = lab.Total()
 			}
-			r.log("nuclei run target=%s auth=%s", g.baseURL, g.auth)
-			run, findings := RunNuclei(ctx, nucleiBin, g.baseURL, authHeader, ds.Nuclei, nucleiTimeout)
+			r.log("nuclei run target=%s auth=%s seeds=%d", g.baseURL, g.auth, len(seeds))
+			run, findings := RunNuclei(ctx, nucleiBin, g.baseURL, authHeader, seeds, ds.Nuclei, nucleiTimeout)
 			if lab != nil {
 				obs := lab.Total() - before
 				run.ObservedRequests = &obs
@@ -177,6 +180,9 @@ func (r *Runner) Run(ctx context.Context) (*Report, error) {
 			nucleiFindings = append(nucleiFindings, findings...)
 		}
 	}
+
+	gashFindings = DedupeNormalizedFindings(gashFindings)
+	nucleiFindings = DedupeNormalizedFindings(nucleiFindings)
 
 	rep := &Report{
 		SchemaVersion: ReportSchemaVersion,
@@ -297,7 +303,7 @@ func (r *Runner) prepareLab(ctx context.Context, ds *Dataset) (*FixtureLab, func
 	for i := range ds.Targets {
 		u := ds.Targets[i].BaseURL
 		if u == "" || strings.Contains(u, FixtureBasePlaceholder) {
-			return nil, nil, fmt.Errorf("bench: compose dataset target %q has unresolved base_url %q", ds.Targets[i].ID, u)
+			return nil, nil, fmt.Errorf("bench: native/compose dataset target %q has unresolved base_url %q", ds.Targets[i].ID, u)
 		}
 		resp, err := client.Get(u)
 		if err != nil {

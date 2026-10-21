@@ -1,0 +1,1 @@
+{"body": "<html><body>Requested file: ../../../etc/passwd</body></html>", "control_body": "Normal page content", "control_status": 200, "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "Payload reflected without file content", "status": 200, "target": "http://example.com/?page=../../../etc/passwd"}

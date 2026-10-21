@@ -120,7 +120,7 @@ type InjectionPoint struct {
 	URL           string `json:"url"`
 	Method        string `json:"method"`
 	ParamName     string `json:"param_name,omitempty"`
-	ParamLocation string `json:"param_location,omitempty"` // query/body/header/path/cookie
+	ParamLocation string `json:"param_location,omitempty"` // query/fragment/body/header/path/cookie
 	Value         string `json:"value,omitempty"`
 }
 

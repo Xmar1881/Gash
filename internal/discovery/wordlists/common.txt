@@ -28,3 +28,8 @@ phpinfo.php
 info.php
 admin.bak
 error_log
+README.md
+.gitignore
+.github/workflows/main.yml
+metrics
+api-docs/

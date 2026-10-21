@@ -25,6 +25,7 @@ import (
 const (
 	KindFixtures = "fixtures"
 	KindCompose  = "compose"
+	KindNative   = "native"
 
 	ExpectVulnerable = "vulnerable"
 	ExpectClean      = "clean"
@@ -50,6 +51,7 @@ const (
 	VerifyHTTPWAF        = "http-waf"
 	VerifyHTTPTimeout    = "http-timeout"
 	VerifyHTTPRedirect   = "http-redirect"
+	VerifyHTTPExposure   = "http-exposure"
 	VerifyBrowserExec    = "browser-exec"
 
 	StatusTP         = "tp"
@@ -77,7 +79,7 @@ var (
 		VerifyHTTPReflection: true, VerifyHTTPError: true, VerifyHTTPStored: true,
 		VerifyHTTPJSONRaw: true, VerifyHTTPClean: true, VerifyHTTPDenied: true,
 		VerifyHTTPSoft404: true, VerifyHTTPWAF: true, VerifyHTTPTimeout: true,
-		VerifyHTTPRedirect: true, VerifyBrowserExec: true,
+		VerifyHTTPRedirect: true, VerifyHTTPExposure: true, VerifyBrowserExec: true,
 	}
 )
 
@@ -116,10 +118,11 @@ type NucleiConfig struct {
 
 // Target is one lab base URL plus optional per-role auth headers.
 type Target struct {
-	ID      string            `yaml:"id" json:"id"`
-	BaseURL string            `yaml:"base_url" json:"base_url"`
-	Auth    map[string]string `yaml:"auth" json:"auth,omitempty"`
-	Notes   string            `yaml:"notes" json:"notes,omitempty"`
+	ID          string            `yaml:"id" json:"id"`
+	BaseURL     string            `yaml:"base_url" json:"base_url"`
+	Auth        map[string]string `yaml:"auth" json:"auth,omitempty"`
+	NucleiSeeds []string          `yaml:"nuclei_seeds" json:"nuclei_seeds,omitempty"`
+	Notes       string            `yaml:"notes" json:"notes,omitempty"`
 }
 
 // Scenario is one independently verifiable ground-truth entry.
@@ -154,6 +157,7 @@ type VerifySpec struct {
 	Kind                   string   `yaml:"kind" json:"kind"`
 	Method                 string   `yaml:"method" json:"method,omitempty"`
 	Path                   string   `yaml:"path" json:"path,omitempty"`
+	Param                  string   `yaml:"param" json:"param,omitempty"`
 	Payload                string   `yaml:"payload" json:"payload,omitempty"`
 	StorePath              string   `yaml:"store_path" json:"store_path,omitempty"`
 	RenderPath             string   `yaml:"render_path" json:"render_path,omitempty"`
@@ -205,9 +209,9 @@ func Validate(ds *Dataset, allowNonLab bool) error {
 		add("name is required")
 	}
 	switch ds.Kind {
-	case KindFixtures, KindCompose:
+	case KindFixtures, KindCompose, KindNative:
 	default:
-		add("kind %q must be %s or %s", ds.Kind, KindFixtures, KindCompose)
+		add("kind %q must be %s, %s or %s", ds.Kind, KindFixtures, KindCompose, KindNative)
 	}
 	if len(ds.Targets) == 0 {
 		add("at least one target is required")
@@ -233,6 +237,15 @@ func Validate(ds *Dataset, allowNonLab bool) error {
 		for role := range t.Auth {
 			if !authValues[role] || role == AuthNone || role == AuthMatrix {
 				add("target %q: auth role %q must be user-a or user-b", t.ID, role)
+			}
+		}
+		for _, seed := range t.NucleiSeeds {
+			if strings.TrimSpace(seed) == "" {
+				add("target %q: empty nuclei_seed", t.ID)
+				continue
+			}
+			if u, err := url.Parse(seed); err == nil && u.IsAbs() {
+				add("target %q: nuclei_seed %q must be a path, not an absolute URL", t.ID, seed)
 			}
 		}
 	}
@@ -288,6 +301,9 @@ func Validate(ds *Dataset, allowNonLab bool) error {
 		}
 		if sc.Verify.Kind == VerifyHTTPTimeout && sc.Verify.ExpectSlowMS <= 0 {
 			add("scenario %q: http-timeout requires expect_slow_ms", sc.ID)
+		}
+		if sc.Verify.Kind == VerifyHTTPExposure && len(sc.Verify.ExpectContains) == 0 {
+			add("scenario %q: http-exposure requires expect_contains", sc.ID)
 		}
 	}
 

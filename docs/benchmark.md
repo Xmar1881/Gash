@@ -25,6 +25,7 @@ and a baseline regression gate. It refuses non-loopback targets by default.
 | `bench/datasets/fixtures.yaml` | In-process fixture lab (127.0.0.1, no docker) | 23 scenarios: reflected/stored/DOM XSS, SQLi, traversal, CMDi, redirect, clean, denied, soft-404, WAF, timeout, auth matrix |
 | `bench/datasets/fixtures-deep.yaml` | Same lab | Same scenarios with `--profile deep --deep --browser-verify` and larger budgets |
 | `bench/datasets/compose-lab.yaml` | Docker compose lab (DVWA 8081, Juice Shop 8082, WebGoat 8083) | Requires docker; runtime ground truth unverified where docker is absent |
+| `bench/datasets/native-lab.yaml` | Native Windows lab (same three applications, no docker) | 22 scenarios; placeholder DVWA sessions; independent verification requires `-tags deep` + Chrome for DOM |
 
 Validate any dataset without scanning:
 
@@ -130,21 +131,33 @@ regression.
 These were observed with the current engine and are reported by the benchmark,
 not worked around by the harness:
 
-- Tier 1 YAML plugins probe the target root plus their declared parameter
-  names; on multi-endpoint applications they can miss the vulnerable endpoint
-  (e.g. `/traversal?file=...`) even though a direct scan of that path detects
-  it.
-- Tier 2 JS plugins spend a fixed send budget per injection point in document
-  order; with a large surface the vulnerable point may not be reached within
-  the per-plugin cap (e.g. `sqli-error-based` on `/sqli/error`).
-- The stored two-step scenario can time out under the standard profile's
-  plugin timeout; the deep dataset raises it.
 - DOM XSS findings from the engine are static source-to-sink evidence; the
   benchmark keeps them `weak-evidence` unless a real browser confirms
-  execution.
+  execution. The deep build's `--browser-verify` pass now checks GASH-003 DOM
+  findings (including fragment/hash points) and `dom-sink-basic` collapses
+  duplicate per-route sink/source evidence. A standard build still has no
+  browser and therefore cannot confirm DOM execution.
+- The stored two-step browser proof runs only for attempts that already
+  accept static evidence, so a static reject is never browser-retried.
+- Equalization with Nuclei is wall-clock plus rate limit; Nuclei cannot cap
+  total requests upstream.
+
+The three engine limits measured on 2026-10-19 (Tier 1 endpoint discovery,
+Tier 2 send-budget ordering, stored two-step timeout/control) were fixed the
+same day and re-measured: standard recall 0.500 -> 1.000, deep recall
+0.455 -> 0.909 (only the DOM weak outcome remains). Before/after evidence:
+`docs/metrics/benchmark-fixtures-2026-10-19.md`.
 
 ## Measured results
 
-See `docs/metrics/benchmark-fixtures-2026-10-19.md` for the first measured
-runs (standard and deep), including the engine control-request bug the
-benchmark surfaced and the regression test added for it.
+- `docs/metrics/native-lab-2026-10-20.md`: full 22-scenario native lab on
+  Juice Shop, DVWA, and WebGoat. Gash standard `TP=11 FP=0 TN=9 FN=2`, deep
+  `TP=12 FP=0 TN=9 FN=1`, Nuclei `TP=5 FP=0 TN=9 FN=8`; all 22 scenarios
+  independently verified in both runs.
+- `docs/metrics/benchmark-fixtures-2026-10-19.md`: initial measured runs,
+  the control-request bug they surfaced, the three recall fixes with
+  before/after numbers, and the final standard/deep results.
+- `docs/metrics/nuclei-comparison-2026-10-14.md`: the measured Gash/Nuclei
+  comparison on the fixture lab (cross-tool verdicts, per category).
+- `bench/baselines/fixtures.json`: committed regression baseline, refreshed
+  from the final standard run (TP=10, recall 1.000).

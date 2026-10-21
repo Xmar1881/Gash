@@ -108,6 +108,45 @@ function run(probe, ctx) {
 	}
 }
 
+func TestBrowserExecutionBindingConfirmed(t *testing.T) {
+	src := `
+function run(probe, ctx) {
+  const pts = ctx.injectionPoints();
+  const ev = host.oracles.browserExecution(pts[0], "PAYLOAD");
+  if (ev) {
+    host.candidate(pts[0], "dom-xss", ev);
+  }
+  return [];
+}`
+	var gotPoint JSPoint
+	var gotPayload string
+	env := &JSEnv{
+		Points: []JSPoint{{URL: "http://x/#/search", Method: "GET", ParamName: "q", ParamLocation: "fragment"}},
+		BrowserProbe: func(p JSPoint, payload string) (bool, bool, bool, error) {
+			gotPoint, gotPayload = p, payload
+			return true, true, true, nil
+		},
+	}
+	spec := timingSpec()
+	spec.ID = "dom-browser-probe"
+	got, err := ExecuteJS(context.Background(), spec, src, env, 10*time.Second)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if len(got) != 1 || got[0].Candidate.OracleName != "execution" {
+		t.Fatalf("browser execution candidate expected: %+v", got)
+	}
+	if gotPoint.ParamLocation != "fragment" || gotPayload != "PAYLOAD" {
+		t.Fatalf("browser probe received wrong point/payload: %+v %q", gotPoint, gotPayload)
+	}
+	if string(got[0].Evidence.ConfidenceContribution) != "confirmed" {
+		t.Fatalf("browser execution must confirm: %s", got[0].Evidence.ConfidenceContribution)
+	}
+	if got[0].Evidence.Artifacts["browser"] != "execution" {
+		t.Fatalf("browser artifact missing: %+v", got[0].Evidence.Artifacts)
+	}
+}
+
 func TestExecutionBindingNoSink(t *testing.T) {
 	src := `
 function run(probe, ctx) {

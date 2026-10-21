@@ -38,7 +38,7 @@ func (ExecutionOracle) Verify(ctx context.Context, cls baseline.Classification, 
 	if g := guard(cls, tainted); g != nil {
 		return g, nil
 	}
-	if p.Sink == "" {
+	if !p.HeadlessEnabled && p.Sink == "" {
 		return &Evidence{Verdict: VerdictReject, Note: "sink yok"}, nil
 	}
 	if !p.HeadlessEnabled {
@@ -48,13 +48,23 @@ func (ExecutionOracle) Verify(ctx context.Context, cls baseline.Classification, 
 		return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceFirm, Artifacts: map[string]string{"sink": p.Sink, "source": p.Source}, Note: "statik sink/source, headless yok → firm (maksimum)"}, nil
 	}
 	if p.Triggered && p.ControlClean {
+		artifacts := map[string]string{"browser": "execution"}
+		if p.Sink != "" {
+			artifacts["sink"] = p.Sink
+		}
+		if p.Source != "" {
+			artifacts["source"] = p.Source
+		}
+		if p.Payload != "" {
+			artifacts["payload"] = p.Payload
+		}
 		return &Evidence{
 			Verdict:                VerdictAccept,
 			ConfidenceContribution: plugin.ConfidenceConfirmed,
-			Artifacts:              map[string]string{"sink": p.Sink, "source": p.Source},
+			Artifacts:              artifacts,
 			Repeats:                1,
 			ControlResult:          "clean",
-			Note:                   "headless yürütme + kontrol → confirmed",
+			Note:                   "headless yǬrǬtme + kontrol ��' confirmed",
 		}, nil
 	}
 	return &Evidence{Verdict: VerdictReject, Note: "headless'te tetiklenmedi"}, nil

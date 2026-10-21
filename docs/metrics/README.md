@@ -92,10 +92,11 @@ The gate is enforced by `TestMetricGate` in `tests/plugins`, not by review conve
 | Lab | Report |
 |---|---|
 | aggressive recall, localhost synthetic lab (2026-10-14) | [lab-aggressive-local-2026-10-14.md](lab-aggressive-local-2026-10-14.md) |
+| native lab Juice Shop/DVWA/WebGoat (2026-10-20, measured; Gash standard/deep + Nuclei) | [native-lab-2026-10-20.md](native-lab-2026-10-20.md) |
 | compose lab DVWA/Juice Shop (2026-10-14, BLOCKED: no docker) | [lab-compose-dvwa-juiceshop-2026-10-14.md](lab-compose-dvwa-juiceshop-2026-10-14.md) |
-| compose lab DVWA/Juice Shop/WebGoat (2026-10-15, BLOCKED: no docker) | [lab-compose-2026-10-15.md](lab-compose-2026-10-15.md) |
-| Nuclei comparison (2026-10-14; harness built 2026-10-19, comparison still unmeasured) | [nuclei-comparison-2026-10-14.md](nuclei-comparison-2026-10-14.md) |
-| benchmark, fixtures standard + deep (2026-10-19, measured) | [benchmark-fixtures-2026-10-19.md](benchmark-fixtures-2026-10-19.md) |
+| compose lab DVWA/Juice Shop/WebGoat (2026-10-15, BLOCKED: no docker; native lab supersedes the measured subset) | [lab-compose-2026-10-15.md](lab-compose-2026-10-15.md) |
+| Nuclei comparison (fixture lab 2026-10-19; native lab 2026-10-20) | [nuclei-comparison-2026-10-14.md](nuclei-comparison-2026-10-14.md) |
+| benchmark, fixtures standard + deep (2026-10-19, measured; three recall fixes) | [benchmark-fixtures-2026-10-19.md](benchmark-fixtures-2026-10-19.md) |
 
 ## How to Reproduce
 
@@ -114,12 +115,13 @@ Lab runs are manual and follow the procedure inside each report.
 
 ## Dataset Honesty (P0.3)
 
-All precision/recall numbers are fixture-scoped: small labelled sets (1–6 cases
-per side), never real-world measurements. Each report pins its fixture bytes
-under `## Dataset` (`Dataset hash`). `TestMetricGate` recomputes the hash from
-`tests/fixtures/<id>/` on every run and fails when the report drifts — silent
-fixture edits cannot inflate precision. The first measured (non-fixture)
-recall is the localhost synthetic lab above; the docker compose lab
-(DVWA/Juice Shop) is still pending where no docker runtime exists. Untested areas (multi-layer
-encoding, browser-executed DOM, timing under jitter, blind classes without OOB)
-are named in the per-plugin report, never implied as covered.
+Per-plugin precision/recall numbers are fixture-scoped: small labelled sets
+(1-6 cases per side), never real-world measurements. Each report pins its
+fixture bytes under `## Dataset` (`Dataset hash`). `TestMetricGate` recomputes
+the hash from `tests/fixtures/<id>/` on every run and fails when the report
+drifts; silent fixture edits cannot inflate precision. Non-fixture lab
+measurements are separate: the localhost synthetic lab and the 2026-10-20
+native lab (Juice Shop/DVWA/WebGoat) above. The Docker compose procedure still
+cannot run where no Docker runtime exists. Untested areas (multi-layer
+encoding, browser-executed DOM discovery, timing under jitter, blind classes
+without OOB) are named in the per-plugin report, never implied as covered.

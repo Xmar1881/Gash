@@ -12,6 +12,7 @@ import (
 	"github.com/Xmar1881/Gash/internal/finding"
 	"github.com/Xmar1881/Gash/internal/headless"
 	"github.com/Xmar1881/Gash/internal/plugin"
+	"github.com/Xmar1881/Gash/internal/plugin/loader"
 )
 
 // browserVerifier resolves the verifier function.
@@ -39,20 +40,33 @@ func (e *Engine) browserVerifier() (func(ctx context.Context, payloadURL, contro
 }
 
 // browserEligible selects findings the generic pass may verify.
-// What: Only static-execution-evidence GASH-001 findings with a GET/query
-// injection point can have payload and control URLs reconstructed.
+// What: GASH-001 static-execution findings and GASH-003 DOM findings with a
+// GET/query or GET/fragment injection point can have payload and control URLs
+// reconstructed.
 // Why: Body-borne or stored payloads need workflow-specific control URLs and
 // are wired at their oracle binding (stored binding controlUrl option);
 // reconstructing them here would risk a fake control.
 func browserEligible(f *finding.Finding) bool {
-	if f == nil || f.RuleID != "GASH-001" {
+	if f == nil {
 		return false
 	}
-	if f.Confidence != plugin.ConfidenceStaticExecution {
+	if f.RuleID != "GASH-001" && f.RuleID != "GASH-003" {
+		return false
+	}
+	if f.Confidence == plugin.ConfidenceConfirmed {
+		return false
+	}
+	if f.RuleID == "GASH-001" && f.Confidence != plugin.ConfidenceStaticExecution {
+		return false
+	}
+	if f.RuleID == "GASH-003" &&
+		f.Confidence != plugin.ConfidenceFirm &&
+		f.Confidence != plugin.ConfidenceTentative {
 		return false
 	}
 	ip := f.InjectionPoint
-	if !strings.EqualFold(ip.ParamLocation, "query") || ip.ParamName == "" || ip.Value == "" {
+	location := strings.ToLower(strings.TrimSpace(ip.ParamLocation))
+	if (location != "query" && location != "fragment") || ip.ParamName == "" || ip.Value == "" {
 		return false
 	}
 	if ip.Method != "" && !strings.EqualFold(ip.Method, http.MethodGet) {
@@ -82,12 +96,14 @@ func (e *Engine) verifyBrowserFindings(ctx context.Context, findings []*finding.
 		if !browserEligible(f) {
 			continue
 		}
-		payloadURL, err := withScanQueryParam(f.Target, f.InjectionPoint.ParamName, f.InjectionPoint.Value)
-		if err != nil {
-			continue
+		point := loader.JSPoint{
+			URL: f.Target, Method: http.MethodGet,
+			ParamName: f.InjectionPoint.ParamName, ParamLocation: f.InjectionPoint.ParamLocation,
+			Value: f.InjectionPoint.Value,
 		}
-		controlURL, err := withScanQueryParam(f.Target, f.InjectionPoint.ParamName, "gash-control-neutral")
-		if err != nil || controlURL == payloadURL {
+		payloadURL := pointValueURL(f.Target, point, f.InjectionPoint.Value)
+		controlURL := pointValueURL(f.Target, point, controlNeutralValue)
+		if payloadURL == "" || controlURL == "" || controlURL == payloadURL {
 			continue
 		}
 		triggered, clean, verr := verifier(ctx, payloadURL, controlURL)

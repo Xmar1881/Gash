@@ -109,6 +109,10 @@ type JSEnv struct {
 	// the confirmed path; the static ceiling is preserved. The first return
 	// says verification actually ran.
 	BrowserVerify func(payloadURL, controlURL string) (verified, triggered, controlClean bool, err error)
+	// BrowserProbe navigates a point with an arbitrary payload and its neutral
+	// control. It exists for hash-route DOM sinks where an HTTP request cannot
+	// carry the injection. Nil disables host.oracles.browserExecution.
+	BrowserProbe func(point JSPoint, payload string) (verified, triggered, controlClean bool, err error)
 }
 
 // JSCandidate pairs a script candidate with its engine-side evidence.
@@ -360,6 +364,11 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 		_ = obj.Set("verdict", string(ev.Verdict))
 		_ = obj.Set("confidence", string(ev.ConfidenceContribution))
 		_ = obj.Set("note", ev.Note)
+		for _, key := range []string{"sink", "source", "payload", "browser", "correlation", "namespace"} {
+			if v, ok := ev.Artifacts[key]; ok && v != "" {
+				_ = obj.Set(key, v)
+			}
+		}
 		_ = obj.Set("__evIdx", idx)
 		return obj
 	}
@@ -516,24 +525,48 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 			}
 		}
 		cls := baseline.ClassifyStatic(renderResp.Status, toHTTPHeader(renderResp.Headers), []byte(renderResp.Body))
-		ctrl := controlFor(JSPoint{URL: renderResp.URL})
-		var browserVerified, browserTriggered, browserControlClean bool
-		if env.BrowserVerify != nil && controlURL != "" && renderResp.URL != "" && controlURL != renderResp.URL {
-			if verified, triggered, clean, err := env.BrowserVerify(renderResp.URL, controlURL); err == nil {
-				browserVerified, browserTriggered, browserControlClean = verified, triggered, clean
+		// Stored renders persist the claim: re-fetching the same URL as the
+		// control would always contain the canary and reject genuine findings.
+		// A caller-supplied sibling render page is the clean control; fall
+		// back to a neutralized same-URL fetch only when none is given.
+		controlBody := ""
+		if controlURL != "" && controlURL != renderResp.URL {
+			if cr, err := env.Send(JSPoint{URL: controlURL, Method: http.MethodGet}); err == nil {
+				controlBody = cr.Body
 			}
 		}
-		var o oracle.StoredOracle
-		ev, err := o.Verify(context.Background(), cls, false, oracle.StoredParams{
+		if controlBody == "" {
+			controlBody = controlFor(JSPoint{URL: renderResp.URL}).Body
+		}
+		params := oracle.StoredParams{
 			Canary: canary, Contexts: contexts,
 			RequireExecutableContext: requireExecutable,
 			StoreStatus:              storeResp.Status, StoreBody: storeResp.Body,
 			RenderBody: renderResp.Body, RenderHeaders: toHTTPHeader(renderResp.Headers),
-			ControlBody:         ctrl.Body,
-			BrowserVerified:     browserVerified,
-			BrowserTriggered:    browserTriggered,
-			BrowserControlClean: browserControlClean,
-		})
+			ControlBody: controlBody,
+		}
+		var o oracle.StoredOracle
+		pre, err := o.Verify(context.Background(), cls, false, params)
+		if err != nil {
+			panic(err.Error())
+		}
+		// The controlled browser proof costs two navigations: run it only for
+		// attempts that already accept as static execution (and only in deep
+		// builds). Ungated, every store+render attempt launched Chrome and
+		// blew the plugin time budget (measured: stored XSS went missing in
+		// deep runs).
+		if pre == nil || pre.Verdict != oracle.VerdictAccept || pre.Artifacts["execution"] != "static" ||
+			env.BrowserVerify == nil || controlURL == "" || controlURL == renderResp.URL {
+			return evToObject(vm, pre)
+		}
+		var browserVerified, browserTriggered, browserControlClean bool
+		if verified, triggered, clean, err := env.BrowserVerify(renderResp.URL, controlURL); err == nil {
+			browserVerified, browserTriggered, browserControlClean = verified, triggered, clean
+		}
+		params.BrowserVerified = browserVerified
+		params.BrowserTriggered = browserTriggered
+		params.BrowserControlClean = browserControlClean
+		ev, err := o.Verify(context.Background(), cls, false, params)
 		if err != nil {
 			panic(err.Error())
 		}
@@ -815,6 +848,40 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 		ev, err := o.Verify(context.Background(), cls, false, oracle.ExecutionParams{
 			Sink: sink, Source: source,
 			HeadlessEnabled: false,
+		})
+		if err != nil {
+			panic(err.Error())
+		}
+		return evToObject(vm, ev)
+	})
+	_ = oraclesObj.Set("browserExecution", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			panic("browserExecution(point, payload[, opts]) requires 2 arguments")
+		}
+		if env.BrowserProbe == nil {
+			return goja.Null()
+		}
+		p := pointFromValue(call.Arguments[0])
+		payload := call.Arguments[1].String()
+		sink, source := "", ""
+		if len(call.Arguments) >= 3 && !goja.IsUndefined(call.Arguments[2]) && !goja.IsNull(call.Arguments[2]) {
+			if opts, ok := call.Arguments[2].(*goja.Object); ok {
+				if v := opts.Get("sink"); v != nil && !goja.IsUndefined(v) && !goja.IsNull(v) {
+					sink = v.String()
+				}
+				if v := opts.Get("source"); v != nil && !goja.IsUndefined(v) && !goja.IsNull(v) {
+					source = v.String()
+				}
+			}
+		}
+		verified, triggered, clean, err := env.BrowserProbe(p, payload)
+		if err != nil || !verified {
+			return goja.Null()
+		}
+		var o oracle.ExecutionOracle
+		ev, err := o.Verify(context.Background(), baseline.Classification{Note: "browser probe"}, false, oracle.ExecutionParams{
+			Sink: sink, Source: source, Payload: payload,
+			HeadlessEnabled: true, Triggered: triggered, ControlClean: clean,
 		})
 		if err != nil {
 			panic(err.Error())

@@ -15,6 +15,7 @@ func testDataset() *Dataset {
 		UnscoredPlugins: []string{
 			"web-cache-poisoning-basic",
 		},
+		Targets: []Target{{ID: "x", BaseURL: "http://x"}},
 		Scenarios: []Scenario{
 			{
 				ID: "xss-reflect", Category: "xss-reflected", Expected: ExpectVulnerable,
@@ -128,17 +129,54 @@ func TestUnverifiedScenarioIsExcludedFromScoring(t *testing.T) {
 	}
 }
 
+func TestNormalizePathHashRoute(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{in: "http://juice/#/search?q=apple", want: "/search"},
+		{in: "http://juice/#/search", want: "/search"},
+		{in: "http://juice/#/", want: "/"},
+		{in: "http://juice/app#/search?q=apple", want: "/app/search"},
+		{in: "http://juice/app#section", want: "/app"},
+		{in: "http://juice/app?x=1", want: "/app"},
+	}
+	for _, tc := range tests {
+		if got := normalizePath(tc.in); got != tc.want {
+			t.Fatalf("normalizePath(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestDedupeNormalizedFindingsKeepsStrongest(t *testing.T) {
+	in := []NormalizedFinding{
+		{Tool: "gash", Target: "http://x", Path: "/a", Auth: "a", PluginID: "p", Fingerprint: "fp", Confidence: "tentative"},
+		{Tool: "gash", Target: "http://x", Path: "/a", Auth: "b", PluginID: "p", Fingerprint: "fp", Confidence: "confirmed"},
+		{Tool: "gash", Target: "http://x", Path: "/a", Auth: "b", PluginID: "other", Fingerprint: "fp2", Confidence: "firm"},
+	}
+	got := DedupeNormalizedFindings(in)
+	if len(got) != 2 {
+		t.Fatalf("dedupe = %d findings, want 2: %+v", len(got), got)
+	}
+	if got[0].Confidence != "confirmed" {
+		t.Fatalf("strongest duplicate must win: %+v", got[0])
+	}
+	if got[1].PluginID != "other" {
+		t.Fatalf("different plugin must remain distinct: %+v", got[1])
+	}
+}
+
 func TestMatchFindingTags(t *testing.T) {
 	ds := testDataset()
 	ds.Scenarios[0].Match = MatchSpec{NucleiTags: []string{"xss", "reflected"}}
 	sc := &ds.Scenarios[0]
-	if !matchFinding(NormalizedFinding{Path: "/xss/reflect", Tags: []string{"reflected"}}, sc, "nuclei") {
+	if !matchFinding(ds, NormalizedFinding{Path: "/xss/reflect", Tags: []string{"reflected"}}, sc, "nuclei") {
 		t.Fatal("nuclei tag match failed")
 	}
-	if matchFinding(NormalizedFinding{Path: "/xss/reflect", Tags: []string{"sqli"}}, sc, "nuclei") {
+	if matchFinding(ds, NormalizedFinding{Path: "/xss/reflect", Tags: []string{"sqli"}}, sc, "nuclei") {
 		t.Fatal("nuclei wrong tag must not match")
 	}
-	if !matchFinding(NormalizedFinding{Path: "/xss/reflect", PluginID: "xss-reflected-basic"}, sc, "gash") {
+	if !matchFinding(ds, NormalizedFinding{Path: "/xss/reflect", PluginID: "xss-reflected-basic"}, sc, "gash") {
 		t.Fatal("gash plugin match failed")
 	}
 }
@@ -174,5 +212,39 @@ func TestCrossToolSingleTool(t *testing.T) {
 	rows := BuildCrossTool(outcomes)
 	if len(rows) != 1 || rows[0].Verdict != "single-tool" {
 		t.Fatalf("unavailable nuclei must yield single-tool: %+v", rows)
+	}
+}
+
+func TestMatchFindingRejectsOtherOrigin(t *testing.T) {
+	ds := testDataset()
+	ds.Targets = []Target{
+		{ID: "dvwa", BaseURL: "http://127.0.0.1:8081"},
+		{ID: "juice", BaseURL: "http://127.0.0.1:8082"},
+	}
+	ds.Scenarios = []Scenario{{
+		ID: "juice-phpinfo", TargetID: "juice", Path: "/phpinfo.php", Expected: ExpectClean,
+	}}
+	sc := &ds.Scenarios[0]
+	if matchFinding(ds, NormalizedFinding{Target: "http://127.0.0.1:8081/phpinfo.php", Path: "/phpinfo.php"}, sc, "gash") {
+		t.Fatal("finding from another target origin must not match")
+	}
+	if !matchFinding(ds, NormalizedFinding{Target: "http://127.0.0.1:8082/phpinfo.php", Path: "/phpinfo.php"}, sc, "gash") {
+		t.Fatal("finding on the scenario origin must match")
+	}
+}
+
+func TestMatchFindingTrailingSlash(t *testing.T) {
+	ds := testDataset()
+	ds.Scenarios[0].Path = "/vulnerabilities/sqli/?id=1&Submit=Submit"
+	ds.Scenarios[0].Match = MatchSpec{PluginIDs: []string{"sqli-error-based"}}
+	sc := &ds.Scenarios[0]
+	if !matchFinding(ds, NormalizedFinding{Path: "/vulnerabilities/sqli", PluginID: "sqli-error-based"}, sc, "gash") {
+		t.Fatal("trailing-slash path mismatch must not hide a finding")
+	}
+	if got := normalizePath("http://127.0.0.1:8081/vulnerabilities/xss_r/?name=hello"); got != "/vulnerabilities/xss_r" {
+		t.Fatalf("normalizePath = %q", got)
+	}
+	if got := normalizePath("http://127.0.0.1:8081/"); got != "/" {
+		t.Fatalf("root normalizePath = %q", got)
 	}
 }

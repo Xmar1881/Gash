@@ -435,7 +435,7 @@ func jsMockResponse(p loader.JSPoint, canary string) loader.JSResponse {
 	v := p.Value
 	h := map[string]string{"Content-Type": "text/html"}
 	switch {
-	case strings.Contains(v, "gash-dom-probe"):
+	case strings.Contains(v, "__gashCanary") || strings.Contains(v, "gash-dom-probe"):
 		return loader.JSResponse{Status: 200, Headers: h, Body: `<div id="o"></div><script>var h=location.hash; document.getElementById('o').innerHTML=h;</script>`, URL: p.URL}
 	case strings.Contains(v, "'1'='1"):
 		return loader.JSResponse{Status: 200, Headers: h, Body: "<html><body>welcome admin panel</body></html>", URL: p.URL}

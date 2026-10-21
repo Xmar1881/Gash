@@ -318,12 +318,12 @@ func executeRateLimit(ctx context.Context, spec *plugin.PluginSpec, file *Tier1F
 		Status:  lastStatus,
 		Burst:   statuses,
 	})
-	if err != nil {
-		return nil, err
-	}
-	if ev.Verdict != oracle.VerdictAccept {
-		return nil, nil
-	}
+		if err != nil {
+			return nil, err
+		}
+		if ev.Verdict != oracle.VerdictAccept {
+			return nil, nil
+		}
 	return []Tier1Result{{Candidate: plugin.Candidate{
 		PluginID:       spec.ID,
 		Target:         target,

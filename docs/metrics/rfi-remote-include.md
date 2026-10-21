@@ -49,7 +49,12 @@ reflecting the parameter in the localhost lab, scan with `--active` plus
 `--scope 127.0.0.1`, expect one high finding at `tentative` (manual
 verification required: confirm server-side include semantics; this screen alone
 is not fetch proof).
-Status: pending manual run. Expected Precision 100 percent on this page class.
+
+2026-10-20 native DVWA: `/vulnerabilities/fi` reflected the loopback URL canary
+and produced `tentative` findings. DVWA has `allow_url_include=Off`, so this is
+not inclusion proof. The finding is declared unscored in `native-lab.yaml` and
+is not counted as TP or FP in the native-lab benchmark.
+Status: targeted lab run completed; tentative ceiling observed as designed.
 
 ## Precision
 
@@ -67,8 +72,8 @@ PASS. Precision 1.00 is above the 0.99 gate. Corpus holds 0 `firm` plus.
 
 - Dataset hash: `d594948e922ff480c1915ca4c6125c51ce09dc4fef3dfe06d477608897921141`
   (sha256 over all 4 fixture files under `tests/fixtures/rfi-remote-include/`).
-- Samples: TP=2, FP=0, TN=2, FN=0. Fixture-only measurement; lab pending above.
-  `TestMetricGate` fails the build if this hash drifts from the fixtures.
+- Samples: TP=2, FP=0, TN=2, FN=0. Fixture-only measurement; native-lab result
+  above. `TestMetricGate` fails the build if this hash drifts from the fixtures.
 
 ## Limitations
 
