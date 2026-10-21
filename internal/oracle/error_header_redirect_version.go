@@ -109,7 +109,7 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 	if len(set) == 0 {
 		switch mode {
 		case "path_traversal":
-			set = []string{"path_traversal"}
+			set = []string{"path_traversal", "unix_passwd", "windows_ini"}
 		case "generic_error":
 			set = []string{"generic_error"}
 		case "deserialization":
@@ -796,22 +796,8 @@ func verifyJWTAlgConfusion(h http.Header) (*Evidence, error) {
 		}
 	}
 
-	// Check for missing algorithm validation in error responses
-	// If server returns detailed JWT validation errors, it may indicate weak validation
-	errorPatterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)invalid\s+algorithm`),
-		regexp.MustCompile(`(?i)algorithm\s+not\s+allowed`),
-		regexp.MustCompile(`(?i)unsupported\s+algorithm`),
-	}
-	for name, values := range h {
-		for _, v := range values {
-			for _, re := range errorPatterns {
-				if re.MatchString(v) {
-					findings = append(findings, name+": JWT algorithm validation error exposed: "+v)
-				}
-			}
-		}
-	}
+	// Validation errors ("invalid algorithm", "unsupported algorithm") prove
+	// that the server rejected the probe; they are not confusion evidence.
 
 	if len(findings) == 0 {
 		return &Evidence{Verdict: VerdictReject, Note: "JWT algorithm confusion göstergesi tespit edilmedi"}, nil

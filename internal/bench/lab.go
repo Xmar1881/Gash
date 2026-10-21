@@ -100,30 +100,49 @@ func (l *FixtureLab) handle(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == "/":
 		l.index(w)
-	case r.URL.Path == "/xss/reflect" || r.URL.Path == "/xss/attr" || r.URL.Path == "/xss/attr-quoted" ||
-		r.URL.Path == "/xss/js" || r.URL.Path == "/xss/url" || r.URL.Path == "/xss/json-raw" ||
-		r.URL.Path == "/xss/escape" || r.URL.Path == "/xss/dom":
+	case r.URL.Path == "/xss/reflect" || r.URL.Path == "/xss/reflect2" ||
+		r.URL.Path == "/xss/attr" || r.URL.Path == "/xss/attr2" ||
+		r.URL.Path == "/xss/attr-quoted" || r.URL.Path == "/xss/attr-quoted2" ||
+		r.URL.Path == "/xss/attr-single" || r.URL.Path == "/xss/attr-single2" ||
+		r.URL.Path == "/xss/js" || r.URL.Path == "/xss/js2" ||
+		r.URL.Path == "/xss/js-double" || r.URL.Path == "/xss/js-double2" ||
+		r.URL.Path == "/xss/url" || r.URL.Path == "/xss/url2" ||
+		r.URL.Path == "/xss/json-raw" || r.URL.Path == "/xss/json-raw2" ||
+		r.URL.Path == "/xss/escape" || r.URL.Path == "/xss/escape2" ||
+		r.URL.Path == "/xss/textarea" || r.URL.Path == "/xss/title" || r.URL.Path == "/xss/dom":
 		l.xss(w, r)
 	case r.URL.Path == "/stored":
 		l.stored(w, r)
-	case r.URL.Path == "/sqli/error":
+	case r.URL.Path == "/sqli/error" || r.URL.Path == "/sqli/numeric":
 		l.sqli(w, r)
-	case r.URL.Path == "/traversal":
+	case r.URL.Path == "/sqli/clean" || r.URL.Path == "/sqli/clean2":
+		l.sqliClean(w, r)
+	case r.URL.Path == "/traversal" || r.URL.Path == "/traversal/passwd":
 		l.traversal(w, r)
 	case r.URL.Path == "/cmdi":
 		l.cmdi(w, r)
-	case r.URL.Path == "/redirect":
+	case r.URL.Path == "/redirect" || r.URL.Path == "/redirect/next":
 		l.redirect(w, r)
-	case r.URL.Path == "/clean/search":
+	case r.URL.Path == "/redirect/clean" || r.URL.Path == "/redirect/clean2":
+		l.redirectClean(w, r)
+	case r.URL.Path == "/README.md":
+		l.artifact(w, "# Gash Bench Lab\n\nSeeded fixture README for benchmark exposure coverage.\n")
+	case r.URL.Path == "/.gitignore":
+		l.artifact(w, "bench-notes.txt\nconfig.inc.php.bak\n.DS_Store\n")
+	case r.URL.Path == "/.github/workflows/main.yml":
+		l.artifact(w, "name: Bench CI\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
+	case r.URL.Path == "/robots.txt":
+		l.artifact(w, "User-agent: *\nDisallow: /admin\nDisallow: /backup\n")
+	case r.URL.Path == "/clean/search" || r.URL.Path == "/clean/search2":
 		l.cleanSearch(w, r)
 	case r.URL.Path == "/clean/inline":
 		l.cleanInline(w)
-	case r.URL.Path == "/denied":
+	case r.URL.Path == "/denied" || r.URL.Path == "/denied2":
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(FixtureDenied))
-	case r.URL.Path == "/waf":
+	case r.URL.Path == "/waf" || r.URL.Path == "/waf2":
 		l.waf(w, r)
-	case r.URL.Path == "/slow":
+	case r.URL.Path == "/slow" || r.URL.Path == "/slow2":
 		time.Sleep(1500 * time.Millisecond)
 		l.page(w, "slow page done")
 	case strings.HasPrefix(r.URL.Path, "/soft404/"):
@@ -150,16 +169,44 @@ func (l *FixtureLab) index(w http.ResponseWriter) {
 <li><a href="/xss/reflect?q=hello">reflect</a></li>
 <li><a href="/xss/attr?q=hello">attr</a></li>
 <li><a href="/xss/attr-quoted?q=hello">attr-quoted</a></li>
+<li><a href="/xss/attr-single?q=hello">attr-single</a></li>
 <li><a href="/xss/js?q=hello">js</a></li>
+<li><a href="/xss/js-double?q=hello">js-double</a></li>
 <li><a href="/xss/url?q=hello">url</a></li>
 <li><a href="/xss/json-raw?q=hello">json-raw</a></li>
+<li><a href="/xss/textarea?q=hello">textarea</a></li>
+<li><a href="/xss/title?q=hello">title</a></li>
 <li><a href="/xss/escape?q=hello">escape</a></li>
 <li><a href="/xss/dom?q=hello">dom</a></li>
 <li><a href="/stored?message=hello">stored</a></li>
 <li><a href="/sqli/error?id=1">sqli</a></li>
+<li><a href="/sqli/numeric?id=1">sqli-numeric</a></li>
+<li><a href="/sqli/clean?id=1">sqli-clean</a></li>
 <li><a href="/traversal?file=readme.txt">traversal</a></li>
+<li><a href="/traversal/passwd?file=readme.txt">traversal-passwd</a></li>
 <li><a href="/cmdi?cmd=ping">cmdi</a></li>
 <li><a href="/redirect?url=/home">redirect</a></li>
+<li><a href="/redirect/next?next=/home">redirect-next</a></li>
+<li><a href="/redirect/clean?next=/home">redirect-clean</a></li>
+<li><a href="/README.md">readme</a></li>
+<li><a href="/xss/reflect2?q=hello">reflect-2</a></li>
+<li><a href="/xss/attr2?q=hello">attr-2</a></li>
+<li><a href="/xss/attr-quoted2?q=hello">attr-quoted-2</a></li>
+<li><a href="/xss/attr-single2?q=hello">attr-single-2</a></li>
+<li><a href="/xss/js2?q=hello">js-2</a></li>
+<li><a href="/xss/js-double2?q=hello">js-double-2</a></li>
+<li><a href="/xss/url2?q=hello">url-2</a></li>
+<li><a href="/xss/escape2?q=hello">escape-2</a></li>
+<li><a href="/xss/json-raw2?q=hello">json-raw-2</a></li>
+<li><a href="/clean/search2?q=hello">clean-search-2</a></li>
+<li><a href="/sqli/clean2?id=1">sqli-clean-2</a></li>
+<li><a href="/redirect/clean2?next=/home">redirect-clean-2</a></li>
+<li><a href="/denied2?q=hello">denied-2</a></li>
+<li><a href="/waf2?q=hello">waf-2</a></li>
+<li><a href="/slow2?q=hello">slow-2</a></li>
+<li><a href="/robots.txt">robots</a></li>
+<li><a href="/.gitignore">gitignore</a></li>
+<li><a href="/.github/workflows/main.yml">workflow</a></li>
 <li><a href="/clean/search?q=hello">clean-search</a></li>
 <li><a href="/clean/inline">clean-inline</a></li>
 <li><a href="/soft404/help?q=hello">docs-page</a></li>
@@ -178,20 +225,29 @@ var xssParamNames = []string{"q", "query", "search", "name", "input", "value", "
 func (l *FixtureLab) xss(w http.ResponseWriter, r *http.Request) {
 	v := firstParam(r, xssParamNames...)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	switch r.URL.Path {
+	path := strings.TrimSuffix(r.URL.Path, "2")
+	switch path {
 	case "/xss/reflect":
 		_, _ = fmt.Fprintf(w, "<!doctype html><html><body><div id=\"result\">%s</div></body></html>", v)
 	case "/xss/attr-quoted":
 		_, _ = fmt.Fprintf(w, "<!doctype html><html><body><input value=%s></body></html>", v)
 	case "/xss/attr":
 		_, _ = fmt.Fprintf(w, "<!doctype html><html><body><input value=\"%s\"></body></html>", v)
+	case "/xss/attr-single":
+		_, _ = fmt.Fprintf(w, "<!doctype html><html><body><input value='%s'></body></html>", v)
 	case "/xss/js":
 		_, _ = fmt.Fprintf(w, "<!doctype html><html><body><script>var q='%s';</script></body></html>", v)
+	case "/xss/js-double":
+		_, _ = fmt.Fprintf(w, "<!doctype html><html><body><script>var q=\"%s\";</script></body></html>", v)
 	case "/xss/url":
 		_, _ = fmt.Fprintf(w, "<!doctype html><html><body><a href=\"%s\">next</a></body></html>", v)
 	case "/xss/json-raw":
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintf(w, `{"q":"%s"}`, v)
+	case "/xss/textarea":
+		_, _ = fmt.Fprintf(w, "<!doctype html><html><body><textarea>%s</textarea></body></html>", v)
+	case "/xss/title":
+		_, _ = fmt.Fprintf(w, "<!doctype html><html><body><title>%s</title><h1>page</h1></body></html>", v)
 	case "/xss/escape":
 		rp := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;", "'", "&#39;")
 		_, _ = fmt.Fprintf(w, "<!doctype html><html><body><div id=\"result\">%s</div></body></html>", rp.Replace(v))
@@ -226,14 +282,28 @@ func (l *FixtureLab) sqli(w http.ResponseWriter, r *http.Request) {
 	l.page(w, "item "+html.EscapeString(v))
 }
 
+func (l *FixtureLab) sqliClean(w http.ResponseWriter, r *http.Request) {
+	v := firstParam(r, "id", "q", "user", "category", "item")
+	l.page(w, "item "+html.EscapeString(v))
+}
+
 func (l *FixtureLab) traversal(w http.ResponseWriter, r *http.Request) {
 	v := firstParam(r, "file", "path", "page", "include", "template")
 	if strings.Contains(strings.ToLower(v), "..") || strings.Contains(strings.ToLower(v), "etc/passwd") ||
 		strings.Contains(strings.ToLower(v), "win.ini") || strings.Contains(v, "%2e") {
+		if r.URL.Path == "/traversal/passwd" {
+			l.page(w, "<pre>root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin</pre>")
+			return
+		}
 		l.page(w, "Warning: include("+html.EscapeString(v)+"): "+FixtureOpenFailed)
 		return
 	}
 	l.page(w, "requested file is not available")
+}
+
+func (l *FixtureLab) artifact(w http.ResponseWriter, body string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = fmt.Fprint(w, body)
 }
 
 func (l *FixtureLab) cmdi(w http.ResponseWriter, r *http.Request) {
@@ -254,6 +324,10 @@ func (l *FixtureLab) redirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	l.page(w, "redirect target accepted")
+}
+
+func (l *FixtureLab) redirectClean(w http.ResponseWriter, r *http.Request) {
+	l.page(w, "redirect target accepted (no redirect performed)")
 }
 
 func (l *FixtureLab) cleanSearch(w http.ResponseWriter, r *http.Request) {
