@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -90,13 +91,20 @@ func (sm *ScopeManager) parseEntry(entry string) *ScopeEntry {
 		if err != nil {
 			return nil
 		}
+		portNum, _ := strconv.Atoi(u.Port())
 		se := &ScopeEntry{
 			Type:     ScopeTypeURLPrefix,
-			Value:    u.Host,
-			Protocol: u.Scheme,
+			Value:    strings.ToLower(u.Hostname()),
+			Port:     portNum,
+			Protocol: strings.ToLower(u.Scheme),
 			Path:     strings.TrimSuffix(u.Path, "/"),
 		}
 		return se
+	}
+
+	if h, p, err := net.SplitHostPort(entry); err == nil {
+		portNum, _ := strconv.Atoi(p)
+		return &ScopeEntry{Type: ScopeTypeDomain, Value: strings.ToLower(h), Port: portNum}
 	}
 
 	// Domain entry
@@ -179,10 +187,10 @@ func (sm *ScopeManager) matchEntry(u *url.URL, host, scheme, path, port string, 
 			if e.Protocol != "" && scheme != e.Protocol {
 				return false
 			}
-			if e.Port > 0 && port != "" && port != fmt.Sprintf("%d", e.Port) {
+			if !scopePortMatches(e.Port, scheme, port) {
 				return false
 			}
-			if e.Path != "" && !strings.HasPrefix(path, e.Path) {
+			if !scopePathMatches(path, e.Path) {
 				return false
 			}
 			return true
@@ -204,13 +212,38 @@ func (sm *ScopeManager) matchEntry(u *url.URL, host, scheme, path, port string, 
 			if e.Protocol != "" && scheme != e.Protocol {
 				return false
 			}
-			if !strings.HasPrefix(path, e.Path) {
+			if !scopePortMatches(e.Port, scheme, port) {
+				return false
+			}
+			if !scopePathMatches(path, e.Path) {
 				return false
 			}
 			return true
 		}
 	}
 	return false
+}
+
+func scopePortMatches(want int, scheme, got string) bool {
+	if want <= 0 {
+		return true
+	}
+	if got == "" {
+		switch scheme {
+		case "http":
+			got = "80"
+		case "https":
+			got = "443"
+		}
+	}
+	return got == strconv.Itoa(want)
+}
+
+func scopePathMatches(path, prefix string) bool {
+	if prefix == "" || path == prefix {
+		return true
+	}
+	return strings.HasPrefix(path, prefix+"/")
 }
 
 // checkIPRebinding detects DNS rebinding by comparing resolved IPs.
@@ -332,20 +365,30 @@ func (sb *ScanBudget) counterFor(m map[string]*atomic.Int64, key string) *atomic
 }
 
 func (sb *ScanBudget) CheckAndIncrement(u *url.URL) error {
-	if sb.maxRequestsTotal > 0 && sb.requestsTotal.Load() >= sb.maxRequestsTotal {
+	total := sb.requestsTotal.Add(1)
+	if sb.maxRequestsTotal > 0 && total > sb.maxRequestsTotal {
+		sb.requestsTotal.Add(-1)
 		return fmt.Errorf("%w: total request budget %d exhausted", plugin.ErrBudgetExceeded, sb.maxRequestsTotal)
 	}
 	if sb.maxRequestsPerHost > 0 {
-		if sb.counterFor(sb.requestsPerHost, sb.hostKey(u)).Add(1) > sb.maxRequestsPerHost {
+		host := sb.counterFor(sb.requestsPerHost, sb.hostKey(u))
+		if host.Add(1) > sb.maxRequestsPerHost {
+			host.Add(-1)
+			sb.requestsTotal.Add(-1)
 			return fmt.Errorf("%w: per-host request budget %d exhausted for %s", plugin.ErrBudgetExceeded, sb.maxRequestsPerHost, sb.hostKey(u))
 		}
 	}
 	if sb.maxRequestsPerPath > 0 {
-		if sb.counterFor(sb.requestsPerPath, sb.pathKey(u)).Add(1) > sb.maxRequestsPerPath {
+		path := sb.counterFor(sb.requestsPerPath, sb.pathKey(u))
+		if path.Add(1) > sb.maxRequestsPerPath {
+			path.Add(-1)
+			if sb.maxRequestsPerHost > 0 {
+				sb.counterFor(sb.requestsPerHost, sb.hostKey(u)).Add(-1)
+			}
+			sb.requestsTotal.Add(-1)
 			return fmt.Errorf("%w: per-path request budget %d exhausted for %s", plugin.ErrBudgetExceeded, sb.maxRequestsPerPath, sb.pathKey(u))
 		}
 	}
-	sb.requestsTotal.Add(1)
 	return nil
 }
 

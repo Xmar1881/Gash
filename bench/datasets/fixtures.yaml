@@ -430,3 +430,371 @@ scenarios:
     match:
       plugin_ids: [idor-differential, sqli-auth-bypass]
       nuclei_tags: [idor, auth]
+
+  # ---- Additional reflected contexts --------------------------------------
+  - id: xss-reflected-attr-single
+    category: xss-reflected
+    subcategory: attribute-single-quoted
+    cwe: CWE-79
+    path: /xss/attr-single?q=hello
+    expected: vulnerable
+    xss: {kind: reflected, context: attribute}
+    verify:
+      kind: http-reflection
+      payload: "' {marker}='"
+    match:
+      plugin_ids: [xss-attribute-injection, xss-reflected-basic]
+      nuclei_tags: [xss]
+
+  - id: xss-reflected-js-double
+    category: xss-reflected
+    subcategory: script-string-double-quoted
+    cwe: CWE-79
+    path: /xss/js-double?q=hello
+    expected: vulnerable
+    xss: {kind: reflected, context: js-string}
+    verify:
+      kind: http-reflection
+      payload: '";{marker};"'
+    match:
+      plugin_ids: [xss-reflected-basic]
+      nuclei_tags: [xss]
+
+  - id: sqli-or-error
+    category: sqli
+    subcategory: boolean-or
+    cwe: CWE-89
+    path: /sqli/numeric?id=1
+    expected: vulnerable
+    verify:
+      kind: http-error
+      payload: "1 OR 1=1"
+      expect_contains: ["You have an error in your SQL syntax"]
+    match:
+      plugin_ids: [sqli-error-based]
+      nuclei_tags: [sqli]
+
+  - id: sqli-clean
+    category: clean
+    subcategory: escaped-sqli-param
+    path: /sqli/clean?id=1
+    expected: clean
+    verify:
+      kind: http-clean
+      payload: "' OR 1=1--"
+      expect_not_contains: ["You have an error in your SQL syntax"]
+    match:
+      plugin_ids: [sqli-error-based]
+      nuclei_tags: [sqli]
+
+  - id: path-traversal-passwd-content
+    category: path-traversal
+    subcategory: file-content
+    cwe: CWE-22
+    path: /traversal/passwd?file=readme.txt
+    expected: vulnerable
+    verify:
+      kind: http-error
+      payload: "../../../etc/passwd"
+      expect_contains: ["root:x:0:0"]
+    match:
+      plugin_ids: [path-traversal-error]
+      nuclei_tags: [lfi, traversal]
+
+  - id: open-redirect-next
+    category: open-redirect
+    subcategory: next-param
+    cwe: CWE-601
+    path: /redirect/next?next=/home
+    expected: vulnerable
+    verify:
+      kind: http-redirect
+      payload: "https://gash-bench-canary.example/landing"
+      expect_external_location: true
+    match:
+      plugin_ids: [open-redirect-param]
+      nuclei_tags: [redirect]
+
+  - id: open-redirect-clean
+    category: clean
+    subcategory: internal-redirect-param
+    path: /redirect/clean?next=/home
+    expected: clean
+    verify:
+      kind: http-clean
+      payload: "https://gash-bench-canary.example/landing"
+      expect_not_contains: ["gash-bench-canary.example"]
+    match:
+      plugin_ids: [open-redirect-param]
+      nuclei_tags: [redirect]
+
+  # ---- Exposed repository artifacts --------------------------------------
+  - id: readme-exposure
+    category: exposure
+    subcategory: readme
+    cwe: CWE-200
+    path: /README.md
+    expected: vulnerable
+    verify:
+      kind: http-exposure
+      expect_contains: ["# Gash Bench Lab"]
+    match:
+      plugin_ids: [engine-content-discovery]
+      nuclei_tags: [exposure]
+
+  - id: gitignore-exposure
+    category: exposure
+    subcategory: gitignore
+    cwe: CWE-200
+    path: /.gitignore
+    expected: vulnerable
+    verify:
+      kind: http-exposure
+      expect_contains: [".DS_Store", "config.inc.php.bak"]
+    match:
+      plugin_ids: [engine-content-discovery]
+      nuclei_tags: [exposure]
+
+  - id: workflow-exposure
+    category: exposure
+    subcategory: github-workflow
+    cwe: CWE-200
+    path: /.github/workflows/main.yml
+    expected: vulnerable
+    verify:
+      kind: http-exposure
+      expect_contains: ["name: Bench CI", "runs-on: ubuntu-latest"]
+    match:
+      plugin_ids: [engine-content-discovery]
+      nuclei_tags: [exposure]
+
+  # ---- Expanded benchmark scenarios (fair for Gash and Nuclei) -------------
+  - id: xss-reflected-html-2
+    category: xss-reflected
+    subcategory: html-body
+    cwe: CWE-79
+    path: /xss/reflect2?q=hello
+    expected: vulnerable
+    xss: {kind: reflected, context: html}
+    verify:
+      kind: http-reflection
+      payload: "<b>{marker}</b>"
+    match:
+      plugin_ids: [xss-reflected-basic]
+      nuclei_tags: [xss]
+
+  - id: xss-reflected-attr-2
+    category: xss-reflected
+    subcategory: attribute-quoted
+    cwe: CWE-79
+    path: /xss/attr2?q=hello
+    expected: vulnerable
+    xss: {kind: reflected, context: attribute}
+    verify:
+      kind: http-reflection
+      payload: '" {marker}="'
+    match:
+      plugin_ids: [xss-attribute-injection, xss-reflected-basic]
+      nuclei_tags: [xss]
+
+  - id: xss-reflected-attr-unquoted-2
+    category: xss-reflected
+    subcategory: attribute-unquoted
+    cwe: CWE-79
+    path: /xss/attr-quoted2?q=hello
+    expected: vulnerable
+    xss: {kind: reflected, context: attribute}
+    verify:
+      kind: http-reflection
+      payload: " {marker}="
+    match:
+      plugin_ids: [xss-reflected-basic]
+      nuclei_tags: [xss]
+
+  - id: xss-reflected-js-string-2
+    category: xss-reflected
+    subcategory: script-string
+    cwe: CWE-79
+    path: /xss/js2?q=hello
+    expected: vulnerable
+    xss: {kind: reflected, context: js-string}
+    verify:
+      kind: http-reflection
+      payload: "';{marker};'"
+    match:
+      plugin_ids: [xss-reflected-basic]
+      nuclei_tags: [xss]
+
+  - id: xss-reflected-url-2
+    category: xss-reflected
+    subcategory: url-attribute
+    cwe: CWE-79
+    path: /xss/url2?q=hello
+    expected: vulnerable
+    xss: {kind: reflected, context: url}
+    verify:
+      kind: http-reflection
+      payload: "javascript:{marker}"
+    match:
+      plugin_ids: [xss-reflected-basic]
+      nuclei_tags: [xss]
+
+  - id: xss-reflected-attr-single-2
+    category: xss-reflected
+    subcategory: attribute-single-quoted
+    cwe: CWE-79
+    path: /xss/attr-single2?q=hello
+    expected: vulnerable
+    xss: {kind: reflected, context: attribute}
+    verify:
+      kind: http-reflection
+      payload: "' {marker}='"
+    match:
+      plugin_ids: [xss-attribute-injection, xss-reflected-basic]
+      nuclei_tags: [xss]
+
+  - id: xss-reflected-js-double-2
+    category: xss-reflected
+    subcategory: script-string-double-quoted
+    cwe: CWE-79
+    path: /xss/js-double2?q=hello
+    expected: vulnerable
+    xss: {kind: reflected, context: js-string}
+    verify:
+      kind: http-reflection
+      payload: '";{marker};"'
+    match:
+      plugin_ids: [xss-reflected-basic]
+      nuclei_tags: [xss]
+
+  - id: xss-escaped-2
+    category: xss-reflected
+    subcategory: escaped
+    cwe: CWE-79
+    path: /xss/escape2?q=hello
+    expected: clean
+    xss: {kind: reflected, context: html}
+    verify:
+      kind: http-clean
+      payload: "<script>{marker}</script>"
+      expect_not_contains: ["<script>"]
+    match:
+      plugin_ids: [xss-reflected-basic, xss-attribute-injection, xss-stored-basic, xss-stored-two-step]
+      nuclei_tags: [xss]
+
+  - id: xss-json-raw-2
+    category: xss-reflected
+    subcategory: json-raw
+    cwe: CWE-79
+    path: /xss/json-raw2?q=hello
+    expected: clean
+    notes: |
+      Raw JSON reflection without HTML execution context: a browser rendering
+      application/json does not execute markup, so ground truth is clean.
+    xss: {kind: reflected, context: json}
+    verify:
+      kind: http-json-raw
+      payload: "<b>{marker}</b>"
+    match:
+      plugin_ids: [xss-reflected-basic, xss-attribute-injection, xss-stored-basic, xss-stored-two-step]
+      nuclei_tags: [xss]
+
+  - id: clean-search-2
+    category: clean
+    subcategory: escaped-search
+    path: /clean/search2?q=hello
+    expected: clean
+    verify:
+      kind: http-clean
+      payload: "<script>{marker}</script>"
+      expect_not_contains: ["<script>"]
+    match:
+      plugin_ids: [xss-reflected-basic, xss-attribute-injection, xss-stored-basic, xss-stored-two-step, dom-sink-basic, sqli-error-based, path-traversal-error, command-injection-error, open-redirect-param]
+      nuclei_tags: [xss, sqli, lfi, redirect]
+
+  - id: sqli-clean-2
+    category: clean
+    subcategory: escaped-sqli-param
+    path: /sqli/clean2?id=1
+    expected: clean
+    verify:
+      kind: http-clean
+      payload: "' OR 1=1--"
+      expect_not_contains: ["You have an error in your SQL syntax"]
+    match:
+      plugin_ids: [sqli-error-based]
+      nuclei_tags: [sqli]
+
+  - id: open-redirect-clean-2
+    category: clean
+    subcategory: internal-redirect-param
+    path: /redirect/clean2?next=/home
+    expected: clean
+    verify:
+      kind: http-clean
+      payload: "https://gash-bench-canary.example/landing"
+      expect_not_contains: ["gash-bench-canary.example"]
+    match:
+      plugin_ids: [open-redirect-param]
+      nuclei_tags: [redirect]
+
+  - id: denied-path-2
+    category: trap-denied
+    subcategory: forbidden
+    path: /denied2
+    expected: denied
+    verify:
+      kind: http-denied
+    match:
+      plugin_ids: [backup-file-exposure, source-map-exposure, directory-listing, management-endpoint-exposure, phpinfo-exposure]
+      nuclei_tags: [exposure, disclosure]
+
+  - id: soft404-trap-2
+    category: trap-soft404
+    subcategory: fake-200
+    path: /soft404/help2?q=hello
+    expected: soft404
+    verify:
+      kind: http-soft404
+      expect_contains: ["soft-404"]
+    match:
+      plugin_ids: [backup-file-exposure, source-map-exposure, directory-listing, management-endpoint-exposure, phpinfo-exposure]
+      nuclei_tags: [exposure, disclosure]
+
+  - id: waf-block-2
+    category: trap-waf
+    subcategory: blocked-payload
+    path: /waf2?q=hello
+    expected: waf
+    verify:
+      kind: http-waf
+      payload: "{marker}' OR 1=1--"
+      expect_contains: ["bench WAF"]
+    match:
+      plugin_ids: [xss-reflected-basic, xss-attribute-injection, sqli-error-based, path-traversal-error, command-injection-error, open-redirect-param]
+      nuclei_tags: [xss, sqli, lfi, rce, redirect]
+
+  - id: timeout-slow-endpoint-2
+    category: trap-timeout
+    subcategory: slow-response
+    path: /slow2?q=hello
+    expected: timeout
+    verify:
+      kind: http-timeout
+      expect_slow_ms: 1000
+    match:
+      plugin_ids: [xss-reflected-basic, sqli-error-based, path-traversal-error, command-injection-error]
+      nuclei_tags: [xss, sqli]
+
+  - id: robots-txt-exposure
+    category: exposure
+    subcategory: robots-txt
+    cwe: CWE-200
+    path: /robots.txt
+    expected: vulnerable
+    verify:
+      kind: http-exposure
+      expect_contains: ["User-agent", "Disallow"]
+    match:
+      plugin_ids: [engine-content-discovery]
+      nuclei_tags: [exposure]

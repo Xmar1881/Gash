@@ -66,11 +66,15 @@ func (DifferentialOracle) Verify(ctx context.Context, cls baseline.Classificatio
 	if tb[0] == fb[0] {
 		return &Evidence{Verdict: VerdictReject, Note: "true/false ayrışmıyor"}, nil
 	}
-	// Kontrol: nötr payload stabil ve true/false'tan farklı dalda olmalı.
+	// Kontrol: nötr payload true dalıyla aynı olamaz. Kontrolün false dalıyla
+	// aynı olması normaldir (ikisi de enjeksiyonsuz yanıttır); true dalıyla
+	// aynıysa ayrışma payload'dan değil sayfanın kendi davranışından gelir.
 	if p.ControlBody != "" {
 		m := baseline.NewDefaultModel()
 		cb := string(m.Mask([]byte(p.ControlBody)))
-		_ = cb
+		if cb == tb[0] {
+			return &Evidence{Verdict: VerdictReject, Note: "kontrol true dalıyla aynı — ayırt edici değil"}, nil
+		}
 	}
 	art := map[string]string{"true_hash": tb[0][:min(16, len(tb[0]))], "false_hash": fb[0][:min(16, len(fb[0]))]}
 	// Tam tutarlılık + ayrışma → confirmed (3/3); beyanlı tavan varsa indirilir.

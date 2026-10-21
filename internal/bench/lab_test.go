@@ -17,13 +17,22 @@ import (
 // run can trust it. Browser-only scenarios must stay unverified (never scored)
 // when the build links no browser.
 func TestFixtureLabVerifiesEveryScenario(t *testing.T) {
+	for _, name := range []string{"fixtures.yaml", "fixtures-deep.yaml"} {
+		t.Run(name, func(t *testing.T) {
+			verifyFixtureDataset(t, name)
+		})
+	}
+}
+
+func verifyFixtureDataset(t *testing.T, name string) {
+	t.Helper()
 	lab, err := StartFixtureLab()
 	if err != nil {
 		t.Fatalf("lab: %v", err)
 	}
 	defer lab.Close()
 
-	ds, err := LoadDataset(filepath.Join(repoRoot(t), "bench", "datasets", "fixtures.yaml"))
+	ds, err := LoadDataset(filepath.Join(repoRoot(t), "bench", "datasets", name))
 	if err != nil {
 		t.Fatal(err)
 	}

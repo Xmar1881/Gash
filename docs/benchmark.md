@@ -22,8 +22,8 @@ and a baseline regression gate. It refuses non-loopback targets by default.
 
 | Dataset | Target | Notes |
 |---|---|---|
-| `bench/datasets/fixtures.yaml` | In-process fixture lab (127.0.0.1, no docker) | 23 scenarios: reflected/stored/DOM XSS, SQLi, traversal, CMDi, redirect, clean, denied, soft-404, WAF, timeout, auth matrix |
-| `bench/datasets/fixtures-deep.yaml` | Same lab | Same scenarios with `--profile deep --deep --browser-verify` and larger budgets |
+| `bench/datasets/fixtures.yaml` | In-process fixture lab (127.0.0.1, no docker) | 50 scenarios: reflected/stored/DOM XSS, SQLi, traversal, CMDi, redirect, clean, denied, soft-404, WAF, timeout, auth matrix, exposure artifacts |
+| `bench/datasets/fixtures-deep.yaml` | Same lab | 50 scenarios with `--profile deep --deep --browser-verify` and larger budgets |
 | `bench/datasets/compose-lab.yaml` | Docker compose lab (DVWA 8081, Juice Shop 8082, WebGoat 8083) | Requires docker; runtime ground truth unverified where docker is absent |
 | `bench/datasets/native-lab.yaml` | Native Windows lab (same three applications, no docker) | 22 scenarios; placeholder DVWA sessions; independent verification requires `-tags deep` + Chrome for DOM |
 
@@ -159,5 +159,9 @@ same day and re-measured: standard recall 0.500 -> 1.000, deep recall
   before/after numbers, and the final standard/deep results.
 - `docs/metrics/nuclei-comparison-2026-10-14.md`: the measured Gash/Nuclei
   comparison on the fixture lab (cross-tool verdicts, per category).
+- `docs/metrics/benchmark-fixtures-2026-10-22.md`: fixtures 50-scenario run
+  (standard profile). Gash `TP=24 FP=0 TN=23 FN=2` precision=1.000 recall=0.923
+  F1=0.960; Nuclei `TP=1 FP=0 TN=23 FN=25` precision=1.000 recall=0.038
+  F1=0.074; cross-tool verdicts and per-category breakdown included.
 - `bench/baselines/fixtures.json`: committed regression baseline, refreshed
   from the final standard run (TP=10, recall 1.000).
