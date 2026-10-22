@@ -82,10 +82,13 @@ node-insertion-only non-execution, safe `textContent`, sanitized
 `innerHTML`, reflection-only, 403-blocked, and 500-error pages.
 `TestDeepBrowserVerifyDOMFinding` exercises
 the same path through the engine, and `TestDeepDOMFixtureNavigationError`
-proves a closed server is an error, not a clean negative. The 2026-10-20
-native-lab report still has `confirmed_tp=0`, so browser-confirmed recall
-remains unmeasured in the benchmark. Fixture and corpus claims stay at the
-static `firm` ceiling.
+proves a closed server is an error, not a clean negative. On the 2026-10-22
+`fixtures-deep` run (commit `df4e2b7`), `xss-dom-hash-sink` was
+`browser-confirmed` via `dom-sink-basic`, with one finding for that scenario.
+The run measured `browser_confirmed_tp=2`, `static_active_tp=23`, `TP=25`,
+`FP=0`, and `weak=0`. The standard-profile run cannot exercise this browser
+path: `TP=24`, `FP=0`, `FN=3` (`xss-dom-hash-sink` remains a miss). Fixture
+and corpus claims stay at the static `firm` ceiling.
 
 ## Precision
 
@@ -98,7 +101,8 @@ True positives 2, false negatives 0. Recall 1.00.
 ## Gate Verdict
 
 PASS. Precision 1.00 is above the 0.99 gate. Corpus holds 0 `firm` plus on
-sink-free shapes; browser-confirmed recall remains unmeasured.
+sink-free shapes. The deep fixtures run measured the browser-confirmed path
+(`xss-dom-hash-sink` TP, `browser_confirmed_tp=2` across XSS scenarios).
 
 ## Dataset
 
