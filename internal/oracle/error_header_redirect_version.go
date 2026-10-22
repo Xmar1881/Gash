@@ -43,8 +43,8 @@ var errorSignatures = map[string]*regexp.Regexp{
 	// Successful traversal file-content signatures. These prove that the
 	// response contains the target file rather than only an include warning:
 	// generic warnings also appear for neutral controls and must not qualify.
-	"unix_passwd":   regexp.MustCompile(`(?m)(?:^|[>\r\n])root:[^:\r\n]*:0:0:`),
-	"windows_ini":   regexp.MustCompile(`(?im)(?:^|[>\r\n])\[fonts\][ \t]*\r?$`),
+	"unix_passwd": regexp.MustCompile(`(?m)(?:^|[>\r\n])root:[^:\r\n]*:0:0:`),
+	"windows_ini": regexp.MustCompile(`(?im)(?:^|[>\r\n])\[fonts\][ \t]*\r?$`),
 	// include_error: file-open failure caused by a traversal payload. Unlike
 	// path_traversal, it excludes raw "../" and "etc/passwd" so a reflected
 	// payload alone cannot qualify. The control-differential check is still
