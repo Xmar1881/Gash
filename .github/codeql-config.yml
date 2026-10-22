@@ -1,0 +1,23 @@
+# CodeQL configuration for Gash
+# https://github.com/github/codeql-action/blob/main/docs/config-file.md
+
+name: "Gash CodeQL Config"
+
+# Disable default queries and use custom query suite
+disable-default-queries: false
+
+queries:
+  - uses: security-and-quality
+
+paths-ignore:
+  - "vendor/**"
+  - "dist/**"
+  - "*.pb.go"
+  - "testdata/**"
+  - "**/*_test.go"
+
+paths:
+  - "internal/**"
+  - "cmd/**"
+  - "plugins/**"
+  - "tests/**"

@@ -1,0 +1,9 @@
+# REUSE specification for Gash
+# https://reuse.software/
+# This file makes the project REUSE compliant
+
+[header]
+spdx = "AGPL-3.0-only"
+copyright = "Copyright (C) 2026 Xmar1881 / GASH contributors"
+license = "AGPL-3.0-only"
+notice = "NOTICE"

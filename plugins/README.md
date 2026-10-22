@@ -20,10 +20,11 @@ The engine discovers this tree automatically; no `--load-plugin` flag exists.
 
 | Tier | Count | Auto-discovered | Trust Required |
 |------|------:|:---------------:|:--------------:|
-| Tier 1 (YAML) | 71 | ✅ | ❌ |
-| Tier 2 (JS) | 5 | ✅ | ❌ |
+| Tier 1 (YAML) | 74 | ✅ | ❌ |
+| Tier 2 (JS) | 7 | ✅ | ❌ |
+| Tier 2 (Native JS) | 1 | ✅ | ❌ |
 | Tier 3 (Native) | 1 | ❌ | ✅ `gash plugins trust` |
-| **Total** | **77** | | |
+| **Total** | **83** | | |
 
 ---
 
@@ -32,14 +33,14 @@ The engine discovers this tree automatically; no `--load-plugin` flag exists.
 | Category | Plugins | Tier | Key Oracle | Good First PR? |
 |----------|---------|------|------------|----------------|
 | **Cross-site Scripting** | 6 | 1/2 | `reflection`, `stored`, `execution` | ✅ `xss-attribute-injection` |
-| **SQL Injection** | 7 | 1/2 | `error`, `differential`, `timing`, `oob` | ✅ `sqli-auth-bypass` |
+| **SQL Injection** | 6 | 1/2 | `error`, `differential`, `timing`, `oob` | ✅ `sqli-auth-bypass` |
 | **Command Injection** | 3 | 1 | `error`, `timing`, `oob` | ✅ `command-injection-timing` |
 | **Path Traversal / File** | 8 | 1 | `error` | ✅ `backup-file-exposure` |
 | **SSRF / Open Redirect** | 6 | 1 | `redirect`, `oob`, `reflection` | ✅ `open-redirect-param` |
-| **NoSQL / LDAP / SSTI** | 5 | 1 | `timing`, `differential`, `oob` | — |
+| **NoSQL / LDAP / SSTI** | 8 | 1 | `timing`, `differential`, `oob` | — |
 | **GraphQL** | 5 | 1 | `version`, `differential` | — |
-| **Auth / IDOR / Logic** | 9 | 1 | `differential`, `error` | ✅ `idor-differential` |
-| **Misconfig / Headers** | 26 | 1 | `header`, `cookie`, `cors`, `header` modes | ✅ `cookie-flags` |
+| **Auth / IDOR / Logic** | 10 | 1 | `differential`, `error` | ✅ `idor-differential` |
+| **Misconfig / Headers** | 27 | 1 | `header`, `cookie`, `cors`, `header` modes | ✅ `cookie-flags` |
 | **Deserialization / XXE** | 5 | 1 | `error` (deserialization, takeover, xpath, backup) | — |
 | **Framework-specific** | 2 | 1 | `middleware-bypass`, `oob` | — |
 | **Injection (JNDI, EL, SSI, JSONP, PP)** | 5 | 1 | `oob`, `reflection`, `error`, `differential` | — |
@@ -72,7 +73,6 @@ The engine discovers this tree automatically; no `--load-plugin` flag exists.
 | `sqli-stacked-time` | Tier 1 | `timing` | `sqli/sqli-stacked-time.yaml` | |
 | `sqli-auth-bypass` | Tier 1 | `error` | `sqli/sqli-auth-bypass.yaml` | ⭐ **Yes** |
 | `blind-sqli-oob` | Tier 1 | `oob` (required) | `blind-sqli-oob/blind-sqli-oob.yaml` | |
-| `sqli-stacked-time` | Tier 1 | `timing` | `sqli/sqli-stacked-time.yaml` | |
 
 ### Command Injection
 

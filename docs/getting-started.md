@@ -280,7 +280,6 @@ jobs:
 ## 10. Getting Help
 
 - **GitHub Discussions**: [github.com/Xmar1881/Gash/discussions](https://github.com/Xmar1881/Gash/discussions)
-- **Discord**: [discord.gg/gash](https://discord.gg/gash)
 - **Issues**: [github.com/Xmar1881/Gash/issues](https://github.com/Xmar1881/Gash/issues)
 - **Security**: [Private advisory](https://github.com/Xmar1881/Gash/security/advisories/new)
 

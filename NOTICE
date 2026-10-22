@@ -1,0 +1,79 @@
+NOTICE — Third-Party Attributions for Gash
+===========================================
+
+Gash includes the following third-party components. Each retains its own
+license; see the respective LICENSE files in the Go module cache.
+
+1. github.com/spf13/cobra v1.10.2
+   License: Apache-2.0
+   Copyright (c) 2013-2026 Steve Francia and contributors.
+   Source: https://github.com/spf13/cobra
+
+2. github.com/dop251/goja v0.0.0-20261011204819-0c9fae1b959d
+   License: BSD-2-Clause
+   Copyright (c) 2017-2026 goja contributors.
+   Source: https://github.com/dop251/goja
+
+3. github.com/hashicorp/go-plugin v1.8.0
+   License: MPL-2.0
+   Copyright (c) 2014-2026 HashiCorp and contributors.
+   Source: https://github.com/hashicorp/go-plugin
+
+4. go.etcd.io/bbolt v1.5.0
+   License: BSD-3-Clause
+   Copyright (c) 2013-2026 Ben Johnson and contributors.
+   Source: https://github.com/etcd-io/bbolt
+
+5. github.com/go-playground/validator/v10 v10.27.0
+   License: MIT
+   Copyright (c) 2018-2026 Dean Karn and contributors.
+   Source: https://github.com/go-playground/validator
+
+6. gopkg.in/yaml.v3 v3.0.1
+   License: MIT
+   Copyright (c) 2011-2026 The yaml.v3 authors.
+   Source: https://github.com/go-yaml/yaml
+
+7. golang.org/x/net v0.61.0
+   License: BSD-3-Clause
+   Copyright (c) 2009-2026 The Go Authors.
+   Source: https://github.com/golang/net
+
+8. golang.org/x/time v0.16.0
+   License: BSD-3-Clause
+   Copyright (c) 2009-2026 The Go Authors.
+   Source: https://github.com/golang/time
+
+9. github.com/miekg/dns v1.1.73
+   License: BSD-3-Clause
+   Copyright (c) 2012-2026 Miek Gieben and contributors.
+   Source: https://github.com/miekg/dns
+
+10. github.com/chromedp/cdproto v0.157.8
+    License: BSD-3-Clause
+    Copyright (c) 2017-2026 chromedp contributors.
+    Source: https://github.com/chromedp/cdproto
+
+11. github.com/chromedp/chromedp v0.21.0
+    License: BSD-3-Clause
+    Copyright (c) 2017-2026 chromedp contributors.
+    Source: https://github.com/chromedp/chromedp
+
+12. google.golang.org/grpc v1.83.2
+    License: Apache-2.0
+    Copyright (c) 2016-2026 The gRPC Authors.
+    Source: https://github.com/grpc/grpc-go
+
+13. google.golang.org/protobuf v1.36.11
+    License: Apache-2.0
+    Copyright (c) 2016-2026 The Go Authors.
+    Source: https://github.com/protocolbuffers/protobuf-go
+
+14. github.com/stretchr/testify v1.12.1
+    License: MIT
+    Copyright (c) 2012-2026 Mat Ryer and contributors.
+    Source: https://github.com/stretchr/testify
+
+All licenses are OSI-approved and compatible with AGPL-3.0-only.
+Full license texts available in the Go module cache and at:
+https://pkg.go.dev/github.com/Xmar1881/Gash@latest?tab=licenses

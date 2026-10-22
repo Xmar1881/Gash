@@ -33,7 +33,7 @@ const (
 	minMaxRequests  = 1
 	maxMaxRequests  = 10000
 	supportedAPIVer = "1.0"
-	schemaID        = "https://gash.dev/schemas/plugin-1.0.json"
+	schemaID        = "https://github.com/Xmar1881/Gash/raw/main/schemas/plugin-1.0.json"
 )
 
 // Validate PluginSpec'i R-01..R-12 + alan kurallarına göre doğrular.

@@ -1,5 +1,5 @@
 {
-  "$id": "https://gash.dev/schemas/plugin-1.0.json",
+  "$id": "https://github.com/Xmar1881/Gash/raw/main/schemas/plugin-1.0.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "allOf": [
     {
