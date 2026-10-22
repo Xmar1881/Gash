@@ -36,10 +36,9 @@ gash scan --target https://example.com --profile deep --browser-verify
 | Method | Command |
 |--------|---------|
 | **Go install** | `go install github.com/Xmar1881/Gash/cmd/gash@latest` |
-| **Homebrew** | `brew tap xmar1881/gash && brew install gash` *(coming soon)* |
-| **Scoop** | `scoop bucket add gash https://github.com/Xmar1881/scoop-gash && scoop install gash` *(coming soon)* |
-| **Docker** | `docker run --rm ghcr.io/xmar1881/gash:latest scan --target ...` *(coming soon)* |
 | **Binary** | [GitHub Releases](https://github.com/Xmar1881/Gash/releases) |
+
+> Homebrew, Scoop, and Docker images are planned — see [#123](https://github.com/Xmar1881/Gash/issues/123) for tracking.
 
 ## 🔬 Detectors (75+)
 
@@ -136,9 +135,8 @@ We welcome plugin contributions! See [CONTRIBUTING.md](https://github.com/Xmar18
 ## 💬 Community & Support
 
 - **GitHub Discussions**: [Ask questions, share findings](https://github.com/Xmar1881/Gash/discussions)
-- **Discord**: [Join the community](https://discord.gg/gash) *(coming soon)*
-- **Twitter/X**: [@GashScanner](https://twitter.com/GashScanner) *(coming soon)*
 - **Issues**: [Bug reports & feature requests](https://github.com/Xmar1881/Gash/issues)
+- **Security**: [Private vulnerability reporting](https://github.com/Xmar1881/Gash/security/advisories/new)
 
 ---
 

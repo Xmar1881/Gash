@@ -1,0 +1,59 @@
+# Dependabot configuration for Gash
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  # Go modules
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "go"
+    commit-message:
+      prefix: "deps(go): "
+    groups:
+      golang-org:
+        patterns:
+          - "golang.org/x/*"
+      google:
+        patterns:
+          - "google.golang.org/*"
+          - "go.etcd.io/*"
+      chromedp:
+        patterns:
+          - "github.com/chromedp/*"
+      hashicorp:
+        patterns:
+          - "github.com/hashicorp/*"
+      spf13:
+        patterns:
+          - "github.com/spf13/*"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "deps(actions): "
+
+  # Docker (for release workflow)
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+    labels:
+      - "dependencies"
+      - "docker"

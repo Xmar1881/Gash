@@ -1,0 +1,46 @@
+# .dockerignore for Gash
+
+# Git
+.git
+.gitignore
+
+# Build artifacts
+dist/
+*.exe
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Test artifacts
+coverage.*
+*.prof
+
+# Documentation (keep only what's needed)
+docs/*.md
+!docs/architecture.md
+
+# CI (handled by GitHub Actions)
+.github/workflows/*.yml
+!.github/workflows/release.yml
+
+# Local config
+.gash/
+*.kubeconfig
+.env
+.env.local
+
+# Go
+*.mod
+*.sum
+vendor/
+go.work

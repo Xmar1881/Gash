@@ -353,7 +353,7 @@ Tek kural kaynağı (`internal/plugin/rules.go` tasarım karşılığı — bu t
 
 - **Kaynak:** yukarıdaki alan listesi + R-kuralları (bu dosya). Faz 2'de `internal/plugin/rules.go` yazılır; `schemas/plugin.schema.json` (JSON Schema 2020-12) ondan **üretilir** (el ile çift bakım YOK). Üretim yönü tek: `rules.go → schema.json` (+ `schema_test.go` senkron kontrolü: schema ile validator aynı fixture setinde aynı kararı vermeli).
 - **Tier 1 YAML/JSON** schema ile doğrulanır; **Tier 2/3** aynı kurallar Go `validator` tag'leriyle zorlanır. İki sunum, tek kural seti.
-- **Sürümleme:** `api_version: "1.0"` Faz 1'de tek sürüm. Schema `$id`: `https://gash.dev/schemas/plugin-1.0.json` (dokümantasyon URL'si; fetch edilmez, offline validasyon).
+- **Sürümleme:** `api_version: "1.0"` Faz 1'de tek sürüm. Schema `$id`: `https://github.com/Xmar1881/Gash/raw/main/schemas/plugin-1.0.json` (dokümantasyon URL'si; fetch edilmez, offline validasyon).
 - **Matcher whitelist (Tier 1):** yalnızca `status/word/regex/header` + `oracle:` referansı; kod bloğu/`eval`/`script` anahtarı schema'da `additionalProperties: false` + `not` ile yasaklanır.
 
 **Reddedilen alternatifler:** Schema-first (önce JSON yaz, Go'yu uyarla) — Go tipleri daha katı (slug regex, enum, çapraz-alan R-01..R-03 JSON Schema'da `if/then` ile kırılgan); code-first üretim daha sağlam. Çift-el-bakımı — senkron kayması kaçınılmaz, reddedildi.

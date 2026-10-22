@@ -23,9 +23,6 @@ Why: One page for purpose, model, quickstart, docs, metrics, and license.
 [![Toolchain](https://img.shields.io/badge/toolchain-go1.27.3-00ADD8)](go.mod)
 [![CI](https://github.com/Xmar1881/Gash/actions/workflows/plugin-ci.yml/badge.svg?branch=main)](https://github.com/Xmar1881/Gash/actions/workflows/plugin-ci.yml)
 [![Release](https://img.shields.io/github/v/release/Xmar1881/Gash?include_prereleases&sort=semver)](https://github.com/Xmar1881/Gash/releases)
-[![Go Report Card](https://goreportcard.com/badge/github.com/Xmar1881/Gash)](https://goreportcard.com/report/github.com/Xmar1881/Gash)
-[![codecov](https://codecov.io/gh/Xmar1881/Gash/branch/main/graph/badge.svg)](https://codecov.io/gh/Xmar1881/Gash)
-[![Discord](https://img.shields.io/discord/123456789012345678?label=Discord&logo=discord&logoColor=white)](https://discord.gg/gash)
 
 > Evidence first. Plugins everywhere. Findings you can defend.
 
@@ -151,7 +148,7 @@ must be re-measured before being quoted as the current result; see
 
 ## How It Differs
 
-Honest comparison — Gash is experimental (`v0.1.0-dev`, 75 reference
+Honest comparison — Gash is experimental (`v0.1.0-dev`, 83 reference
 plugins) and competes on verification discipline, not on maturity or library
 size. A same-target Gash-versus-Nuclei measurement now exists on the native
 lab and fixture lab; it is small and lab-scoped, not a general parity claim.
@@ -177,11 +174,10 @@ manual depth. Use Gash when you want a small, auditable core where no plugin
 | Method | Command |
 |--------|---------|
 | **Go install** (latest) | `go install github.com/Xmar1881/Gash/cmd/gash@latest` |
-| **Homebrew** | `brew tap xmar1881/gash && brew install gash` *(coming soon)* |
-| **Scoop** (Windows) | `scoop bucket add gash https://github.com/Xmar1881/scoop-gash && scoop install gash` *(coming soon)* |
-| **Docker** | `docker run --rm ghcr.io/xmar1881/gash:latest scan --target ...` *(coming soon)* |
 | **Binary release** | Download from [GitHub Releases](https://github.com/Xmar1881/Gash/releases) |
 | **From source** | See [Building from Source](#building-from-source) below |
+
+> Homebrew, Scoop, and Docker images are planned — see [#123](https://github.com/Xmar1881/Gash/issues/123) for tracking.
 
 ### Building from Source
 
@@ -277,30 +273,30 @@ oracle:
 
 ## Detector Summary
 
-75 detectors via `go run ./cmd/gash plugins list`
-(67 Tier 1 YAML, 7 Tier 2 sandboxed JS, 1 Tier 3 native PoC).
+83 detectors via `go run ./cmd/gash plugins list`
+(74 Tier 1 YAML, 7 Tier 2 sandboxed JS, 1 Tier 3 native PoC, 1 Tier 2 native).
 Full oracle/plugin catalog: `docs/detector-inventory.md`.
 
 | Class | Count | Examples |
 |---|---:|---|
-| Cross-site scripting (reflected, stored, DOM) | 5 | `xss-reflected-basic`, `xss-attribute-injection`, `xss-stored-basic`, `xss-stored-two-step`, `dom-sink-basic` |
+| Cross-site scripting (reflected, stored, DOM) | 6 | `xss-reflected-basic`, `xss-attribute-injection`, `xss-stored-basic`, `xss-stored-two-step`, `dom-sink-basic`, `xpath-injection-error` |
 | SQL injection (error, boolean, time, stacked, auth-bypass, OOB) | 6 | `sqli-error-based`, `sqli-boolean-differential`, `sqli-time-based`, `sqli-stacked-time`, `sqli-auth-bypass`, `blind-sqli-oob` |
 | XPath injection (error) | 1 | `xpath-injection-error` |
-| NoSQL injection (error, auth-bypass differential) | 2 | `nosql-injection-error`, `nosql-auth-bypass-differential` |
+| NoSQL injection (error, auth-bypass differential, timing) | 3 | `nosql-injection-error`, `nosql-auth-bypass-differential`, `nosql-injection-timing` |
 | Command injection (error, timing, **OOB**) | 3 | `command-injection-error`, `command-injection-timing`, `command-injection-oob` |
 | SSRF (blind OOB, cloud metadata, internal port scan) | 3 | `ssrf-blind-oob`, `ssrf-cloud-metadata`, `ssrf-internal-port-scan` |
 | XXE (OOB, blind OOB, reflected) | 4 | `xxe-oob`, `xxe-reflected-basic`, `xxe-blind-oob`, `xml-external-entity-blind` |
 | Template injection (SSTI: reflection, blind timing, **OOB**) | 3 | `template-injection-reflection`, `ssti-blind-timing`, `ssti-blind-oob` |
 | File / path (RFI, traversal, upload, backup, listing, source maps, **sensitive files**) | 8 | `rfi-remote-include`, `path-traversal-error`, `file-upload-unrestricted`, `backup-file-exposure`, `directory-listing`, `source-map-exposure`, `file-inclusion-rfi`, `sensitive-file-exposure` |
-| Access control and logic (IDOR, LDAP x2, HPP x2, mass assignment, verb tampering, **GraphQL auth/DOS**) | 9 | `idor-differential`, `ldap-injection-differential`, `ldap-injection-blind`, `hpp-parameter-pollution`, `hpp-duplicate-emission`, `mass-assignment-basic`, `verb-tampering-bypass`, `graphql-auth-bypass`, `graphql-dos` |
-| Misconfig and headers (security headers, cookie, CORS x2, CRLF, response splitting, CSRF, clickjacking, JWT x3, version, GraphQL x2, host header, method override, error disclosure, redirect x2, management endpoints, phpinfo, WebDAV, CVE, rate limit, **debug endpoints**) | 26 | `missing-security-headers`, `cookie-flags`, `cors-misconfig`, `insecure-cors-preflight`, `crlf-header-injection`, `http-response-splitting`, `csrf-token-absence`, `clickjacking-frameable`, `jwt-token-exposure`, `jwt-alg-confusion`, `jwt-none-alg-confusion`, `server-version-disclosure`, `graphql-endpoint-discovery`, `graphql-introspection-enabled`, `host-header-injection`, `http-method-override-abuse`, `error-message-disclosure`, `open-redirect-param`, `oauth-open-redirect`, `management-endpoint-exposure`, `phpinfo-exposure`, `webdav-enabled`, `cve-dependency-scan`, `missing-rate-limit`, `debug-endpoint-exposure` |
+| Access control and logic (IDOR, LDAP x3, HPP x2, mass assignment, verb tampering, **GraphQL auth/DOS**) | 10 | `idor-differential`, `ldap-injection-differential`, `ldap-injection-blind`, `ldap-injection-oob`, `hpp-parameter-pollution`, `hpp-duplicate-emission`, `mass-assignment-basic`, `verb-tampering-bypass`, `graphql-auth-bypass`, `graphql-dos` |
+| Misconfig and headers (security headers, cookie, CORS x2, CRLF, response splitting, CSRF, clickjacking, JWT x3, version, GraphQL x2, host header, method override, error disclosure, redirect x2, management endpoints, phpinfo, WebDAV, CVE, rate limit, **debug endpoints**) | 27 | `missing-security-headers`, `cookie-flags`, `cors-misconfig`, `insecure-cors-preflight`, `crlf-header-injection`, `http-response-splitting`, `csrf-token-absence`, `clickjacking-frameable`, `jwt-token-exposure`, `jwt-alg-confusion`, `jwt-none-alg-confusion`, `server-version-disclosure`, `graphql-endpoint-discovery`, `graphql-introspection-enabled`, `host-header-injection`, `http-method-override-abuse`, `error-message-disclosure`, `open-redirect-param`, `oauth-open-redirect`, `management-endpoint-exposure`, `phpinfo-exposure`, `webdav-enabled`, `cve-dependency-scan`, `missing-rate-limit`, `debug-endpoint-exposure` |
 | Insecure deserialization (error signature) | 1 | `insecure-deserialization-error` |
 | Subdomain takeover (unclaimed-service bodies) | 1 | `subdomain-takeover-basic` |
 | Web cache poisoning | 2 | `web-cache-poisoning-basic`, `cache-poisoning-host-header` |
 | Injection (JNDI, expression language, SSI, JSONP, prototype pollution) | 5 | `log4shell-jndi`, `expression-language-injection`, `ssi-injection`, `jsonp-callback-injection`, `prototype-pollution-differential` |
 | Framework-specific (Next.js middleware bypass, image optimizer SSRF) | 2 | `nextjs-middleware-bypass`, `nextjs-image-optimizer-ssrf` |
 | Native PoC (Tier 3, explicit trust) | 1 | `poc-native-header-check` |
-| **Total** | **75** | `go run ./cmd/gash plugins list` |
+| **Total** | **83** | `go run ./cmd/gash plugins list` |
 
 Engine-recon probes ship outside the plugin set: request smuggling
 (GASH-033, `internal/smuggle`), content discovery (GASH-028,
@@ -373,8 +369,6 @@ native and fixture labs (`docs/metrics/nuclei-comparison-2026-10-14.md`).
 ## Community & Support
 
 - **GitHub Discussions**: [Ask questions, share findings](https://github.com/Xmar1881/Gash/discussions)
-- **Discord**: [Join the community](https://discord.gg/gash)
-- **Twitter/X**: [@GashScanner](https://twitter.com/GashScanner)
 - **Issues**: [Bug reports & feature requests](https://github.com/Xmar1881/Gash/issues)
 - **Security**: [Private vulnerability reporting](https://github.com/Xmar1881/Gash/security/advisories/new)
 
@@ -383,7 +377,6 @@ native and fixture labs (`docs/metrics/nuclei-comparison-2026-10-14.md`).
 Gash is an independent open-source project. If you find it valuable, consider sponsoring:
 
 - **GitHub Sponsors**: [github.com/sponsors/Xmar1881](https://github.com/sponsors/Xmar1881)
-- **OpenCollective**: [opencollective.com/gash](https://opencollective.com/gash)
 
 ## Responsible Use
 
