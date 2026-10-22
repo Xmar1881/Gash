@@ -92,23 +92,19 @@ func VerifyDOM(ctx context.Context, payloadURL, controlURL, probeExpr string, ti
 	return Result{Triggered: payloadHit, ControlClean: !controlHit}, nil
 }
 
-// xssCanaryProbe is the DOM/window canary observer. Dialog opening is observed
-// separately through CDP events; this expression covers payload forms that
-// mark execution by planting a canary node or a window flag instead of (or in
-// addition to) a dialog. No external requests are ever made.
-const xssCanaryProbe = `(function(){try{return (document.getElementById('__gash_canary')!==null)||(window.__gashCanary===true);}catch(e){return false;}})()`
-
 // VerifyXSS runs the generic controlled browser proof for reflected/stored
 // XSS findings.
 // What: Loads payloadURL then controlURL in isolated browser contexts and
-// reports Triggered when any of the three triggers is observed (dialog
-// open, DOM canary node `__gash_canary`, `window.__gashCanary`), plus
-// ControlClean when the neutral control shows none of them.
+// reports Triggered only when a unique per-run token is stamped by an actual
+// JS side effect (alert() call or window.__gashCanary=true), plus ControlClean
+// when the neutral control shows no such side effect.
 // Why: Only a real browser trigger plus a clean control may lift a static
-// finding to confirmed. The payload and control run in separate contexts so
-// no JS state can leak between them; any dialog is auto-dismissed (accepted)
-// so the page keeps loading and the DOM probe still runs. No network egress
-// beyond the two supplied URLs: payloads are expected to stay local/DOM-only.
+// finding to confirmed. The token prevents DOM insertion, a fixed page flag,
+// or leftover state from a previous run from being counted as execution. The
+// payload and control run in separate contexts so no JS state can leak
+// between them; dialogs are auto-dismissed so the probe keeps running. No
+// network egress beyond the two supplied URLs: payloads are expected to stay
+// local/DOM-only.
 func VerifyXSS(ctx context.Context, payloadURL, controlURL string, timeout time.Duration) (Result, error) {
 	return VerifyXSSWithAuth(ctx, payloadURL, controlURL, "", timeout)
 }
@@ -147,15 +143,24 @@ func VerifyXSSWithAuth(ctx context.Context, payloadURL, controlURL, authHeader s
 	allocCtx, allocCancel := chromedp.NewExecAllocator(ctx, opts...)
 	defer allocCancel()
 
-	payloadHit, err := xssPhase(allocCtx, payloadURL, authHeader)
+	token, err := newCanaryToken()
+	if err != nil {
+		return Result{}, err
+	}
+	payload, err := xssPhase(allocCtx, payloadURL, authHeader, token)
 	if err != nil {
 		return Result{}, fmt.Errorf("headless: xss payload phase: %w", err)
 	}
-	controlHit, err := xssPhase(allocCtx, controlURL, authHeader)
+	control, err := xssPhase(allocCtx, controlURL, authHeader, token)
 	if err != nil {
 		return Result{}, fmt.Errorf("headless: xss control phase: %w", err)
 	}
-	return Result{Triggered: payloadHit, ControlClean: !controlHit}, nil
+	return Result{
+		Triggered:     payload.hit,
+		ControlClean:  !control.hit,
+		PayloadStatus: payload.status,
+		ControlStatus: control.status,
+	}, nil
 }
 
 // authActions converts one auth header into CDP actions for a target URL.
@@ -214,75 +219,128 @@ func authActions(target, authHeader string) (chromedp.Action[chromedp.Void], err
 	}), nil
 }
 
-// xssPhase runs one navigation and observes the dialog/canary triggers.
-// What: Per-phase browser context plus a protocol-event dialog observer plus
-// the DOM canary probe.
-// Why: Isolating the control in its own context keeps a payload's leftover
-// DOM/canary state from tainting the clean-control determination. The
-// observer uses the chromedp v0.21 event API (cdp.Events replaces the old
-// ListenTarget) and accepts dialogs so the renderer keeps loading; a dialog
-// observed is already a trigger even if accepting races the load.
-func xssPhase(allocCtx context.Context, target, authHeader string) (bool, error) {
+// xssPhaseResult carries one navigation's trigger plus main-document status.
+type xssPhaseResult struct {
+	hit    bool
+	status int
+}
+
+// xssPhase runs one navigation and observes the token-stamped triggers.
+// What: Per-phase browser context plus dialog and response observers plus the
+// token probe.
+// Why: Isolating the control in its own context keeps payload state from
+// tainting the clean-control determination. The dialog observer only keeps
+// the renderer moving; the alert wrapper and window setter stamp the run
+// token, so a dialog or DOM node alone is not execution evidence. The
+// response observer records the final document status so auth/WAF/5xx pages
+// are classified instead of being mistaken for a clean negative.
+func xssPhase(allocCtx context.Context, target, authHeader, token string) (xssPhaseResult, error) {
 	browserCtx, cancel := chromedp.NewContext(allocCtx)
 	defer cancel()
 
 	authAction, err := authActions(target, authHeader)
 	if err != nil {
-		return false, err
+		return xssPhaseResult{}, err
 	}
 	if authAction != nil {
 		if _, err := chromedp.Run(browserCtx, authAction); err != nil {
-			return false, fmt.Errorf("chromedp auth setup %s: %w", target, err)
+			return xssPhaseResult{}, fmt.Errorf("chromedp auth setup %s: %w", target, err)
 		}
 	}
 
-	hit, err := chromedp.Run(browserCtx, func(ctx context.Context, t *chromedp.Target) (bool, error) {
+	res, err := chromedp.Run(browserCtx, func(ctx context.Context, t *chromedp.Target) (xssPhaseResult, error) {
+		tree, err := cdp.Call(ctx, t, page.GetFrameTree, cdp.Empty{})
+		if err != nil {
+			return xssPhaseResult{}, fmt.Errorf("chromedp frame tree %s: %w", target, err)
+		}
+		if tree.FrameTree == nil || tree.FrameTree.Frame == nil {
+			return xssPhaseResult{}, fmt.Errorf("chromedp frame tree %s: empty main frame", target)
+		}
+		mainFrameID := tree.FrameTree.Frame.ID
 		var mu sync.Mutex
-		dialogHit := false
+		documentStatus := 0
 		obsCtx, obsCancel := context.WithCancel(ctx)
 		defer obsCancel()
-		observerDone := make(chan struct{})
+		var observers sync.WaitGroup
+		observers.Add(2)
 		go func() {
-			defer close(observerDone)
+			defer observers.Done()
 			for _, err := range cdp.Events(obsCtx, t, page.JavascriptDialogOpening) {
 				if err != nil {
 					return
 				}
-				mu.Lock()
-				dialogHit = true
-				mu.Unlock()
 				// A dialog blocks the renderer until it is handled; accepting
-				// keeps the load (and the later DOM probe) moving. Best-effort:
-				// the observed event is the trigger even if this call fails.
+				// keeps the load (and the later token probe) moving. The
+				// alert wrapper, not the dialog event alone, records execution.
 				_, _ = cdp.Call(obsCtx, t, page.HandleJavaScriptDialog, page.HandleJavaScriptDialogParams{Accept: true})
+			}
+		}()
+		go func() {
+			defer observers.Done()
+			for ev, err := range cdp.Events(obsCtx, t, network.ResponseReceived) {
+				if err != nil {
+					return
+				}
+				if ev.Type != network.ResourceTypeDocument || ev.Response == nil || ev.FrameID != mainFrameID {
+					continue
+				}
+				mu.Lock()
+				documentStatus = int(ev.Response.Status)
+				mu.Unlock()
 			}
 		}()
 		var stopOnce sync.Once
 		stopObserver := func() {
 			stopOnce.Do(func() {
 				obsCancel()
-				<-observerDone
+				observers.Wait()
 			})
 		}
 		defer stopObserver()
 
+		if _, err := cdp.Call(ctx, t, page.AddScriptToEvaluateOnNewDocument,
+			page.AddScriptToEvaluateOnNewDocumentParams{Source: xssCanaryBootstrap(token)}); err != nil {
+			return xssPhaseResult{}, fmt.Errorf("chromedp canary bootstrap %s: %w", target, err)
+		}
 		if _, err := chromedp.Navigate(target)(ctx, t); err != nil {
-			return false, fmt.Errorf("chromedp navigate %s: %w", target, err)
+			return xssPhaseResult{}, fmt.Errorf("chromedp navigate %s: %w", target, err)
 		}
-		if _, err := chromedp.Sleep(500*time.Millisecond)(ctx, t); err != nil {
-			return false, fmt.Errorf("chromedp sleep %s: %w", target, err)
-		}
-		domHit, err := chromedp.Evaluate[bool](xssCanaryProbe)(ctx, t)
+		hit, err := waitForCanary(ctx, t, token, canarySettle)
 		if err != nil {
-			return false, fmt.Errorf("chromedp evaluate %s: %w", target, err)
+			return xssPhaseResult{}, fmt.Errorf("chromedp canary probe %s: %w", target, err)
 		}
 		mu.Lock()
-		d := dialogHit
+		out := xssPhaseResult{hit: hit, status: documentStatus}
 		mu.Unlock()
-		return d || domHit, nil
+		return out, nil
 	})
 	if err != nil {
-		return false, err
+		return xssPhaseResult{}, err
 	}
-	return hit, nil
+	return res, nil
+}
+
+// waitForCanary polls the token probe so async DOM/SPA handlers can run.
+// What: Checks immediately, then every 100 ms up to the settle budget.
+// Why: A single fixed sleep misses delayed sinks; a bounded poll still stops
+// before the scan-level timeout.
+func waitForCanary(ctx context.Context, t *chromedp.Target, token string, window time.Duration) (bool, error) {
+	deadline := time.Now().Add(window)
+	for {
+		hit, err := chromedp.Evaluate[bool](xssCanaryProbe(token))(ctx, t)
+		if err != nil {
+			return false, err
+		}
+		if hit {
+			return true, nil
+		}
+		if time.Now().After(deadline) {
+			return false, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }

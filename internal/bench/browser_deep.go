@@ -19,6 +19,9 @@ func browserVerify(ctx context.Context, payloadURL, controlURL, auth string) (bo
 	if err != nil {
 		return false, err
 	}
+	if verr := res.VerifyError(); verr != nil {
+		return false, verr
+	}
 	return res.Triggered && res.ControlClean, nil
 }
 
