@@ -32,7 +32,21 @@ Rule GASH-003 (CWE-79). Sink required; sink plus source yields `firm`;
 sink without source yields `tentative`; no sink rejects. WAF/block pages
 classify `Untrusted` and always reject. Browser-executed confirmation
 (`Triggered` plus `ControlClean`) is the only `confirmed` path and needs the
-headless build.
+headless build. The deep driver now returns an explicit outcome:
+`confirmed` (token trigger + clean control with usable statuses), `candidate`
+(trigger + dirty control),
+`not_vulnerable` (clean control, no trigger for the tested payload/control
+pair only), `blocked` (401/403/407/429/451), `error` (408, 5xx, or navigation
+failure), and `unverified` (indistinguishable pages). `blocked` and `error`
+are surfaced as verifier skips, never as a clean negative or a false
+negative. Block reasons are stable codes (`auth_required`, `forbidden`,
+`proxy_auth_required`, `rate_limited`, `legal_block`, `request_timeout`,
+`server_error`) prefixed with `payload_` or `control_`; a 403 is not
+automatically labeled WAF. Confirmation requires a unique per-run token
+stamped by an actual JS side effect (`alert`/`confirm`/`prompt` call or
+`window.__gashCanary=true`); inserting a `__gash_canary` node is not
+execution. The token bootstrap runs before page scripts, the probe covers
+same-origin frames, and it polls for up to 2 s for async/SPA handlers.
 
 ## Fixtures
 
@@ -54,9 +68,18 @@ is implemented in `internal/headless` with `chromedp v0.21.0` behind `-tags
 deep` (default build still links no browser). `TestDeepVerifiesDOMExecution`
 covers a query-style DOM payload and `TestDeepVerifyXSSHashRoute` covers the
 `#/search?q=` fragment route with a real Chrome 155 headless browser; both
-require a clean control. The 2026-10-20 native-lab report still has
-`confirmed_tp=0`, so browser-confirmed recall remains unmeasured in the
-benchmark. Fixture and corpus claims stay at the static `firm` ceiling.
+require a clean control. `TestDeepDOMFixtureOutcomeMatrix` extends this to a
+local fixture matrix: hash `innerHTML`, async and delayed-async `innerHTML`,
+SPA `history.pushState` plus delayed `innerHTML`, `URLSearchParams`
+`innerHTML`, dialog-only execution, same-origin iframe execution,
+node-insertion-only non-execution, safe `textContent`, sanitized
+`innerHTML`, reflection-only, 403-blocked, and 500-error pages.
+`TestDeepBrowserVerifyDOMFinding` exercises
+the same path through the engine, and `TestDeepDOMFixtureNavigationError`
+proves a closed server is an error, not a clean negative. The 2026-10-20
+native-lab report still has `confirmed_tp=0`, so browser-confirmed recall
+remains unmeasured in the benchmark. Fixture and corpus claims stay at the
+static `firm` ceiling.
 
 ## Precision
 

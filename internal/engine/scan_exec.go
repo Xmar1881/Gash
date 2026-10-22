@@ -22,7 +22,6 @@ import (
 	"github.com/Xmar1881/Gash/internal/config"
 	"github.com/Xmar1881/Gash/internal/discovery"
 	"github.com/Xmar1881/Gash/internal/finding"
-	"github.com/Xmar1881/Gash/internal/headless"
 	"github.com/Xmar1881/Gash/internal/oob"
 	"github.com/Xmar1881/Gash/internal/oracle"
 	"github.com/Xmar1881/Gash/internal/plugin"
@@ -883,22 +882,11 @@ func (e *Engine) jsEnvForScan(pctx context.Context, target string, client *probe
 	// refuses through Supported() so a default binary never fabricates a
 	// browser proof.
 	if e.cfg.BrowserVerify {
-		switch {
-		case e.cfg.BrowserVerifyFunc != nil:
+		if verifier, _ := e.browserVerifier(); verifier != nil {
 			env.BrowserVerify = func(payloadURL, controlURL string) (bool, bool, bool, error) {
-				t, c, err := e.cfg.BrowserVerifyFunc(pctx, payloadURL, controlURL)
+				t, c, err := verifier(pctx, payloadURL, controlURL)
 				return err == nil, t, c, err
 			}
-		case headless.Supported() && headless.Available():
-			env.BrowserVerify = func(payloadURL, controlURL string) (bool, bool, bool, error) {
-				res, err := headless.VerifyXSS(pctx, payloadURL, controlURL, headless.DefaultTimeout)
-				if err != nil {
-					return false, false, false, err
-				}
-				return true, res.Triggered, res.ControlClean, nil
-			}
-		}
-		if verifier, _ := e.browserVerifier(); verifier != nil {
 			env.BrowserProbe = func(p loader.JSPoint, payload string) (bool, bool, bool, error) {
 				base := strings.TrimSpace(p.URL)
 				if base == "" {

@@ -129,6 +129,35 @@ func TestUnverifiedScenarioIsExcludedFromScoring(t *testing.T) {
 	}
 }
 
+func TestBlockedErrorAndUnverifiedStayOutOfDenominators(t *testing.T) {
+	ds := testDataset()
+	v := verifiedAll(ds)
+	v["sqli-error"] = Verification{Verified: false, Error: "browser verification blocked: reason=payload_forbidden"}
+	v["clean-page"] = Verification{Verified: false, Error: "browser verification error: reason=payload_server_error"}
+	v["denied-secret"] = Verification{Verified: false, Error: "lab unreachable"}
+	findings := []NormalizedFinding{
+		{PluginID: "sqli-error-based", Path: "/sqli/error", EvidenceType: "firm"},
+		{PluginID: "xss-reflected-basic", Path: "/xss/reflect", EvidenceType: "browser-confirmed"},
+	}
+	outcomes, _, _ := BuildOutcomes(ds, "gash", true, findings, v)
+	score := ScoreOutcomes(outcomes)
+	if score.TP != 1 || score.Confirmed != 1 {
+		t.Fatalf("only the verified confirmed XSS may score: %+v", score)
+	}
+	if score.FN != 0 || score.TN != 0 || score.FP != 0 || score.Weak != 0 {
+		t.Fatalf("blocked/error/unverified must not become FN/TN/FP/Weak: %+v", score)
+	}
+	if score.Unverified != 3 {
+		t.Fatalf("all three blocked/error/unverified scenarios must be tracked: %+v", score)
+	}
+	if score.Recall == nil || *score.Recall != 1 {
+		t.Fatalf("recall denominator must contain only the scored vulnerable scenario: %v", score.Recall)
+	}
+	if score.Precision == nil || *score.Precision != 1 {
+		t.Fatalf("precision denominator must not include unverified findings: %v", score.Precision)
+	}
+}
+
 func TestNormalizePathHashRoute(t *testing.T) {
 	tests := []struct {
 		in   string

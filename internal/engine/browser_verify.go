@@ -35,6 +35,9 @@ func (e *Engine) browserVerifier() (func(ctx context.Context, payloadURL, contro
 		if err != nil {
 			return false, false, err
 		}
+		if verr := res.VerifyError(); verr != nil {
+			return false, false, verr
+		}
 		return res.Triggered, res.ControlClean, nil
 	}, ""
 }
@@ -132,6 +135,8 @@ func (e *Engine) verifyBrowserFindings(ctx context.Context, findings []*finding.
 		} else {
 			f.Evidence["browser_verify"] = "not-triggered"
 		}
+		// One controlled payload/control pair never proves page-wide safety.
+		f.Evidence["browser_verify_scope"] = "tested payload/control pair only"
 		// Evidence map participates in the fingerprint; keep dedup stable.
 		f.Fingerprint = finding.Fingerprint(f)
 	}

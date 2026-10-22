@@ -55,9 +55,16 @@ browser proof by itself. The opt-in browser-verify pass
 (`--browser-verify`, requires `--active` plus the `-tags deep` build and a
 Chrome binary) re-fetches each eligible GET/query `static-execution-evidence`
 finding as payload URL plus a neutral-control URL through
-`headless.VerifyXSS` and upgrades to `confirmed` only on a real trigger
-(dialog or DOM canary) with a clean control; otherwise the finding is left
-unchanged and annotated honestly. DOM source-to-sink browser execution
+`headless.VerifyXSS` and upgrades to `confirmed` only when a unique per-run
+token is stamped by actual JS execution (an `alert`/`confirm`/`prompt` call or
+`window.__gashCanary=true`) and the control stays clean; a DOM node insertion
+alone is not a trigger. The probe covers same-origin frames and polls for up
+to 2 s for async handlers. `not_vulnerable` is scoped to the tested
+payload/control pair, never a page-wide safety claim. Blocked/error proofs
+carry reason codes (`payload_forbidden`, `control_rate_limited`,
+`payload_server_error`, etc.) and are excluded from benchmark scoring.
+Otherwise the finding is left unchanged and annotated honestly. DOM
+source-to-sink browser execution
 remains gated behind `-tags deep` (see below); see the DOM metric report.
 
 Stored-XSS write/render is `supported` via `StoredOracle`
@@ -327,6 +334,25 @@ is implemented in `internal/headless` with `chromedp v0.21.0` pinned in
 (no browser linked). `ExecutionParams` is frozen (2026-10-15); default-build
 `VerifyDOM` always errors and never fabricates `browser-confirmed`. See
 `docs/metrics/dom-sink-basic.md`.
+
+2026-10-22: the deep driver records the final main-document HTTP status and
+returns an explicit outcome (`confirmed`, `candidate`, `not_vulnerable`,
+`blocked`, `error`, `unverified`). Confirmation requires a unique per-run
+token stamped by actual JS execution; DOM-node insertion alone is not a
+trigger. The probe covers same-origin frames and polls up to 2 s for
+async/SPA handlers. `not_vulnerable` is scoped to the tested payload/control
+pair only. Auth/throttle statuses (401/403/407/429/451), timeout (408), and
+5xx or navigation failures are reported as verifier skips with reason codes
+(`payload_forbidden`, `control_rate_limited`, `payload_server_error`, ...),
+so they cannot be scored as a clean negative or false negative. Benchmark
+precision/recall denominators exclude unverified, blocked, error, and
+not-run scenarios. `TestDeepDOMFixtureOutcomeMatrix` covers
+hash/async/delayed-async/SPA-pushState/URLSearchParams sinks, dialog-only and
+iframe execution, node-insertion-only non-execution, safe `textContent`,
+sanitized
+output, reflection-only, blocked, and error pages against a real local
+Chrome; `TestDeepBrowserVerifyDOMFinding` exercises the engine path.
+Default-build behavior is unchanged.
 
 2026-10-15: decision implemented — chromedp v0.21.0 + build tag `deep` +
 `internal/headless` (stub `!deep`, driver `deep`). Verified with real Chrome
