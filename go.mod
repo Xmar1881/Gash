@@ -8,7 +8,7 @@ require (
 	github.com/chromedp/cdproto v0.157.8
 	github.com/chromedp/chromedp v0.21.0
 	github.com/dop251/goja v0.0.0-20261011204819-0c9fae1b959d
-	github.com/go-playground/validator/v10 v10.27.0
+	github.com/go-playground/validator/v10 v10.30.5
 	github.com/hashicorp/go-plugin v1.8.0
 	github.com/miekg/dns v1.1.73
 	github.com/spf13/cobra v1.10.2
@@ -23,7 +23,7 @@ require (
 require (
 	github.com/dlclark/regexp2/v2 v2.8.1 // indirect
 	github.com/fatih/color v1.13.0 // indirect
-	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
+	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260213210345-44df1a37e875 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
@@ -33,7 +33,7 @@ require (
 	github.com/hashicorp/go-hclog v1.6.3 // indirect
 	github.com/hashicorp/yamux v0.1.2 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/leodido/go-urn v1.4.0 // indirect
+	github.com/leodido/go-urn v1.5.0 // indirect
 	github.com/mattn/go-colorable v0.1.12 // indirect
 	github.com/mattn/go-isatty v0.0.17 // indirect
 	github.com/oklog/run v1.1.0 // indirect
