@@ -90,6 +90,18 @@ that fail verification are listed under `unverified_scenarios` and are
   finding; static-execution evidence is scored `weak-evidence` (counts against
   recall, is never reported as confirmed). The harness's own `browser-exec`
   verification and the engine's `--browser-verify` upgrade are independent.
+- **Static/active TP and browser-confirmed TP are separate.** Every TP is
+  assigned exactly one of `static_active_tp` (non-browser-confirmed) or
+  `browser_confirmed_tp` (a matched `browser-confirmed` finding). The legacy
+  `confirmed_tp` field remains as an alias for `browser_confirmed_tp`.
+  Therefore `static_active_tp + browser_confirmed_tp = tp`, and
+  `static_active_tp` never means "browser-confirmed". Weak candidates are
+  counted in both `weak_evidence` and `candidate_weak`.
+- **Blocked, error, and unverified stay out of denominators.** `blocked` and
+  `error` are subsets of `unverified`; they are reported for audit and are
+  never converted to FP/FN/TN. Precision is `TP/(TP+FP)`, recall is
+  `TP/(TP+FN+weak_evidence)`, and F1 is the harmonic mean of the two when both
+  are defined.
 - **Not-run beats fabricated.** An unavailable tool produces `not_run`
   outcomes and `null` precision/recall with a written reason (N/A), never zero.
 - Requests are cross-checked: tool-reported (`stats.http_requests`) versus
@@ -133,10 +145,16 @@ not worked around by the harness:
 
 - DOM XSS findings from the engine are static source-to-sink evidence; the
   benchmark keeps them `weak-evidence` unless a real browser confirms
-  execution. The deep build's `--browser-verify` pass now checks GASH-003 DOM
+  execution. `dom-sink-basic` now keeps query (`?q=`), raw-hash (`#payload`),
+  and hash-route (`#/route?q=`) points as independent tests, correlates a
+  source and sink only when they share one inline script, and records the
+  evidence stages (`source_observed`, `sink_observed`, `source_sink_linked`,
+  `execution_confirmed`, `control_result`). Node insertion alone is not
+  execution. The deep build's `--browser-verify` pass checks GASH-003 DOM
   findings (including fragment/hash points) and `dom-sink-basic` collapses
-  duplicate per-route sink/source evidence. A standard build still has no
-  browser and therefore cannot confirm DOM execution.
+  duplicate per-route sink/source evidence. The standard profile disables the
+  execution detector, so `dom-sink-basic` is skipped there; even a deep build
+  without `--browser-verify` has no browser proof and stays weak.
 - The stored two-step browser proof runs only for attempts that already
   accept static evidence, so a static reject is never browser-retried.
 - Equalization with Nuclei is wall-clock plus rate limit; Nuclei cannot cap

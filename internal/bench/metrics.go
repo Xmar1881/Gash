@@ -13,17 +13,23 @@ import (
 
 // Score aggregates scenario-level binary classification for one tool.
 type Score struct {
-	TP         int      `json:"tp"`
-	FP         int      `json:"fp"`
-	TN         int      `json:"tn"`
-	FN         int      `json:"fn"`
-	Weak       int      `json:"weak_evidence"`
-	Unverified int      `json:"unverified"`
-	NotRun     int      `json:"not_run"`
-	Confirmed  int      `json:"confirmed_tp"`
-	Precision  *float64 `json:"precision"`
-	Recall     *float64 `json:"recall"`
-	F1         *float64 `json:"f1"`
+	TP                 int `json:"tp"`
+	StaticActiveTP     int `json:"static_active_tp"`
+	BrowserConfirmedTP int `json:"browser_confirmed_tp"`
+	FP                 int `json:"fp"`
+	TN                 int `json:"tn"`
+	FN                 int `json:"fn"`
+	Weak               int `json:"weak_evidence"`
+	CandidateWeak      int `json:"candidate_weak"`
+	Unverified         int `json:"unverified"`
+	Blocked            int `json:"blocked"`
+	Error              int `json:"error"`
+	NotRun             int `json:"not_run"`
+	// Confirmed is kept as a backward-compatible alias of BrowserConfirmedTP.
+	Confirmed int      `json:"confirmed_tp"`
+	Precision *float64 `json:"precision"`
+	Recall    *float64 `json:"recall"`
+	F1        *float64 `json:"f1"`
 }
 
 // Outcome is the scored result of one scenario under one tool.
@@ -150,6 +156,9 @@ func BuildOutcomes(ds *Dataset, tool string, available bool, findings []Normaliz
 		if len(matched) > 0 {
 			out.EvidenceType = matched[0].EvidenceType
 		}
+		if browserConfirmed(matched) {
+			out.EvidenceType = "browser-confirmed"
+		}
 		switch sc.Expected {
 		case ExpectVulnerable:
 			switch {
@@ -227,6 +236,23 @@ func detectorNames(findings []NormalizedFinding) []string {
 	return out
 }
 
+// verificationFailureClass separates blocked from error without converting
+// either into a negative detection. Both remain inside Unverified.
+func verificationFailureClass(msg string) string {
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.Contains(lower, "blocked"), strings.Contains(lower, "forbidden"),
+		strings.Contains(lower, "payload_forbidden"), strings.Contains(lower, "policy"):
+		return "blocked"
+	case strings.Contains(lower, "error"), strings.Contains(lower, "unreachable"),
+		strings.Contains(lower, "timeout"), strings.Contains(lower, "server_error"),
+		strings.Contains(lower, "failed"):
+		return "error"
+	default:
+		return ""
+	}
+}
+
 func browserConfirmed(findings []NormalizedFinding) bool {
 	for _, f := range findings {
 		if f.EvidenceType == "browser-confirmed" {
@@ -244,7 +270,9 @@ func ScoreOutcomes(outcomes []Outcome) Score {
 		case StatusTP:
 			s.TP++
 			if o.EvidenceType == "browser-confirmed" {
-				s.Confirmed++
+				s.BrowserConfirmedTP++
+			} else {
+				s.StaticActiveTP++
 			}
 		case StatusFP:
 			s.FP++
@@ -254,12 +282,20 @@ func ScoreOutcomes(outcomes []Outcome) Score {
 			s.FN++
 		case StatusWeak:
 			s.Weak++
+			s.CandidateWeak++
 		case StatusUnverified:
 			s.Unverified++
+			switch verificationFailureClass(o.Verification.Error) {
+			case "blocked":
+				s.Blocked++
+			case "error":
+				s.Error++
+			}
 		case StatusNotRun:
 			s.NotRun++
 		}
 	}
+	s.Confirmed = s.BrowserConfirmedTP
 	s.Precision = ratio(s.TP, s.TP+s.FP)
 	s.Recall = ratio(s.TP, s.TP+s.FN+s.Weak)
 	if s.Precision != nil && s.Recall != nil && *s.Precision+*s.Recall > 0 {

@@ -25,19 +25,89 @@ tests: tests/fixtures/dom-sink-basic/
 
 const DOM_XSS_PAYLOAD = '"><iframe src="javascript:alert(window.__gashCanary=true)"></iframe>';
 
-function routeKey(raw) {
+function routeKey(raw, location) {
   const s = String(raw || "");
   const hash = s.indexOf("#");
   const base = (hash >= 0 ? s.slice(0, hash) : s).split("?")[0];
+  if (String(location || "").toLowerCase() === "hash") {
+    return base;
+  }
   const frag = (hash >= 0 ? s.slice(hash) : "").split("?")[0];
   return base + frag;
 }
 
 function evidenceKey(point, location, ev) {
   return [
-    routeKey(point.url), point.method, location,
+    routeKey(point.url, location), point.method, location,
     ev.sink || "", ev.source || "",
   ].join("|");
+}
+
+function sourceKind(source) {
+  const s = String(source || "").toLowerCase();
+  if (!s) return "";
+  if (s.indexOf("hash") >= 0) return "hash";
+  if (s.indexOf("search") >= 0 || s.indexOf("urlsearchparams") >= 0) return "query";
+  if (s.indexOf("location.href") >= 0 || s.indexOf("document.url") >= 0 ||
+      s.indexOf("document.location") >= 0 || s === "location") return "url";
+  return "";
+}
+
+function baseURL(raw) {
+  const s = String(raw || "");
+  const cut = s.indexOf("#");
+  return cut >= 0 ? s.slice(0, cut) : s;
+}
+
+function hashPoint(point, value) {
+  const base = baseURL(point.url);
+  return {
+    url: base,
+    method: point.method || "GET",
+    paramName: "",
+    paramLocation: "hash",
+    value: value,
+    sourceKind: "hash",
+    testId: ["point", "hash", "", point.method || "GET", base].join("|"),
+  };
+}
+
+function browserCheck(point, ev, linked) {
+  if (!host.oracles.browserExecution) return null;
+  return host.oracles.browserExecution(point, DOM_XSS_PAYLOAD, {
+    sink: ev && ev.sink ? ev.sink : "",
+    source: ev && ev.source ? ev.source : "",
+    correlated: linked,
+  });
+}
+
+function linkedEvidence(ev) {
+  if (!ev) return false;
+  if (!ev.source || !ev.sink) return true;
+  return String(ev.source_sink_linked || "") !== "false";
+}
+
+function basePageEvidence(probe, point) {
+  try {
+    const resp = probe.send({
+      url: baseURL(point.url),
+      method: point.method || "GET",
+      paramName: "",
+      paramLocation: "query",
+      value: "",
+    });
+    if (!resp) return null;
+    return host.oracles.execution(resp);
+  } catch (e) {
+    return null;
+  }
+}
+
+function emit(candidates, seen, point, location, ev) {
+  const key = evidenceKey(point, location, ev);
+  if (seen.has(key)) return;
+  seen.add(key);
+  candidates.push(host.candidate(point, "dom-xss", ev));
 }
 
 function run(probe, ctx) {
@@ -46,43 +116,60 @@ function run(probe, ctx) {
   const seen = new Set();
   for (const point of points) {
     const location = String(point.paramLocation || "").toLowerCase();
-    const target = point.withValue(DOM_XSS_PAYLOAD);
-    if (location === "fragment") {
+    const payload = DOM_XSS_PAYLOAD;
+    const target = point.withValue(payload);
+    if (location === "fragment" || location === "hash") {
       if (!host.oracles.browserExecution) {
         continue;
       }
-      const ev = host.oracles.browserExecution(point, DOM_XSS_PAYLOAD);
-      if (!ev) {
-        continue;
+      const staticEv = location === "hash" ? basePageEvidence(probe, target) : null;
+      const linked = linkedEvidence(staticEv);
+      const confirmed = browserCheck(target, staticEv, linked);
+      const ev = confirmed || staticEv;
+      if (ev) {
+        emit(candidates, seen, target, location, ev);
       }
-      const key = evidenceKey(point, location, ev);
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      candidates.push(host.candidate(target, "dom-xss", ev));
       continue;
     }
     const resp = probe.send(target);
-    let ev = host.oracles.execution(resp);
+    const ev = host.oracles.execution(resp);
     if (!ev) {
       continue;
     }
-    const key = evidenceKey(point, location, ev);
-    if (seen.has(key)) {
+    const linked = linkedEvidence(ev);
+    const srcKind = sourceKind(ev.source);
+
+    if (srcKind === "hash") {
+      const hp = hashPoint(point, payload);
+      if (!host.oracles.browserExecution) {
+        if (linked) {
+          emit(candidates, seen, hp, "hash", ev);
+        }
+        continue;
+      }
+      const confirmed = browserCheck(hp, ev, linked);
+      emit(candidates, seen, hp, "hash", confirmed || ev);
       continue;
     }
-    seen.add(key);
+    if (location !== "query") {
+      if (!linked) {
+        continue;
+      }
+      emit(candidates, seen, target, location, ev);
+      continue;
+    }
+
+    let finalEv = ev;
     if (host.oracles.browserExecution) {
-      const confirmed = host.oracles.browserExecution(point, DOM_XSS_PAYLOAD, {
-        sink: ev.sink,
-        source: ev.source,
-      });
+      const confirmed = browserCheck(target, ev, linked);
       if (confirmed) {
-        ev = confirmed;
+        finalEv = confirmed;
       }
     }
-    candidates.push(host.candidate(target, "dom-xss", ev));
+    if (finalEv === ev && !linked) {
+      continue;
+    }
+    emit(candidates, seen, target, location, finalEv);
   }
   return candidates;
 }

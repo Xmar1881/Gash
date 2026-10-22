@@ -76,6 +76,25 @@ func TestPointValueURLFragment(t *testing.T) {
 	}
 }
 
+func TestPointValueURLRawHash(t *testing.T) {
+	p := loader.JSPoint{ParamLocation: "hash"}
+	payload := `"><iframe src="javascript:alert(1)"></iframe>`
+	got := pointValueURL("http://example.com/app?next=keep#/old", p, payload)
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.RawQuery != "next=keep" {
+		t.Fatalf("raw hash test must keep the server query: %q", u.RawQuery)
+	}
+	if u.Fragment != payload {
+		t.Fatalf("fragment = %q, want %q", u.Fragment, payload)
+	}
+	if got == pointValueURL("http://example.com/app?next=keep#/old", p, controlNeutralValue) {
+		t.Fatal("payload and control hash URLs must differ")
+	}
+}
+
 func TestPointQueryURLReplaysFormFields(t *testing.T) {
 	p := loader.JSPoint{
 		ParamName:     "id",

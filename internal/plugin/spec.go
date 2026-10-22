@@ -120,8 +120,13 @@ type InjectionPoint struct {
 	URL           string `json:"url"`
 	Method        string `json:"method"`
 	ParamName     string `json:"param_name,omitempty"`
-	ParamLocation string `json:"param_location,omitempty"` // query/fragment/body/header/path/cookie
+	ParamLocation string `json:"param_location,omitempty"` // query/hash/fragment/body/header/path/cookie
 	Value         string `json:"value,omitempty"`
+	// SourceKind names the client-side source family (query, hash, hash_route).
+	// What: keeps query and fragment tests independent in reports.
+	SourceKind string `json:"source_kind,omitempty"`
+	// TestID is the stable identity of this injection-point test pair.
+	TestID string `json:"test_id,omitempty"`
 }
 
 // WithValue noktanın kopyasını verilen değerle döner (Tier2 `point.withValue(canary)` karşılığı).

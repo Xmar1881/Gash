@@ -238,8 +238,9 @@ func fmtRatio(v *float64) string {
 }
 
 func fmtScore(s Score) string {
-	return fmt.Sprintf("TP=%d FP=%d TN=%d FN=%d weak=%d prec=%s recall=%s F1=%s",
-		s.TP, s.FP, s.TN, s.FN, s.Weak, fmtRatio(s.Precision), fmtRatio(s.Recall), fmtRatio(s.F1))
+	return fmt.Sprintf("TP=%d (static=%d browser=%d) FP=%d TN=%d FN=%d weak=%d blocked=%d error=%d prec=%s recall=%s F1=%s",
+		s.TP, s.StaticActiveTP, s.BrowserConfirmedTP, s.FP, s.TN, s.FN, s.Weak,
+		s.Blocked, s.Error, fmtRatio(s.Precision), fmtRatio(s.Recall), fmtRatio(s.F1))
 }
 
 // SummaryMarkdown renders the human-readable report.
@@ -252,8 +253,8 @@ func (r *Report) SummaryMarkdown() string {
 	fmt.Fprintf(&b, "- git commit: %s (dirty=%v), go %s %s/%s\n\n", r.Manifest.GitCommit, r.Manifest.GitDirty, r.Manifest.GoVersion, r.Manifest.GOOS, r.Manifest.GOARCH)
 
 	fmt.Fprintf(&b, "## Tool metrics\n\n")
-	fmt.Fprintf(&b, "| tool | available | findings | tentative | TP | FP | TN | FN | weak | unverified | not-run | precision | recall | F1 | duration | requests (reported/observed) |\n")
-	fmt.Fprintf(&b, "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
+	fmt.Fprintf(&b, "| tool | available | findings | tentative | TP | static TP | browser TP | FP | TN | FN | weak | unverified | blocked | error | not-run | precision | recall | F1 | duration | requests (reported/observed) |\n")
+	fmt.Fprintf(&b, "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
 	for _, tool := range sortedToolNames(r.Tools) {
 		res := r.Tools[tool]
 		if res == nil {
@@ -263,16 +264,18 @@ func (r *Report) SummaryMarkdown() string {
 		if res.ReportedRequests != nil || res.ObservedRequests != nil {
 			req = fmt.Sprintf("%s / %s", fmtInt(res.ReportedRequests), fmtInt(res.ObservedRequests))
 		}
-		fmt.Fprintf(&b, "| %s | %v | %d | %d | %d | %d | %d | %d | %d | %d | %d | %s | %s | %s | %s | %s |\n",
-			tool, res.Available, res.Findings, res.TentativeTotal, res.Score.TP, res.Score.FP, res.Score.TN, res.Score.FN,
-			res.Score.Weak, res.Score.Unverified, res.Score.NotRun,
+		fmt.Fprintf(&b, "| %s | %v | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d | %s | %s | %s | %s | %s |\n",
+			tool, res.Available, res.Findings, res.TentativeTotal, res.Score.TP,
+			res.Score.StaticActiveTP, res.Score.BrowserConfirmedTP,
+			res.Score.FP, res.Score.TN, res.Score.FN,
+			res.Score.Weak, res.Score.Unverified, res.Score.Blocked, res.Score.Error, res.Score.NotRun,
 			fmtRatio(res.Score.Precision), fmtRatio(res.Score.Recall), fmtRatio(res.Score.F1),
 			time.Duration(res.DurationMS)*time.Millisecond, req)
 		if !res.Available && res.Reason != "" {
 			fmt.Fprintf(&b, "\n%s unavailable: %s\n", tool, res.Reason)
 		}
 	}
-	fmt.Fprintf(&b, "\nPrecision/recall denominators exclude unverified and not-run scenarios (reported separately). Weak evidence (execution-required XSS without browser proof) counts as recall loss, never as confirmed XSS. Scoring counts the tools' normal report visibility: tentative candidates are listed in the tentative column but never scored (add --show-tentative to the dataset args to opt in).\n\n")
+	fmt.Fprintf(&b, "\nPrecision/recall denominators exclude unverified and not-run scenarios (reported separately). `static TP` is non-browser-confirmed static/active evidence; `browser TP` is the browser-confirmed subset. They are disjoint, sum to TP, and are never conflated: static TP must not be read as browser-confirmed XSS. Execution-required XSS without browser proof remains weak, not static TP. Weak evidence (execution-required XSS without browser proof) counts as recall loss, never as confirmed XSS. Blocked and error counts are subsets of unverified and are excluded from denominators, not scored as negatives. Scoring counts the tools' normal report visibility: tentative candidates are listed in the tentative column but never scored (add --show-tentative to the dataset args to opt in).\n\n")
 
 	for _, tool := range sortedToolNames(r.Tools) {
 		res := r.Tools[tool]
@@ -401,7 +404,7 @@ func (r *Report) HTMLReport() string {
 	fmt.Fprintf(&b, "<h1>Gash benchmark report</h1><p>generated %s &middot; dataset %s (sha256 %s) &middot; git %s</p>",
 		html.EscapeString(r.GeneratedAt), html.EscapeString(r.Dataset.Name), html.EscapeString(shortSHA(r.Dataset.SHA256)), html.EscapeString(r.Manifest.GitCommit))
 
-	b.WriteString("<h2>Tool metrics</h2><table><tr><th>tool</th><th>available</th><th>findings</th><th>tentative</th><th>TP</th><th>FP</th><th>TN</th><th>FN</th><th>weak</th><th>precision</th><th>recall</th><th>F1</th><th>duration</th><th>requests</th></tr>")
+	b.WriteString("<h2>Tool metrics</h2><table><tr><th>tool</th><th>available</th><th>findings</th><th>tentative</th><th>TP</th><th>static TP</th><th>browser TP</th><th>FP</th><th>TN</th><th>FN</th><th>weak</th><th>unverified</th><th>blocked</th><th>error</th><th>not-run</th><th>precision</th><th>recall</th><th>F1</th><th>duration</th><th>requests</th></tr>")
 	for _, tool := range sortedToolNames(r.Tools) {
 		res := r.Tools[tool]
 		if res == nil {
@@ -411,12 +414,15 @@ func (r *Report) HTMLReport() string {
 		if res.ReportedRequests != nil || res.ObservedRequests != nil {
 			req = fmt.Sprintf("%s / %s", fmtInt(res.ReportedRequests), fmtInt(res.ObservedRequests))
 		}
-		fmt.Fprintf(&b, "<tr><td>%s</td><td>%v</td><td>%d</td><td>%d</td><td class=\"tp\">%d</td><td class=\"fp\">%d</td><td class=\"tn\">%d</td><td class=\"fn\">%d</td><td class=\"weak-evidence\">%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>",
-			html.EscapeString(tool), res.Available, res.Findings, res.TentativeTotal, res.Score.TP, res.Score.FP, res.Score.TN, res.Score.FN,
-			res.Score.Weak, fmtRatio(res.Score.Precision), fmtRatio(res.Score.Recall), fmtRatio(res.Score.F1),
+		fmt.Fprintf(&b, "<tr><td>%s</td><td>%v</td><td>%d</td><td>%d</td><td class=\"tp\">%d</td><td>%d</td><td>%d</td><td class=\"fp\">%d</td><td class=\"tn\">%d</td><td class=\"fn\">%d</td><td class=\"weak-evidence\">%d</td><td>%d</td><td>%d</td><td>%d</td><td>%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>",
+			html.EscapeString(tool), res.Available, res.Findings, res.TentativeTotal, res.Score.TP,
+			res.Score.StaticActiveTP, res.Score.BrowserConfirmedTP,
+			res.Score.FP, res.Score.TN, res.Score.FN,
+			res.Score.Weak, res.Score.Unverified, res.Score.Blocked, res.Score.Error, res.Score.NotRun,
+			fmtRatio(res.Score.Precision), fmtRatio(res.Score.Recall), fmtRatio(res.Score.F1),
 			time.Duration(res.DurationMS)*time.Millisecond, req)
 	}
-	b.WriteString("</table><p>Precision/recall exclude unverified and not-run scenarios; weak evidence counts as recall loss and never as confirmed XSS. Tentative candidates are reported but unscored unless the dataset opts in with --show-tentative.</p>")
+	b.WriteString("</table><p>Precision/recall exclude unverified and not-run scenarios; weak evidence counts as recall loss and never as confirmed XSS. Static TP and browser TP are disjoint and sum to TP; static TP is not browser-confirmed evidence. Blocked and error are subsets of unverified and stay out of denominators. Tentative candidates are reported but unscored unless the dataset opts in with --show-tentative.</p>")
 
 	for _, tool := range sortedToolNames(r.Tools) {
 		res := r.Tools[tool]

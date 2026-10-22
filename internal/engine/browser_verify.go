@@ -44,8 +44,8 @@ func (e *Engine) browserVerifier() (func(ctx context.Context, payloadURL, contro
 
 // browserEligible selects findings the generic pass may verify.
 // What: GASH-001 static-execution findings and GASH-003 DOM findings with a
-// GET/query or GET/fragment injection point can have payload and control URLs
-// reconstructed.
+// GET/query, GET/hash, or GET/fragment injection point can have payload and
+// control URLs reconstructed.
 // Why: Body-borne or stored payloads need workflow-specific control URLs and
 // are wired at their oracle binding (stored binding controlUrl option);
 // reconstructing them here would risk a fake control.
@@ -69,7 +69,13 @@ func browserEligible(f *finding.Finding) bool {
 	}
 	ip := f.InjectionPoint
 	location := strings.ToLower(strings.TrimSpace(ip.ParamLocation))
-	if (location != "query" && location != "fragment") || ip.ParamName == "" || ip.Value == "" {
+	if location != "query" && location != "hash" && location != "fragment" {
+		return false
+	}
+	if ip.Value == "" {
+		return false
+	}
+	if location != "hash" && ip.ParamName == "" {
 		return false
 	}
 	if ip.Method != "" && !strings.EqualFold(ip.Method, http.MethodGet) {
@@ -123,6 +129,8 @@ func (e *Engine) verifyBrowserFindings(ctx context.Context, findings []*finding.
 		if triggered && clean {
 			f.Confidence = plugin.ConfidenceConfirmed
 			f.Evidence["execution"] = "browser-confirmed"
+			f.Evidence["execution_confirmed"] = "true"
+			f.Evidence["control_result"] = "clean"
 			if !strings.Contains(f.Note, "browser-confirmed") {
 				f.Note = strings.TrimSpace(f.Note + "; browser-confirmed (triggered + clean control)")
 			}
@@ -132,8 +140,12 @@ func (e *Engine) verifyBrowserFindings(ctx context.Context, findings []*finding.
 			}
 		} else if triggered {
 			f.Evidence["browser_verify"] = "control-dirty"
+			f.Evidence["execution_confirmed"] = "false"
+			f.Evidence["control_result"] = "dirty"
 		} else {
 			f.Evidence["browser_verify"] = "not-triggered"
+			f.Evidence["execution_confirmed"] = "false"
+			f.Evidence["control_result"] = "not-triggered"
 		}
 		// One controlled payload/control pair never proves page-wide safety.
 		f.Evidence["browser_verify_scope"] = "tested payload/control pair only"

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -38,8 +39,12 @@ type JSPoint struct {
 	Method string
 	// ParamName is the injectable parameter name.
 	ParamName string
-	// ParamLocation is query, body, header, path, or cookie.
+	// ParamLocation is query, hash, fragment, body, header, path, or cookie.
 	ParamLocation string
+	// SourceKind names the client-side source family for this point.
+	SourceKind string
+	// TestID is the stable identity of the point/payload test.
+	TestID string
 	// Value is the current parameter value.
 	Value string
 	// FormValues, when non-nil, holds the other form fields' current values
@@ -239,6 +244,26 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 		return fmt.Sprintf("gash_js_%d", canaryCount)
 	}
 
+	sourceKindFor := func(location string) string {
+		switch strings.ToLower(strings.TrimSpace(location)) {
+		case "query", "search":
+			return "query"
+		case "hash":
+			return "hash"
+		case "fragment":
+			return "hash_route"
+		default:
+			return ""
+		}
+	}
+	testIDFor := func(p JSPoint) string {
+		location := strings.ToLower(strings.TrimSpace(p.ParamLocation))
+		if location == "" {
+			location = "query"
+		}
+		return strings.Join([]string{"point", location, p.ParamName, p.Method, p.URL}, "|")
+	}
+
 	var toPointObject func(vm *goja.Runtime, p JSPoint) goja.Value
 	toPointObject = func(vm *goja.Runtime, p JSPoint) goja.Value {
 		obj := vm.NewObject()
@@ -247,6 +272,14 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 		_ = obj.Set("paramName", p.ParamName)
 		_ = obj.Set("paramLocation", p.ParamLocation)
 		_ = obj.Set("value", p.Value)
+		if p.SourceKind == "" {
+			p.SourceKind = sourceKindFor(p.ParamLocation)
+		}
+		if p.TestID == "" {
+			p.TestID = testIDFor(p)
+		}
+		_ = obj.Set("sourceKind", p.SourceKind)
+		_ = obj.Set("testId", p.TestID)
 		if len(p.FormValues) > 0 {
 			fv := vm.NewObject()
 			keys := make([]string, 0, len(p.FormValues))
@@ -299,11 +332,19 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 				formValues = nil
 			}
 		}
-		return JSPoint{
+		p := JSPoint{
 			URL: get("url"), Method: method,
 			ParamName: get("paramName"), ParamLocation: get("paramLocation"),
+			SourceKind: get("sourceKind"), TestID: get("testId"),
 			Value: get("value"), FormValues: formValues, FormEnctype: get("formEnctype"),
 		}
+		if p.SourceKind == "" {
+			p.SourceKind = sourceKindFor(p.ParamLocation)
+		}
+		if p.TestID == "" {
+			p.TestID = testIDFor(p)
+		}
+		return p
 	}
 
 	respToObject := func(vm *goja.Runtime, r JSResponse) goja.Value {
@@ -364,7 +405,11 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 		_ = obj.Set("verdict", string(ev.Verdict))
 		_ = obj.Set("confidence", string(ev.ConfidenceContribution))
 		_ = obj.Set("note", ev.Note)
-		for _, key := range []string{"sink", "source", "payload", "browser", "correlation", "namespace"} {
+		for _, key := range []string{
+			"sink", "source", "payload", "browser", "correlation", "namespace",
+			"source_observed", "sink_observed", "source_sink_linked",
+			"execution_confirmed", "control_result",
+		} {
 			if v, ok := ev.Artifacts[key]; ok && v != "" {
 				_ = obj.Set(key, v)
 			}
@@ -437,6 +482,9 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 	_ = probeObj.Set("send", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) == 0 {
 			panic("probe.send requires a point argument")
+		}
+		if env.Send == nil {
+			return goja.Null()
 		}
 		p := pointFromValue(call.Arguments[0])
 		resp, err := env.Send(p)
@@ -852,6 +900,7 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 		if err != nil {
 			panic(err.Error())
 		}
+		annotateDOMEvidence(ev, source, sink, domSourceSinkLinked(resp.Body, source, sink), false)
 		return evToObject(vm, ev)
 	})
 	_ = oraclesObj.Set("browserExecution", func(call goja.FunctionCall) goja.Value {
@@ -864,6 +913,7 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 		p := pointFromValue(call.Arguments[0])
 		payload := call.Arguments[1].String()
 		sink, source := "", ""
+		correlated := false
 		if len(call.Arguments) >= 3 && !goja.IsUndefined(call.Arguments[2]) && !goja.IsNull(call.Arguments[2]) {
 			if opts, ok := call.Arguments[2].(*goja.Object); ok {
 				if v := opts.Get("sink"); v != nil && !goja.IsUndefined(v) && !goja.IsNull(v) {
@@ -871,6 +921,9 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 				}
 				if v := opts.Get("source"); v != nil && !goja.IsUndefined(v) && !goja.IsNull(v) {
 					source = v.String()
+				}
+				if v := opts.Get("correlated"); v != nil && !goja.IsUndefined(v) && !goja.IsNull(v) {
+					correlated = v.ToBoolean()
 				}
 			}
 		}
@@ -886,6 +939,7 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 		if err != nil {
 			panic(err.Error())
 		}
+		annotateDOMEvidence(ev, source, sink, correlated, true)
 		return evToObject(vm, ev)
 	})
 	_ = hostObj.Set("oracles", oraclesObj)
@@ -901,10 +955,13 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 		}
 		name := oracleRefName(ref)
 		cand := plugin.Candidate{
-			PluginID:       spec.ID,
-			Target:         p.URL,
-			InjectionPoint: plugin.InjectionPoint{URL: p.URL, Method: p.Method, ParamName: p.ParamName, ParamLocation: p.ParamLocation, Value: p.Value},
-			OracleName:     name,
+			PluginID: spec.ID,
+			Target:   p.URL,
+			InjectionPoint: plugin.InjectionPoint{
+				URL: p.URL, Method: p.Method, ParamName: p.ParamName, ParamLocation: p.ParamLocation,
+				Value: p.Value, SourceKind: p.SourceKind, TestID: p.TestID,
+			},
+			OracleName: name,
 		}
 		collected = append(collected, JSCandidate{Candidate: cand, Evidence: ev})
 		obj := vm.NewObject()
@@ -1093,7 +1150,6 @@ func detectDOMSink(body string) string {
 		"document.write", "document.writeln",
 		"eval(", "settimeout(", "setinterval(",
 		".html(", "new function(",
-		"location.hash", "postmessage",
 	}
 	for _, s := range sinks {
 		if strings.Contains(lower, s) {
@@ -1121,6 +1177,64 @@ func detectDOMSource(body string) string {
 		}
 	}
 	return ""
+}
+
+var inlineScriptRe = regexp.MustCompile(`(?is)<script\b[^>]*>(.*?)</script>`)
+
+// domSourceSinkLinked reports whether one inline script contains both the
+// source and the sink. Separate scripts are not a proven data flow.
+// What: Conservative same-script correlation for static DOM evidence.
+// Why: Source and sink coexistence alone must not become a confirmed finding.
+func domSourceSinkLinked(body, source, sink string) bool {
+	if source == "" || sink == "" {
+		return false
+	}
+	src := strings.ToLower(source)
+	snk := strings.ToLower(sink)
+	for _, m := range inlineScriptRe.FindAllStringSubmatch(body, -1) {
+		if len(m) < 2 {
+			continue
+		}
+		script := strings.ToLower(m[1])
+		if strings.Contains(script, src) && strings.Contains(script, snk) {
+			return true
+		}
+	}
+	return false
+}
+
+// annotateDOMEvidence records the evidence chain without changing oracle
+// confidence. Node insertion is not execution; only the browser probe may set
+// execution_confirmed=true.
+func annotateDOMEvidence(ev *oracle.Evidence, source, sink string, linked, headless bool) {
+	if ev == nil || ev.Verdict != oracle.VerdictAccept {
+		return
+	}
+	if ev.Artifacts == nil {
+		ev.Artifacts = map[string]string{}
+	}
+	ev.Artifacts["source_observed"] = boolString(source != "")
+	ev.Artifacts["sink_observed"] = boolString(sink != "")
+	if source != "" && sink != "" {
+		ev.Artifacts["source_sink_linked"] = boolString(linked)
+	} else {
+		ev.Artifacts["source_sink_linked"] = "false"
+	}
+	if headless && ev.ConfidenceContribution == plugin.ConfidenceConfirmed {
+		ev.Artifacts["execution_confirmed"] = "true"
+		ev.Artifacts["execution"] = "browser-confirmed"
+		ev.Artifacts["control_result"] = ev.ControlResult
+		return
+	}
+	ev.Artifacts["execution_confirmed"] = "false"
+	ev.Artifacts["control_result"] = "not_run"
+}
+
+func boolString(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
 }
 
 // itoaStr formats an array index without importing strconv at call sites.

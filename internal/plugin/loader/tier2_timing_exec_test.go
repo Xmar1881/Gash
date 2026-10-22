@@ -6,6 +6,7 @@ package loader
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -144,6 +145,161 @@ function run(probe, ctx) {
 	}
 	if got[0].Evidence.Artifacts["browser"] != "execution" {
 		t.Fatalf("browser artifact missing: %+v", got[0].Evidence.Artifacts)
+	}
+}
+
+func executeDOMSinkPlugin(t *testing.T, points []JSPoint, body string) ([]JSCandidate, []JSPoint) {
+	t.Helper()
+	src, err := os.ReadFile("../../../plugins/xss/dom-sink-basic.js")
+	if err != nil {
+		t.Fatalf("read plugin: %v", err)
+	}
+	var probed []JSPoint
+	env := &JSEnv{
+		Points: points,
+		Send: func(p JSPoint) (JSResponse, error) {
+			return JSResponse{Status: 200, Body: body, URL: p.URL}, nil
+		},
+		BrowserProbe: func(p JSPoint, payload string) (bool, bool, bool, error) {
+			probed = append(probed, p)
+			if p.ParamLocation != "hash" {
+				return false, false, false, nil
+			}
+			return true, true, true, nil
+		},
+	}
+	spec := timingSpec()
+	spec.ID = "dom-sink-basic"
+	spec.Tests = "tests/fixtures/dom-sink-basic/"
+	got, err := ExecuteJS(context.Background(), spec, string(src), env, 10*time.Second)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	return got, probed
+}
+
+func TestDOMSourceSinkLinkRequiresSameInlineScript(t *testing.T) {
+	linked := `<div id="o"></div><script>const h=location.hash;document.getElementById("o").innerHTML=h;</script>`
+	if !domSourceSinkLinked(linked, "location.hash", "innerhtml") {
+		t.Fatal("same-script source/sink must correlate")
+	}
+	split := `<script>const h=location.hash;</script><script>document.getElementById("o").innerHTML=h;</script>`
+	if domSourceSinkLinked(split, "location.hash", "innerhtml") {
+		t.Fatal("separate scripts must not claim a static data flow")
+	}
+	if detectDOMSink(`<script>const h=location.hash;</script>`) != "" {
+		t.Fatal("location.hash is a source, not a sink")
+	}
+}
+
+func TestDOMSinkBasicHashSourceTestsRawHashPoint(t *testing.T) {
+	body := `<div id="o"></div><script>const h=location.hash;document.getElementById("o").innerHTML=h;</script>`
+	points := []JSPoint{{URL: "http://x/dom?next=x", Method: "GET", ParamName: "next", ParamLocation: "query"}}
+	got, probed := executeDOMSinkPlugin(t, points, body)
+	if len(got) != 1 {
+		t.Fatalf("one hash candidate expected: %+v", got)
+	}
+	c := got[0].Candidate
+	if c.InjectionPoint.ParamLocation != "hash" || c.InjectionPoint.URL != "http://x/dom?next=x" {
+		t.Fatalf("query point must become an independent raw-hash test: %+v", c.InjectionPoint)
+	}
+	if c.InjectionPoint.Value == "" || c.InjectionPoint.SourceKind != "hash" || c.InjectionPoint.TestID == "" {
+		t.Fatalf("hash test identity missing: %+v", c.InjectionPoint)
+	}
+	if len(probed) != 1 || probed[0].ParamLocation != "hash" {
+		t.Fatalf("browser must probe hash, never query: %+v", probed)
+	}
+	ev := got[0].Evidence
+	if ev.Artifacts["source"] != "location.hash" || ev.Artifacts["sink"] != "innerhtml" {
+		t.Fatalf("source/sink evidence missing: %+v", ev.Artifacts)
+	}
+	if ev.Artifacts["source_sink_linked"] != "true" || ev.Artifacts["execution_confirmed"] != "true" {
+		t.Fatalf("evidence chain incomplete: %+v", ev.Artifacts)
+	}
+	if ev.Artifacts["execution"] != "browser-confirmed" {
+		t.Fatalf("reporter-compatible execution evidence missing: %+v", ev.Artifacts)
+	}
+}
+
+func TestDOMSinkBasicQueryAndHashPointsDedupe(t *testing.T) {
+	body := `<div id="o"></div><script>const h=location.hash;document.getElementById("o").innerHTML=h;</script>`
+	points := []JSPoint{
+		{URL: "http://x/dom?next=x", Method: "GET", ParamName: "next", ParamLocation: "query"},
+		{URL: "http://x/dom", Method: "GET", ParamLocation: "hash"},
+	}
+	got, probed := executeDOMSinkPlugin(t, points, body)
+	if len(got) != 1 {
+		t.Fatalf("query and hash points must dedupe to one raw-hash test: %+v", got)
+	}
+	if got[0].Candidate.InjectionPoint.ParamLocation != "hash" {
+		t.Fatalf("deduped candidate must be the hash test: %+v", got[0].Candidate.InjectionPoint)
+	}
+	if len(probed) != 2 || probed[0].ParamLocation != "hash" || probed[1].ParamLocation != "hash" {
+		t.Fatalf("both searches must target the raw hash: %+v", probed)
+	}
+	if got[0].Evidence.Artifacts["source_sink_linked"] != "true" {
+		t.Fatalf("hash evidence must retain the static chain: %+v", got[0].Evidence.Artifacts)
+	}
+}
+
+func TestDOMSinkBasicQuerySourceDoesNotBecomeHash(t *testing.T) {
+	body := `<script>const q=location.search;document.write(q);</script>`
+	points := []JSPoint{{URL: "http://x/dom?q=x", Method: "GET", ParamName: "q", ParamLocation: "query"}}
+	src, err := os.ReadFile("../../../plugins/xss/dom-sink-basic.js")
+	if err != nil {
+		t.Fatalf("read plugin: %v", err)
+	}
+	var probed []JSPoint
+	env := &JSEnv{
+		Points: points,
+		Send:   func(p JSPoint) (JSResponse, error) { return JSResponse{Status: 200, Body: body, URL: p.URL}, nil },
+		BrowserProbe: func(p JSPoint, payload string) (bool, bool, bool, error) {
+			probed = append(probed, p)
+			if p.ParamLocation != "query" {
+				return false, false, false, nil
+			}
+			return true, true, true, nil
+		},
+	}
+	spec := timingSpec()
+	spec.ID = "dom-sink-basic"
+	spec.Tests = "tests/fixtures/dom-sink-basic/"
+	got, err := ExecuteJS(context.Background(), spec, string(src), env, 10*time.Second)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if len(got) != 1 || got[0].Candidate.InjectionPoint.ParamLocation != "query" {
+		t.Fatalf("query candidate expected: %+v", got)
+	}
+	if len(probed) != 1 || probed[0].ParamLocation != "query" {
+		t.Fatalf("browser must probe query, never hash: %+v", probed)
+	}
+	if got[0].Candidate.InjectionPoint.SourceKind != "query" {
+		t.Fatalf("query test identity wrong: %+v", got[0].Candidate.InjectionPoint)
+	}
+}
+
+func TestDOMSinkBasicNodeInsertionIsNotExecution(t *testing.T) {
+	points := []JSPoint{{URL: "http://x/dom", Method: "GET", ParamName: "", ParamLocation: "hash"}}
+	src, err := os.ReadFile("../../../plugins/xss/dom-sink-basic.js")
+	if err != nil {
+		t.Fatalf("read plugin: %v", err)
+	}
+	env := &JSEnv{
+		Points: points,
+		BrowserProbe: func(p JSPoint, payload string) (bool, bool, bool, error) {
+			return true, false, true, nil
+		},
+	}
+	spec := timingSpec()
+	spec.ID = "dom-sink-basic"
+	spec.Tests = "tests/fixtures/dom-sink-basic/"
+	got, err := ExecuteJS(context.Background(), spec, string(src), env, 10*time.Second)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("node insertion without execution must not confirm: %+v", got)
 	}
 }
 
