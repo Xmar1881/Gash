@@ -12,22 +12,22 @@ Why: Proves Tier 1 active path traversal detection meets the 99 percent precisio
 
 ## Overview
 
-Tier 1 active plugin. Oracle `error` (mode: `path_traversal`). Detects path traversal through successful target-file content (`/etc/passwd`, `C:\Windows\win.ini`).
+Tier 1 active plugin. Oracle `error` (mode: `path_traversal`). Detects path traversal through successful target-file content (`/etc/passwd`, `C:\Windows\win.ini`) or a file-open error that is absent from the neutral-parameter control.
 
 ## Evidence Standard
 
-Rule GASH-017 / CWE-22. Content signatures require control request for `confirmed`; without a control they stay `firm`. Generic include warnings do not qualify: DVWA emits the same warning for the neutral control, so only successful file content proves the traversal.
+Rule GASH-017 / CWE-22. Content signatures and `include_error` require a control request for `confirmed`; without a control they stay `firm`. Raw traversal text or a warning present in both attack and control never qualifies. Generic missing-file text without a file-open error also rejects.
 
 ## Fixtures
 
-- Positive: 4 of 4 accepted (`confirmed` with control).
-- Negative: 4 of 4 rejected.
+- Positive: 5 of 5 accepted (`confirmed` with control).
+- Negative: 5 of 5 rejected.
 - Command: `go run ./cmd/gash plugins test plugins/path-traversal/path-traversal-error.yaml`
 
 ## Corpus Result
 
-Oracle `error` (path_traversal mode with content signatures) evaluated against clean, SPA, WAF, encoded, reflection-only, and dynamic bodies.
-`firm` plus findings: 0. WAF body correctly rejects as untrusted. Reflected traversal text and include warnings alone reject.
+Oracle `error` (path_traversal mode with content and controlled include-error signatures) evaluated against clean, SPA, WAF, encoded, reflection-only, and dynamic bodies.
+`firm` plus findings: 0. WAF body correctly rejects as untrusted. Reflected traversal text and control-equal include warnings reject.
 
 ## Lab Result
 
@@ -36,11 +36,11 @@ Status: measured in the 2026-10-20 native lab. DVWA `/vulnerabilities/fi/` was i
 
 ## Precision
 
-True positives 4, false positives 0. Precision 1.00.
+True positives 5, false positives 0. Precision 1.00.
 
 ## Recall
 
-True positives 4, false negatives 0. Recall 1.00.
+True positives 5, false negatives 0. Recall 1.00.
 
 ## Gate Verdict
 
@@ -48,7 +48,7 @@ PASS. Precision 1.00 is above the 0.99 gate. Corpus holds 0 `firm` plus.
 
 ## Dataset
 
-- Dataset hash: `e067e6e22717d161a45676c9e96f379b087eaf578e54c286b40ab4a2b1935a06`
-  (sha256 over all 8 fixture files under `tests/fixtures/path-traversal-error/`).
-- Samples: TP=4, FP=0, TN=4, FN=0. Fixture-only measurement; lab verification above.
+- Dataset hash: `bdf533ccdf9d1ac4964f87e38a09d05f99e61a62496233b5cc8cbc9c770e0f80`
+  (sha256 over all 10 fixture files under `tests/fixtures/path-traversal-error/`).
+- Samples: TP=5, FP=0, TN=5, FN=0. Fixture-only measurement; lab verification above.
   `TestMetricGate` fails the build if this hash drifts from the fixtures.

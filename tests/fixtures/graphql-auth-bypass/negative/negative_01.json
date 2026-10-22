@@ -1,0 +1,1 @@
+{"body": "{\"errors\":[{\"message\":\"Field \\\"admin\\\" is not authorized\"}]}", "control_body": "{\"data\":{\"users\":[{\"id\":\"1\",\"email\":\"admin@example.com\"}]}}", "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "admin fields properly protected", "status": 200, "target": "http://example.com/graphql"}

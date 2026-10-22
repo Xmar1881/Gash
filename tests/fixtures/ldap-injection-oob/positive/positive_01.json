@@ -1,0 +1,1 @@
+{"body": "OK", "control_body": "OK", "oob_callback": true, "oob_correlation_id": "ldap123abc456", "oob_namespace": "ldap-inj", "expected_verdict": "accept", "expected_confidence": "confirmed", "headers": {"Content-Type": "text/plain"}, "name": "blind LDAP injection with OOB callback", "status": 200, "target": "http://example.com/search?user=test"}

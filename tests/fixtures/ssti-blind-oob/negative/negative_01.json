@@ -1,0 +1,1 @@
+{"body": "OK", "control_body": "OK", "oob_callback": false, "oob_correlation_id": "ssti123abc456", "oob_namespace": "ssti-inj", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "no OOB callback", "status": 200, "target": "http://example.com/template?name=test"}

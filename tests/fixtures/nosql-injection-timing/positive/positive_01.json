@@ -1,0 +1,1 @@
+{"body": "OK", "control_body": "OK", "delay_samples": [5100, 5200, 5050], "control_samples": [50, 45, 55], "baseline_stddev": 10, "expected_verdict": "accept", "expected_confidence": "firm", "headers": {"Content-Type": "application/json"}, "name": "blind NoSQL injection with sleep delay", "status": 200, "target": "http://example.com/search?q=test"}

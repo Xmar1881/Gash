@@ -118,6 +118,14 @@ for a controlled headless browser result.
 | `source-map-exposure` | error | probe | false | true | false | low | source-map, exposure, misconfig, error | `tests/fixtures/source-map-exposure/` |
 | `nextjs-middleware-bypass` | middleware-bypass | probe | false | true | false | high | nextjs, middleware, authorization, bypass, cve-2025-29927 | `tests/fixtures/nextjs-middleware-bypass/` |
 | `nextjs-image-optimizer-ssrf` | oob | probe | false | true | false | high | nextjs, ssrf, image-optimizer, oob | `tests/fixtures/nextjs-image-optimizer-ssrf/` |
+| `command-injection-oob` | oob | probe | false | true | false | critical | command-injection, injection, blind, oob, rce | `tests/fixtures/command-injection-oob/` |
+| `nosql-injection-timing` | timing | probe | false | true | false | high | nosql, injection, blind, timing | `tests/fixtures/nosql-injection-timing/` |
+| `ldap-injection-oob` | oob | probe | false | true | false | critical | ldap, injection, blind, oob | `tests/fixtures/ldap-injection-oob/` |
+| `ssti-blind-oob` | oob | probe | false | true | false | critical | ssti, injection, blind, oob, rce | `tests/fixtures/ssti-blind-oob/` |
+| `debug-endpoint-exposure` | error | probe | false | true | false | medium | debug, endpoint, exposure, misconfig, information-disclosure | `tests/fixtures/debug-endpoint-exposure/` |
+| `sensitive-file-exposure` | error | probe | false | true | false | medium | sensitive-file, exposure, misconfig, information-disclosure, git, env, ssh, cloud | `tests/fixtures/sensitive-file-exposure/` |
+| `graphql-auth-bypass` | differential | probe | false | true | false | high | graphql, authorization, bypass, differential, broken-access-control | `tests/fixtures/graphql-auth-bypass/` |
+| `graphql-dos` | differential | probe | false | true | false | high | graphql, dos, query-depth, complexity, denial-of-service | `tests/fixtures/graphql-dos/` |
 
 ## Reference Plugins (Tier 3 Native)
 

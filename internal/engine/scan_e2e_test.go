@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Xmar1881/Gash/internal/plugin"
@@ -87,6 +88,86 @@ func TestScanE2EHeaderFinding(t *testing.T) {
 // TestScanE2EHardenedEmpty proves a hardened backend yields a valid empty report.
 // What: Same plugin against headers that satisfy the oracle.
 // Why: Zero findings must still be a deterministic valid report, not an error.
+const e2eRedirectPlugin = `id: e2e-redirect-multi
+name: E2E Multi-Endpoint Redirect Check
+description: Detects external redirects across more than one discovered endpoint.
+severity: medium
+tags: [redirect]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 40
+phase: probe
+order: 10
+api_version: "1.0"
+tests: tests/fixtures/open-redirect-param/
+request:
+  method: GET
+  param_names: [url, next]
+  payloads:
+    - "https://gash-canary.example/landing"
+oracle:
+  name: redirect
+  params:
+    expect_external_host: true
+`
+
+// TestScanE2EMultipleDiscoveryHits proves the Tier 1 discovery fallback keeps
+// testing distinct endpoints after the first hit instead of hiding later ones.
+func TestScanE2EMultipleDiscoveryHits(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		switch r.URL.Path {
+		case "/":
+			_, _ = w.Write([]byte(`<html><body>
+<a href="/first?url=/home">first</a>
+<a href="/second?next=/home">second</a>
+</body></html>`))
+		case "/first", "/second":
+			target := r.URL.Query().Get("url")
+			if target == "" {
+				target = r.URL.Query().Get("next")
+			}
+			if strings.HasPrefix(strings.ToLower(target), "https://gash-canary.example/") {
+				http.Redirect(w, r, target, http.StatusFound)
+				return
+			}
+			_, _ = w.Write([]byte("<html><body>internal target</body></html>"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "e2e-redirect.yaml")
+	if err := os.WriteFile(path, []byte(e2eRedirectPlugin), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg := plugin.NewRegistry()
+	if _, err := loader.Discover([]string{dir}, reg); err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	e := New(reg, DefaultConfig())
+	rep, err := e.Run(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	var first, second bool
+	for _, f := range rep.Findings {
+		if strings.Contains(f.Target, "/first") {
+			first = true
+		}
+		if strings.Contains(f.Target, "/second") {
+			second = true
+		}
+	}
+	if !first || !second {
+		t.Fatalf("both discovered endpoints must be reported, first=%v second=%v findings=%v", first, second, rep.Findings)
+	}
+}
+
 func TestScanE2EHardenedEmpty(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
