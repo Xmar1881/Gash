@@ -19,9 +19,13 @@ Why: One page for purpose, model, quickstart, docs, metrics, and license.
 ```
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go)](go.mod)
-[![Toolchain](https://img.shields.io/badge/toolchain-go1.27.2-00ADD8)](go.mod)
-[![CI](https://github.com/Xmar1881/Gash/actions/workflows/plugin-ci.yml/badge.svg)](https://github.com/Xmar1881/Gash/actions/workflows/plugin-ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go)](go.mod)
+[![Toolchain](https://img.shields.io/badge/toolchain-go1.27.3-00ADD8)](go.mod)
+[![CI](https://github.com/Xmar1881/Gash/actions/workflows/plugin-ci.yml/badge.svg?branch=main)](https://github.com/Xmar1881/Gash/actions/workflows/plugin-ci.yml)
+[![Release](https://img.shields.io/github/v/release/Xmar1881/Gash?include_prereleases&sort=semver)](https://github.com/Xmar1881/Gash/releases)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Xmar1881/Gash)](https://goreportcard.com/report/github.com/Xmar1881/Gash)
+[![codecov](https://codecov.io/gh/Xmar1881/Gash/branch/main/graph/badge.svg)](https://codecov.io/gh/Xmar1881/Gash)
+[![Discord](https://img.shields.io/discord/123456789012345678?label=Discord&logo=discord&logoColor=white)](https://discord.gg/gash)
 
 > Evidence first. Plugins everywhere. Findings you can defend.
 
@@ -30,7 +34,7 @@ about signal, explainability, and controlled execution. Plugins propose
 candidates; engine-owned oracles decide whether those candidates deserve to
 become findings.
 
-Module `github.com/Xmar1881/Gash`, toolchain `go1.27.2`, license
+Module `github.com/Xmar1881/Gash`, toolchain `go1.27.3`, license
 `AGPL-3.0-only`. Scan only targets you own or have explicit written
 permission to test (`--scope` opts into a strict allowlist; see Legal).
 
@@ -124,7 +128,7 @@ permission to test (`--scope` opts into a strict allowlist; see Legal).
 
 | Core | Plugins | Proof | Output |
 |---|---|---|---|
-| Go 1.26, toolchain go1.27.2 | YAML, sandboxed JS, trusted native gRPC | Control, repeat, baseline, context | SARIF, JSON, text, HTML, JUnit |
+| Go 1.27, toolchain go1.27.3 | YAML, sandboxed JS, trusted native gRPC | Control, repeat, baseline, context | SARIF, JSON, text, HTML, JUnit |
 
 `safe` is the default. `deep`, `active`, `aggressive`, and OOB behavior are
 explicit opt-ins. Scan only systems you own or have written permission to test.
@@ -168,21 +172,50 @@ Use Nuclei for template breadth, ZAP for proxy/crawl coverage, Burp for
 manual depth. Use Gash when you want a small, auditable core where no plugin
 — however sloppy — can mint a finding without engine-grade evidence.
 
-## Try It in 60 Seconds
+## Installation
 
-Prerequisite: Go 1.26+ (toolchain go1.27.2) on `PATH`. All commands run from
-the repo root. Scan only targets you own or have explicit written permission
-to test.
+| Method | Command |
+|--------|---------|
+| **Go install** (latest) | `go install github.com/Xmar1881/Gash/cmd/gash@latest` |
+| **Homebrew** | `brew tap xmar1881/gash && brew install gash` *(coming soon)* |
+| **Scoop** (Windows) | `scoop bucket add gash https://github.com/Xmar1881/scoop-gash && scoop install gash` *(coming soon)* |
+| **Docker** | `docker run --rm ghcr.io/xmar1881/gash:latest scan --target ...` *(coming soon)* |
+| **Binary release** | Download from [GitHub Releases](https://github.com/Xmar1881/Gash/releases) |
+| **From source** | See [Building from Source](#building-from-source) below |
+
+### Building from Source
+
+Prerequisite: Go 1.27+ (toolchain go1.27.3) on `PATH`.
 
 ```sh
-go run ./cmd/gash plugins list
+# Clone and build
+git clone https://github.com/Xmar1881/Gash.git
+cd Gash
 go test ./...
-go run ./cmd/gash plugins test plugins/xss/xss-reflected-basic.js
-go run ./cmd/gash scan --target http://localhost:8080 --scope localhost
+go build -o gash ./cmd/gash
+./gash --help
 ```
 
-The last command is intentionally scoped to localhost. Replace it only with a
-target you are authorized to test.
+Static builds only (`CGO_ENABLED=0`); artifacts land under `dist/` and are
+never committed:
+
+```sh
+CGO_ENABLED=0 go build ./...
+VER=$(git describe --tags --always 2>/dev/null || echo v0.1.0-dev)
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/gash-$VER-linux-amd64 ./cmd/gash
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/gash-$VER-windows-amd64.exe ./cmd/gash
+CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o dist/gash-$VER-darwin-amd64 ./cmd/gash
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o dist/gash-$VER-darwin-arm64 ./cmd/gash
+```
+
+Windows note: `gash-*-windows-amd64.exe` is a console tool. Double-clicking
+only shows help and waits for `Enter`; run it from a terminal instead:
+
+```powershell
+.\dist\gash-v0.1.0-dev-windows-amd64.exe --help
+.\dist\gash-v0.1.0-dev-windows-amd64.exe scan --help
+.\dist\gash-v0.1.0-dev-windows-amd64.exe plugins list
+```
 
 ## Quickstart
 
@@ -242,25 +275,6 @@ oracle:
     mode: absent
 ```
 
-Static builds only (`CGO_ENABLED=0`); artifacts land under `dist/` and are
-never committed:
-
-```sh
-CGO_ENABLED=0 go build ./...
-VER=$(git describe --tags --always 2>/dev/null || echo v0.1.0-dev)
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/gash-$VER-linux-amd64 ./cmd/gash
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/gash-$VER-windows-amd64.exe ./cmd/gash
-```
-
-Windows note: `gash-*-windows-amd64.exe` is a console tool. Double-clicking
-only shows help and waits for `Enter`; run it from a terminal instead:
-
-```powershell
-.\dist\gash-v0.1.0-dev-windows-amd64.exe --help
-.\dist\gash-v0.1.0-dev-windows-amd64.exe scan --help
-.\dist\gash-v0.1.0-dev-windows-amd64.exe plugins list
-```
-
 ## Detector Summary
 
 75 detectors via `go run ./cmd/gash plugins list`
@@ -273,13 +287,13 @@ Full oracle/plugin catalog: `docs/detector-inventory.md`.
 | SQL injection (error, boolean, time, stacked, auth-bypass, OOB) | 6 | `sqli-error-based`, `sqli-boolean-differential`, `sqli-time-based`, `sqli-stacked-time`, `sqli-auth-bypass`, `blind-sqli-oob` |
 | XPath injection (error) | 1 | `xpath-injection-error` |
 | NoSQL injection (error, auth-bypass differential) | 2 | `nosql-injection-error`, `nosql-auth-bypass-differential` |
-| Command injection (error, timing) | 2 | `command-injection-error`, `command-injection-timing` |
+| Command injection (error, timing, **OOB**) | 3 | `command-injection-error`, `command-injection-timing`, `command-injection-oob` |
 | SSRF (blind OOB, cloud metadata, internal port scan) | 3 | `ssrf-blind-oob`, `ssrf-cloud-metadata`, `ssrf-internal-port-scan` |
 | XXE (OOB, blind OOB, reflected) | 4 | `xxe-oob`, `xxe-reflected-basic`, `xxe-blind-oob`, `xml-external-entity-blind` |
-| Template injection (SSTI: reflection, blind timing) | 2 | `template-injection-reflection`, `ssti-blind-timing` |
-| File / path (RFI, traversal, upload, backup, listing, source maps) | 7 | `rfi-remote-include`, `path-traversal-error`, `file-upload-unrestricted`, `backup-file-exposure`, `directory-listing`, `source-map-exposure`, `file-inclusion-rfi` |
-| Access control and logic (IDOR, LDAP x2, HPP x2, mass assignment, verb tampering) | 7 | `idor-differential`, `ldap-injection-differential`, `ldap-injection-blind`, `hpp-parameter-pollution`, `hpp-duplicate-emission`, `mass-assignment-basic`, `verb-tampering-bypass` |
-| Misconfig and headers (security headers, cookie, CORS x2, CRLF, response splitting, CSRF, clickjacking, JWT x3, version, GraphQL x2, host header, method override, error disclosure, redirect x2, management endpoints, phpinfo, WebDAV, CVE, rate limit) | 24 | `missing-security-headers`, `cookie-flags`, `cors-misconfig`, `insecure-cors-preflight`, `crlf-header-injection`, `http-response-splitting`, `csrf-token-absence`, `clickjacking-frameable`, `jwt-token-exposure`, `jwt-alg-confusion`, `jwt-none-alg-confusion`, `server-version-disclosure`, `graphql-endpoint-discovery`, `graphql-introspection-enabled`, `host-header-injection`, `http-method-override-abuse`, `error-message-disclosure`, `open-redirect-param`, `oauth-open-redirect`, `management-endpoint-exposure`, `phpinfo-exposure`, `webdav-enabled`, `cve-dependency-scan`, `missing-rate-limit` |
+| Template injection (SSTI: reflection, blind timing, **OOB**) | 3 | `template-injection-reflection`, `ssti-blind-timing`, `ssti-blind-oob` |
+| File / path (RFI, traversal, upload, backup, listing, source maps, **sensitive files**) | 8 | `rfi-remote-include`, `path-traversal-error`, `file-upload-unrestricted`, `backup-file-exposure`, `directory-listing`, `source-map-exposure`, `file-inclusion-rfi`, `sensitive-file-exposure` |
+| Access control and logic (IDOR, LDAP x2, HPP x2, mass assignment, verb tampering, **GraphQL auth/DOS**) | 9 | `idor-differential`, `ldap-injection-differential`, `ldap-injection-blind`, `hpp-parameter-pollution`, `hpp-duplicate-emission`, `mass-assignment-basic`, `verb-tampering-bypass`, `graphql-auth-bypass`, `graphql-dos` |
+| Misconfig and headers (security headers, cookie, CORS x2, CRLF, response splitting, CSRF, clickjacking, JWT x3, version, GraphQL x2, host header, method override, error disclosure, redirect x2, management endpoints, phpinfo, WebDAV, CVE, rate limit, **debug endpoints**) | 26 | `missing-security-headers`, `cookie-flags`, `cors-misconfig`, `insecure-cors-preflight`, `crlf-header-injection`, `http-response-splitting`, `csrf-token-absence`, `clickjacking-frameable`, `jwt-token-exposure`, `jwt-alg-confusion`, `jwt-none-alg-confusion`, `server-version-disclosure`, `graphql-endpoint-discovery`, `graphql-introspection-enabled`, `host-header-injection`, `http-method-override-abuse`, `error-message-disclosure`, `open-redirect-param`, `oauth-open-redirect`, `management-endpoint-exposure`, `phpinfo-exposure`, `webdav-enabled`, `cve-dependency-scan`, `missing-rate-limit`, `debug-endpoint-exposure` |
 | Insecure deserialization (error signature) | 1 | `insecure-deserialization-error` |
 | Subdomain takeover (unclaimed-service bodies) | 1 | `subdomain-takeover-basic` |
 | Web cache poisoning | 2 | `web-cache-poisoning-basic`, `cache-poisoning-host-header` |
@@ -314,6 +328,8 @@ match. Counts above are plugin inventory, not real-target recall.
 | `docs/design/00-scope.md` | Phase 0 scope decisions |
 | `docs/SECURITY.md` | Responsible use and reporting |
 | `docs/user-guide-tr.md` | Turkish beginner guide (Türkçe, profiles + aggressive) |
+| `docs/getting-started.md` | Narrative tutorial for new users |
+| `docs/faq.md` | Frequently asked questions |
 | `docs/auth.md` | Auth contexts, dual-user BOLA matrix, and form login automation |
 | `docs/api-discovery.md` | OpenAPI test-plan flow |
 | `docs/proto-checks.md` | DNS/TLS/TCP checks and CAA gap |
@@ -353,6 +369,21 @@ native lab is now measured (`docs/metrics/native-lab-2026-10-20.md`); Docker
 compose reproduction remains unavailable in this environment
 (`docs/metrics/lab-compose-2026-10-15.md`). Nuclei was compared on both the
 native and fixture labs (`docs/metrics/nuclei-comparison-2026-10-14.md`).
+
+## Community & Support
+
+- **GitHub Discussions**: [Ask questions, share findings](https://github.com/Xmar1881/Gash/discussions)
+- **Discord**: [Join the community](https://discord.gg/gash)
+- **Twitter/X**: [@GashScanner](https://twitter.com/GashScanner)
+- **Issues**: [Bug reports & feature requests](https://github.com/Xmar1881/Gash/issues)
+- **Security**: [Private vulnerability reporting](https://github.com/Xmar1881/Gash/security/advisories/new)
+
+## Funding
+
+Gash is an independent open-source project. If you find it valuable, consider sponsoring:
+
+- **GitHub Sponsors**: [github.com/sponsors/Xmar1881](https://github.com/sponsors/Xmar1881)
+- **OpenCollective**: [opencollective.com/gash](https://opencollective.com/gash)
 
 ## Responsible Use
 

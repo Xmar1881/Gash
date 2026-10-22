@@ -1,0 +1,34 @@
+# CODEOWNERS
+# Gash — Security Scanner
+# All changes require review from @Xmar1881
+
+# Global
+* @Xmar1881
+
+# Core engine
+/internal/engine/ @Xmar1881
+/internal/plugin/ @Xmar1881
+/internal/oracle/ @Xmar1881
+/internal/bench/ @Xmar1881
+/internal/proto/ @Xmar1881
+
+# Plugins by category
+/plugins/xss/ @Xmar1881
+/plugins/sqli/ @Xmar1881
+/plugins/redirect/ @Xmar1881
+/plugins/path-traversal/ @Xmar1881
+/plugins/command-injection/ @Xmar1881
+/plugins/ldap-blind/ @Xmar1881
+/plugins/ssti/ @Xmar1881
+/plugins/nosql/ @Xmar1881
+/plugins/debug-endpoint-exposure/ @Xmar1881
+/plugins/sensitive-file-exposure/ @Xmar1881
+/plugins/graphql-auth-bypass/ @Xmar1881
+/plugins/graphql-dos/ @Xmar1881
+
+# Documentation
+/docs/ @Xmar1881
+README.md @Xmar1881
+
+# CI/CD
+/.github/workflows/ @Xmar1881
