@@ -17,14 +17,20 @@ Tier 2 plugin. For server-reachable query/form/header points it sends the
 benign XSS probe and calls `host.oracles.execution(resp)`; the Go binding
 detects a static sink (`innerHTML`, `outerHTML`, `insertAdjacentHTML`,
 `document.write`/`writeln`, `eval(`, `setTimeout(`/`setInterval(` with string
-args, jQuery `.html(`, `new Function(`, `location.hash` assignment,
-`postMessage(`) plus a URL-controlled source (`location.hash`/`search`,
-`document.location`, `document.URL`, `document.referrer`, `URLSearchParams`,
-`window.name`, `postMessage`). Static evidence caps at `firm`. Fragment/hash
-points never reach the server, so they use `host.oracles.browserExecution`
-directly. The opt-in deep build (`--browser-verify`) can upgrade a point to
-`confirmed` only when the browser triggers and the neutral control stays
-clean; the standard build links no browser and keeps the static ceiling.
+args, jQuery `.html(`, `new Function(`) plus a URL-controlled source
+(`location.hash`/`search`, `document.location`, `document.URL`,
+`document.referrer`, `URLSearchParams`, `window.name`, `postMessage`).
+Static evidence caps at `firm`. Query (`?q=`), raw-hash (`#payload`), and
+hash-route (`#/route?q=`) points are separate tests; a hash source creates a
+raw-hash test instead of reusing the query result. Same-script source/sink
+correlation and the evidence stages (`source_observed`, `sink_observed`,
+`source_sink_linked`, `execution_confirmed`, `control_result`) are recorded
+without upgrading confidence. Fragment/hash points never reach the server, so
+they use `host.oracles.browserExecution` directly. The opt-in deep build
+(`--browser-verify`) can upgrade a point to `confirmed` only when the browser
+triggers and the neutral control stays clean. The standard profile disables the
+execution detector (so this plugin is skipped there); a deep build without
+`--browser-verify` links no browser and keeps the static ceiling.
 
 ## Evidence Standard
 

@@ -44,14 +44,32 @@ func pointQueryURL(rawURL string, p loader.JSPoint, value string) string {
 	return u.String()
 }
 
-// pointValueURL applies one value to either the server query or a hash-route
-// query. A fragment never reaches the server, so callers must use it only for
-// browser navigation, never for an HTTP request.
+// pointValueURL applies one value to the server query, a raw hash, or a
+// hash-route query. A fragment never reaches the server, so callers must use
+// it only for browser navigation, never for an HTTP request.
 func pointValueURL(rawURL string, p loader.JSPoint, value string) string {
-	if strings.EqualFold(strings.TrimSpace(p.ParamLocation), "fragment") {
+	switch strings.ToLower(strings.TrimSpace(p.ParamLocation)) {
+	case "fragment":
 		return fragmentQueryURL(rawURL, p, value)
+	case "hash":
+		return rawHashURL(rawURL, value)
+	default:
+		return pointQueryURL(rawURL, p, value)
 	}
-	return pointQueryURL(rawURL, p, value)
+}
+
+// rawHashURL replaces the whole fragment with value and keeps the server query.
+// What: raw location.hash testing is independent from hash-route ?q= testing.
+// Why: URL.String re-escapes payloads in Fragment and can mask execution.
+func rawHashURL(rawURL, value string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	base := *u
+	base.Fragment = ""
+	base.RawFragment = ""
+	return base.String() + "#" + value
 }
 
 func fragmentQueryURL(rawURL string, p loader.JSPoint, value string) string {

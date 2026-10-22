@@ -819,7 +819,7 @@ func (e *Engine) jsEnvForScan(pctx context.Context, target string, client *probe
 			}
 		case "header":
 			reqHeaders = map[string]string{p.ParamName: value}
-		case "fragment":
+		case "fragment", "hash":
 			// Fragments are never sent to the server. Only the browser probe
 			// binding may exercise them; an HTTP replay here would silently
 			// test the base page and could fabricate unrelated evidence.

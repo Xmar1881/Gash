@@ -103,6 +103,40 @@ func TestBrowserConfirmedUpgradesXSS(t *testing.T) {
 	}
 }
 
+func TestStaticAndBrowserTPAreSeparated(t *testing.T) {
+	ds := testDataset()
+	findings := []NormalizedFinding{
+		{PluginID: "sqli-error-based", Path: "/sqli/error", EvidenceType: "firm"},
+		{PluginID: "xss-reflected-basic", Path: "/xss/reflect", EvidenceType: "browser-confirmed"},
+	}
+	outcomes, _, _ := BuildOutcomes(ds, "gash", true, findings, verifiedAll(ds))
+	score := ScoreOutcomes(outcomes)
+	if score.TP != 2 || score.StaticActiveTP != 1 || score.BrowserConfirmedTP != 1 || score.Confirmed != 1 {
+		t.Fatalf("static/browser tp split wrong: %+v", score)
+	}
+	if score.StaticActiveTP+score.BrowserConfirmedTP != score.TP {
+		t.Fatalf("split must be disjoint and complete: %+v", score)
+	}
+	if score.CandidateWeak != 0 {
+		t.Fatalf("candidate_weak must count weak candidates only: %+v", score)
+	}
+}
+
+func TestBlockedErrorRemainUnverifiedSubsets(t *testing.T) {
+	ds := testDataset()
+	v := verifiedAll(ds)
+	v["xss-reflect"] = Verification{Verified: false, Error: "browser verification blocked: reason=payload_forbidden"}
+	v["sqli-error"] = Verification{Verified: false, Error: "browser verification error: reason=payload_server_error"}
+	outcomes, _, _ := BuildOutcomes(ds, "gash", true, nil, v)
+	score := ScoreOutcomes(outcomes)
+	if score.Unverified != 2 || score.Blocked != 1 || score.Error != 1 {
+		t.Fatalf("blocked/error must be unverified subsets: %+v", score)
+	}
+	if score.TP != 0 || score.FN != 0 || score.TN != 2 || score.FP != 0 {
+		t.Fatalf("blocked/error must not become negative outcomes: %+v", score)
+	}
+}
+
 func TestUnavailableToolIsNotRun(t *testing.T) {
 	ds := testDataset()
 	outcomes, _, _ := BuildOutcomes(ds, "nuclei", false, nil, verifiedAll(ds))
