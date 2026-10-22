@@ -1,0 +1,1 @@
+{"body": "{\"activeProfiles\":[\"dev\"],\"propertySources\":[]}", "control_body": "<html><body>404 Not Found</body></html>", "control_status": 404, "expected_verdict": "accept", "expected_confidence": "firm", "headers": {"Content-Type": "application/json"}, "name": "Spring Actuator env exposed", "status": 200, "target": "http://example.com/actuator/env"}

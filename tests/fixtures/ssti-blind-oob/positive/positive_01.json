@@ -1,0 +1,1 @@
+{"body": "OK", "control_body": "OK", "oob_callback": true, "oob_correlation_id": "ssti123abc456", "oob_namespace": "ssti-inj", "expected_verdict": "accept", "expected_confidence": "confirmed", "headers": {"Content-Type": "text/html"}, "name": "blind SSTI with OOB callback", "status": 200, "target": "http://example.com/template?name=test"}

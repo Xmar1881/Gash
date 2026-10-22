@@ -72,6 +72,59 @@ func TestPathTraversalContentSignatures(t *testing.T) {
 	}
 }
 
+func TestPathTraversalControlledIncludeError(t *testing.T) {
+	var o ErrorSignatureOracle
+	ctx := context.Background()
+	for _, body := range []string{
+		"Warning: include(../../../../etc/passwd): failed to open stream: No such file or directory",
+		`open() "/srv/app/../../etc/passwd" failed (2: No such file or directory)`,
+	} {
+		ev, err := o.Verify(ctx, cls(), false, ErrorSignatureParams{
+			Body: body, ControlBody: "<p>file is unavailable</p>", Mode: "path_traversal",
+			SignatureSet: []string{"include_error"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ev.Verdict != VerdictAccept || ev.ConfidenceContribution != plugin.ConfidenceConfirmed {
+			t.Fatalf("control-differential include error confirmed olmalı: %+v", ev)
+		}
+		if ev.Artifacts["signature"] != "include_error" || ev.ControlResult != "absent" {
+			t.Fatalf("include_error artifact/control bekleniyordu: %+v", ev)
+		}
+	}
+	rejects := []struct {
+		name        string
+		body        string
+		controlBody string
+	}{
+		{"same warning in control", "Warning: include(x): failed to open stream: No such file or directory", "Warning: include(x): failed to open stream: No such file or directory"},
+		{"reflected payload only", "<p>Requested file: ../../../../etc/passwd</p>", "<p>file is unavailable</p>"},
+	}
+	for _, tc := range rejects {
+		ev, err := o.Verify(ctx, cls(), false, ErrorSignatureParams{
+			Body: tc.body, ControlBody: tc.controlBody, Mode: "path_traversal",
+			SignatureSet: []string{"include_error"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ev.Verdict != VerdictReject {
+			t.Fatalf("%s reject olmalı: %+v", tc.name, ev)
+		}
+	}
+	ev, err := o.Verify(ctx, cls(), false, ErrorSignatureParams{
+		Body: "Warning: include(../../etc/passwd): failed to open stream: No such file or directory",
+		Mode: "path_traversal", SignatureSet: []string{"include_error"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Verdict != VerdictAccept || ev.ConfidenceContribution != plugin.ConfidenceFirm {
+		t.Fatalf("include error without control firm olmalı: %+v", ev)
+	}
+}
+
 func TestDeserializationSignature(t *testing.T) {
 	var o ErrorSignatureOracle
 	ctx := context.Background()

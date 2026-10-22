@@ -1,0 +1,1 @@
+{"body": "OK", "control_body": "OK", "oob_callback": false, "oob_correlation_id": "abc123def456", "oob_namespace": "cmd-inj", "expected_verdict": "reject", "headers": {"Content-Type": "text/plain"}, "name": "no OOB callback", "status": 200, "target": "http://example.com/ping?ip=127.0.0.1"}

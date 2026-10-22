@@ -1,0 +1,1 @@
+{"body": "OK", "control_body": "OK", "delay_samples": [50, 55, 48], "control_samples": [48, 52, 50], "baseline_stddev": 10, "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "no delay - no injection", "status": 200, "target": "http://example.com/search?q=test"}

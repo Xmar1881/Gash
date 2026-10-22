@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/graphql-auth-bypass/graphql-auth-bypass.yaml
+# What: Tier 1 GraphQL field-level authorization bypass via DifferentialOracle.
+# Why: Tests if sensitive fields (admin, internal, secret) are accessible
+#   without proper authorization by comparing responses with and without
+#   auth context. Uses differential oracle to detect body divergence.
+#   Only tests read queries (no mutations); requires auth context for comparison.
+
+id: graphql-auth-bypass
+name: GraphQL Field-Level Authorization Bypass
+description: Detects GraphQL field-level authorization bypass by querying sensitive fields with and without auth context and measuring differential response divergence.
+author: GASH contributors
+severity: high
+tags: [graphql, authorization, bypass, differential, broken-access-control]
+safe: false
+deep: false
+active: true
+requires_auth: true
+max_requests: 40
+phase: probe
+order: 92
+api_version: "1.0"
+tests: tests/fixtures/graphql-auth-bypass/
+request:
+  method: POST
+  headers:
+    Content-Type: application/json
+  paths: ["/graphql", "/api/graphql", "/v1/graphql"]
+  body: '{"query":"query{users{id,email,admin,secret,internal,role,permissions}}"}'
+oracle:
+  name: differential
+  params:
+    repeats: 3
+    confidence_ceiling: "firm"
+    false_body: '{"query":"query{users{id,email}}"}'

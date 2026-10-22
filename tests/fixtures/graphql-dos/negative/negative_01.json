@@ -1,0 +1,1 @@
+{"body": "{\"errors\":[{\"message\":\"Query complexity exceeds limit\"}]}", "control_body": "{\"data\":{\"users\":[{\"id\":\"1\",\"email\":\"test@example.com\"}]}}", "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "query complexity properly limited", "status": 200, "target": "http://example.com/graphql"}

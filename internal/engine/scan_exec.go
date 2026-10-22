@@ -644,7 +644,9 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 			}
 			// Keşif geri beslemesi (ölçülmüş recall boşluğu): kökte sonuç
 			// yoksa, keşfedilmiş injection noktalarında yalnızca eşleşen tek
-			// parametre denenir; ilk isabette durulur. Bütçe plugin
+			// parametre denenir. Aynı param adını taşıyan farklı endpoint'ler
+			// bağımsız olabilir; ilk isabet sonrası durmak sonraki gerçek
+			// bulguları gizlediği için cap'e kadar devam edilir. Bütçe plugin
 			// politikasıyla aynı kapıdan geçer; bir adayın bütçe hatası
 			// sonraki adayların sonuçlarını düşürmez.
 			if len(results) == 0 {
@@ -653,9 +655,6 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 					pointFile.Request.ParamNames = []string{dp.Param}
 					pointResults, _ := loader.ExecuteTier1WithOptions(pctx, &spec, &pointFile, dp.URL, sender, loader.Tier1Options{OOB: e.oobSource()})
 					results = append(results, pointResults...)
-					if len(pointResults) > 0 {
-						break
-					}
 				}
 			}
 			for _, r := range results {

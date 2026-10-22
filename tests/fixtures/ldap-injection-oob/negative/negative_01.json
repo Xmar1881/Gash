@@ -1,0 +1,1 @@
+{"body": "OK", "control_body": "OK", "oob_callback": false, "oob_correlation_id": "ldap123abc456", "oob_namespace": "ldap-inj", "expected_verdict": "reject", "headers": {"Content-Type": "text/plain"}, "name": "no OOB callback", "status": 200, "target": "http://example.com/search?user=test"}

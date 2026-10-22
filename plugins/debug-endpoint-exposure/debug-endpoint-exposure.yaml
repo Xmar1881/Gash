@@ -1,0 +1,111 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/debug-endpoint-exposure/debug-endpoint-exposure.yaml
+# What: Tier 1 debug endpoint enumeration via ErrorSignatureOracle generic_error mode.
+# Why: Extended debug endpoint coverage beyond Spring Actuator:
+#   - Django: /admin, /debug, /__debug__, /media, /static
+#   - Flask: /debug, /console, /__debugger__
+#   - Express: /debug, /status, /health, /metrics, /actuator (generic)
+#   - Rails: /rails/info, /sidekiq, /resque
+#   - Laravel: /telescope, /horizon, /debugbar, /ignition
+#   - PHP: /phpinfo, /info.php, /test.php, /xdebug
+#   - GraphQL: /graphql, /graphiql, /playground, /voyager, /altair
+#   - Swagger/OpenAPI: /swagger, /api-docs, /openapi, /redoc
+#   - K8s: /metrics, /healthz, /readyz, /livez
+#   - Docker: /containers/json, /images/json
+#   - Jenkins: /script, /manage, /api
+#   - GitLab: /-/metrics, /-/health, /-/readiness
+#   - Prometheus: /metrics, /api/v1/query
+#   - Elasticsearch: /_cat, /_cluster, /_nodes
+#   A bare 200 is never enough: generic error/debug marker must be present and
+#   absent from soft-404 control.
+
+id: debug-endpoint-exposure
+name: Debug Endpoint Exposure
+description: Detects exposed debug and diagnostic endpoints across frameworks by matching debug/error markers on fixed paths with soft-404 control absence.
+author: GASH contributors
+severity: medium
+tags: [debug, endpoint, exposure, misconfig, information-disclosure]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 120
+phase: probe
+order: 90
+api_version: "1.0"
+tests: tests/fixtures/debug-endpoint-exposure/
+request:
+  method: GET
+  paths:
+    # Django
+    - "/admin"
+    - "/debug"
+    - "/__debug__"
+    - "/media"
+    - "/static"
+    # Flask
+    - "/debug"
+    - "/console"
+    - "/__debugger__"
+    # Express / Node.js
+    - "/debug"
+    - "/status"
+    - "/health"
+    - "/metrics"
+    - "/actuator"
+    # Rails
+    - "/rails/info"
+    - "/sidekiq"
+    - "/resque"
+    # Laravel
+    - "/telescope"
+    - "/horizon"
+    - "/debugbar"
+    - "/ignition"
+    # PHP
+    - "/phpinfo"
+    - "/info.php"
+    - "/test.php"
+    - "/xdebug"
+    # GraphQL
+    - "/graphql"
+    - "/graphiql"
+    - "/playground"
+    - "/voyager"
+    - "/altair"
+    # Swagger/OpenAPI
+    - "/swagger"
+    - "/api-docs"
+    - "/openapi"
+    - "/redoc"
+    # Kubernetes
+    - "/metrics"
+    - "/healthz"
+    - "/readyz"
+    - "/livez"
+    # Docker
+    - "/containers/json"
+    - "/images/json"
+    # Jenkins
+    - "/script"
+    - "/manage"
+    - "/api"
+    # GitLab
+    - "/-/metrics"
+    - "/-/health"
+    - "/-/readiness"
+    # Prometheus
+    - "/metrics"
+    - "/api/v1/query"
+    # Elasticsearch
+    - "/_cat"
+    - "/_cluster"
+    - "/_nodes"
+oracle:
+  name: error
+  params:
+    mode: content
+    signature_set: [generic_error, management_endpoint]

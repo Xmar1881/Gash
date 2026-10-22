@@ -1,0 +1,1 @@
+{"body": "OK", "control_body": "OK", "oob_callback": true, "oob_correlation_id": "abc123def456", "oob_namespace": "cmd-inj", "expected_verdict": "accept", "expected_confidence": "confirmed", "headers": {"Content-Type": "text/plain"}, "name": "blind command injection with OOB callback", "status": 200, "target": "http://example.com/ping?ip=127.0.0.1"}

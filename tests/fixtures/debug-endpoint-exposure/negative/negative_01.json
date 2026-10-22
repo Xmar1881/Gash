@@ -1,0 +1,1 @@
+{"body": "<html><body>Welcome to our site</body></html>", "control_body": "<html><body>404 Not Found</body></html>", "control_status": 404, "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "no debug endpoint", "status": 200, "target": "http://example.com/debug"}

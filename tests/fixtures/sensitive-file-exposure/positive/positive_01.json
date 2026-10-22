@@ -1,0 +1,1 @@
+{"body": "APP_KEY=base64:R0FTSF9GQUtFX0tFWQ==\nDB_HOST=127.0.0.1\nDB_DATABASE=app", "control_body": "<html><body>404 not found</body></html>", "control_status": 404, "expected_verdict": "accept", "expected_confidence": "firm", "headers": {"Content-Type": "text/plain"}, "name": "dotenv exposed with soft-404 control", "status": 200, "target": "http://example.com/.env"}
