@@ -109,8 +109,7 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 	}
 	result.SeedURLs = append(result.SeedURLs, normTarget)
 
-	var policy *plugin.PolicySession
-	policy = client.Policy()
+	policy := client.Policy()
 
 	rootURL := fmt.Sprintf("%s://%s", targetParsed.Scheme, targetParsed.Host)
 	rootParsed, _ := url.Parse(rootURL)

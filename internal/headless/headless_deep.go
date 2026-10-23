@@ -27,6 +27,9 @@ import (
 // default build degrades honestly with an audit reason instead of errors.
 func Supported() bool { return true }
 
+// canarySettle bounds the post-load wait for async DOM/SPA execution.
+const canarySettle = 2 * time.Second
+
 // VerifyDOM runs a controlled headless-Chrome proof for DOM execution.
 // What: Navigates to payloadURL then controlURL, evaluating probeExpr (a JS
 // expression returning truthy when the payload executed) in each.

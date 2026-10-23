@@ -583,14 +583,6 @@ func sshWeakAlgorithmReason(kind, name string) (string, plugin.Severity) {
 	return "", ""
 }
 
-// sshWeakHit tek zayıflık sınıfının toplanmış gözlemidir.
-type sshWeakHit struct {
-	signal string
-	reason string
-	sev    plugin.Severity
-	weak   []string
-}
-
 // collectSSHWeakList zayıf algoritmaları toplar (severity = en yüksek).
 func collectSSHWeakList(kind string, lists ...[]string) ([]string, string, plugin.Severity) {
 	var weak []string

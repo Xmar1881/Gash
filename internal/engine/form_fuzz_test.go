@@ -135,9 +135,9 @@ func TestRunActiveFormFuzzTokenRotationNoFalseFindings(t *testing.T) {
 			mu.Lock()
 			tok := fmt.Sprintf("t%d", counter)
 			mu.Unlock()
-			_, _ = w.Write([]byte(fmt.Sprintf(`<html><body><form action="/submit" method="POST">`+
+			_, _ = fmt.Fprintf(w, `<html><body><form action="/submit" method="POST">`+
 				`<input type="hidden" name="csrf_token" value="%s">`+
-				`<input type="text" name="q" value="hello"></form></body></html>`, tok)))
+				`<input type="text" name="q" value="hello"></form></body></html>`, tok)
 		case "/submit":
 			_ = r.ParseForm()
 			got := r.PostFormValue("csrf_token")

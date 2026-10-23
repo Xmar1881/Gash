@@ -176,9 +176,6 @@ func failedStatus(status int) bool {
 	return status == 408 || (status >= 500 && status <= 599)
 }
 
-// canarySettle bounds the post-load wait for async DOM/SPA execution.
-const canarySettle = 2 * time.Second
-
 // newCanaryToken returns a fresh per-proof token. The bootstrap script stamps
 // it only when a payload actually executes, so a DOM insertion or a stale
 // window flag from another run cannot satisfy the probe.

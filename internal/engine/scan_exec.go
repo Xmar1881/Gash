@@ -987,20 +987,6 @@ func tier1DiscoveryPoints(target string, paramNames []string, points []loader.JS
 	return out
 }
 
-// withScanQueryParam sets one query value on a URL.
-// What: Deterministic point-to-request mapping for live JS sends.
-// Why: Centralizes URL mutation so scans and tests cannot diverge.
-func withScanQueryParam(target, param, value string) (string, error) {
-	u, err := url.Parse(target)
-	if err != nil {
-		return "", err
-	}
-	q := u.Query()
-	q.Set(param, value)
-	u.RawQuery = q.Encode()
-	return u.String(), nil
-}
-
 // verifyTier3Candidate verifies a native candidate with engine oracles.
 // What: Probe fetch plus oracle dispatch for Tier 3 header, redirect, cookie, cors, version, error, reflection.
 // Why: Native binaries propose; engine evidence confirms findings.

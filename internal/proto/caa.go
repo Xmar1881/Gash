@@ -161,7 +161,7 @@ func caaProblem(tag, value string) string {
 	}
 	if t == "iodef" {
 		lv := strings.ToLower(v)
-		if !(strings.HasPrefix(lv, "mailto:") || strings.HasPrefix(lv, "http://") || strings.HasPrefix(lv, "https://")) {
+		if !strings.HasPrefix(lv, "mailto:") && !strings.HasPrefix(lv, "http://") && !strings.HasPrefix(lv, "https://") {
 			return "bad-iodef"
 		}
 	}

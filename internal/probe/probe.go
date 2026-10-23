@@ -344,9 +344,9 @@ func (c *Client) doSingle(ctx context.Context, method, rawURL string, headers ma
 		}
 	} else {
 		// Fallback: direct transport without policy (tests only)
-		var tr http.RoundTripper = c.transport
-		if tr == nil {
-			tr = http.DefaultTransport
+		tr := http.DefaultTransport
+		if c.transport != nil {
+			tr = c.transport
 		}
 		resp, errResp = tr.RoundTrip(req)
 		if errResp != nil {

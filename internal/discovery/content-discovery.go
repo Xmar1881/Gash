@@ -162,8 +162,6 @@ func IsSensitivePath(p string) bool {
 }
 
 var (
-	// gitMarkers .git içerik imzasıdır (gövde sinyali, confirmed).
-	gitMarkers = []string{"ref:", "refs/heads", "refs/tags", "commit "}
 	// configPatterns sır-ifşası imzalarıdır (gövde sinyali, confirmed).
 	configPatterns = []string{
 		"db_password", "db_pass", "secret_key", "api_key", "aws_secret",
@@ -296,7 +294,7 @@ func buildContentFinding(fullURL, method, path string, status int, signal string
 		Title:       "Exposed path " + path,
 		Description: fmt.Sprintf("wordlist keşfi: %s -> %d (%s), soft-404 baseline negatif + içerik sinyali", path, status, signal),
 		Severity:    plugin.SeverityMedium,
-		Confidence:  plugin.Confidence(conf),
+		Confidence:  conf,
 		Target:      fullURL,
 		InjectionPoint: plugin.InjectionPoint{
 			URL:           fullURL,

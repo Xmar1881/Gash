@@ -340,7 +340,7 @@ func readOne(conn net.Conn, readTimeout time.Duration) respSummary {
 			break
 		}
 		if idx := strings.Index(hline, ":"); idx > 0 {
-			out.headers.Add(http.CanonicalHeaderKey(strings.TrimSpace(hline[:idx])), strings.TrimSpace(hline[idx+1:]))
+			out.headers.Add(strings.TrimSpace(hline[:idx]), strings.TrimSpace(hline[idx+1:]))
 		}
 	}
 	// Gövde: CL öncelikli; yanıt-chunked desteklenir; uzunluksuzda kısa grace.
