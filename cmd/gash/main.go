@@ -419,7 +419,7 @@ func newScanCmd() *cobra.Command {
 				if loginOpts.VerifyURL != "" {
 					verifyNote = loginOpts.VerifyURL
 				}
-				fmt.Fprintln(cmd.ErrOrStderr(), fmt.Sprintf("login: url=%s verify=%s user=[redacted] pass=[redacted]", loginOpts.LoginURL, verifyNote))
+				fmt.Fprintf(cmd.ErrOrStderr(), "login: url=%s verify=%s user=[redacted] pass=[redacted]\n", loginOpts.LoginURL, verifyNote)
 			}
 			if strings.TrimSpace(target) != "" {
 				if len(scope) > 0 {

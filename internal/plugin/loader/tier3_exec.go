@@ -126,11 +126,8 @@ func SpawnPOC(ctx context.Context, manifestPath string, m *Tier3Manifest, trustD
 		return nil, fmt.Errorf("tier3 spawn: bad announcement %q: %w", portLine, plugin.ErrValidation)
 	}
 	addr := "127.0.0.1:" + strings.TrimPrefix(portLine, prefix)
-	dialCtx, cancel := context.WithTimeout(ctx, startupTimeout)
-	defer cancel()
-	conn, err := grpc.DialContext(dialCtx, addr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock())
+	conn, err := grpc.NewClient(addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()

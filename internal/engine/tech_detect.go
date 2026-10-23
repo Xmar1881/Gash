@@ -29,7 +29,7 @@ func (e *Engine) detectRuntimeTech(ctx context.Context, target string) {
 	if err != nil || u.Host == "" {
 		return
 	}
-	var tr http.RoundTripper = http.DefaultTransport
+	var tr = http.DefaultTransport
 	if strings.TrimSpace(e.cfg.ProxyURL) != "" {
 		if pu, err := url.Parse(strings.TrimSpace(e.cfg.ProxyURL)); err == nil {
 			if defTr, ok := http.DefaultTransport.(*http.Transport); ok {

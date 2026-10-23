@@ -491,9 +491,7 @@ func verifyFrameable(h http.Header) (*Evidence, error) {
 // Burst serisi Tier 1 runner tarafından toplanır (params burst, tavan 50);
 // fixture/offline yolda Burst boşken Status tek-örneklem sayılır.
 func verifyRateLimit(status int, h http.Header, body string, burst []int) (*Evidence, error) {
-	n := len(burst)
-	if n == 0 {
-		n = 1
+	if len(burst) == 0 {
 		burst = []int{status}
 	}
 	seen429 := 0

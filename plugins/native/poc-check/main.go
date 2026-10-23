@@ -229,7 +229,7 @@ func serve(port int) error {
 // What: Spawns nothing; dials an already-serving address and runs once.
 // Why: Gives CI a one-process smoke path for the wire format.
 func dialAndRun(addr, target string) error {
-	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return err
 	}

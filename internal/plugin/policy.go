@@ -712,17 +712,6 @@ func (p *PolicySession) CheckScope(ctx context.Context, u *url.URL) error {
 	return p.checkScope(ctx, u)
 }
 
-// strictScope reports whether an explicit --scope allowlist is in force.
-// What: Open mode (no --scope) follows cross-host/cross-scheme redirects;
-// strict mode keeps upgrade-only/downgrade-never redirect rules.
-// Why: Scope is the opt-in strict mode; without it the operator decides.
-func (p *PolicySession) strictScope() bool {
-	if p == nil || p.scopeManager == nil {
-		return false
-	}
-	return p.scopeManager.hasExplicitScope()
-}
-
 // TotalCount test/rapor için toplam istek sayısı.
 func (p *PolicySession) TotalCount() int64 { return p.total.Load() }
 

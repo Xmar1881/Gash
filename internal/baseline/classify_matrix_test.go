@@ -158,7 +158,9 @@ func TestClassifyWAFPrecedesSoft404(t *testing.T) {
 
 func TestHashMasked(t *testing.T) {
 	m := NewDefaultModel()
-	if hashMasked(nil, []byte("a")) != hashMasked(nil, []byte("a")) {
+	h1 := hashMasked(nil, []byte("a"))
+	h2 := hashMasked(nil, []byte("a"))
+	if h1 != h2 {
 		t.Fatal("nil-model hash must be deterministic")
 	}
 	if hashMasked(nil, []byte("a")) == hashMasked(nil, []byte("b")) {

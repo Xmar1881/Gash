@@ -276,7 +276,6 @@ func (e *Engine) runFlowFuzz(ctx context.Context, target string, client *probe.C
 				SeedURL: seed, MaxRequests: flowMaxRequests - used,
 			})
 			if bypassUsed > 0 {
-				used += bypassUsed
 				stats["flow_requests"] += bypassUsed
 			}
 			if berr == nil && bypass != nil {

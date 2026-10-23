@@ -338,15 +338,6 @@ func parseNucleiTags(raw json.RawMessage) []string {
 	return nil
 }
 
-func hasFlag(args []string, flag string) bool {
-	for _, a := range args {
-		if a == flag || strings.HasPrefix(a, flag+"=") {
-			return true
-		}
-	}
-	return false
-}
-
 func normalizePath(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Path == "" {

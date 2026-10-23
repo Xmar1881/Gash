@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -494,14 +493,6 @@ func authHeaderFor(t *Target, auth string) (string, error) {
 		return "", fmt.Errorf("bench: target %s lacks auth %s", t.ID, AuthUserB)
 	}
 	return "", fmt.Errorf("bench: unknown auth group %q", auth)
-}
-
-func hostOf(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return ""
-	}
-	return u.Hostname()
 }
 
 func parseDurationDefault(raw string, def time.Duration) time.Duration {

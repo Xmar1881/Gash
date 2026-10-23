@@ -333,10 +333,6 @@ func executeRateLimit(ctx context.Context, spec *plugin.PluginSpec, file *Tier1F
 	}, Evidence: ev}}, nil
 }
 
-// oobPayloadPlaceholders are the template tokens Tier 1 OOB payloads may use.
-// Expansion happens per attempt with a fresh single-use correlation ID.
-var oobPayloadPlaceholders = []string{"{{OOB_DOMAIN}}", "{{OOB_URL}}", "{{CORRELATION}}"}
-
 // expandOOBPayload substitutes the OOB template tokens. The correlation token
 // is single-use: every call receives its own ID from OOBSource.Generate.
 func expandOOBPayload(payload, correlationID, dnsDomain, httpURL string) string {
@@ -787,8 +783,7 @@ func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File
 		// Exchange 1 is the declarative request already sent (store).
 		storeStatus, storeBody := status, body
 		// Exchange 2 is the render page GET on the base target.
-		renderStatus, renderHeaders, renderBody, renderErr := status, headers, body, error(nil)
-		renderStatus, renderHeaders, renderBody, renderErr = send(ctx, http.MethodGet, target, nil, nil)
+		renderStatus, renderHeaders, renderBody, renderErr := send(ctx, http.MethodGet, target, nil, nil)
 		if renderErr != nil {
 			return nil, fmt.Errorf("tier1 stored render %s: %w", target, renderErr)
 		}
