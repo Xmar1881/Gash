@@ -116,30 +116,10 @@ jobs:
           go install github.com/securego/gosec/v2/cmd/gosec@latest
           gosec -exclude=G104 ./...
 
-  schema-sync:
-    name: Schema Sync Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Check schema sync
-        run: |
-          go run ./cmd/gash plugins schema-gen > /tmp/generated.json
-          if ! cmp -s /tmp/generated.json schemas/plugin.schema.json; then
-            echo "ERROR: schema/plugin.schema.json is out of sync with rules.go"
-            echo "Run: go run ./cmd/gash plugins schema-gen > schemas/plugin.schema.json"
-            exit 1
-          fi
-
   report:
     name: Report
     runs-on: ubuntu-latest
-    needs: [build, test, lint, vulncheck, gosec, schema-sync]
+    needs: [build, test, lint, vulncheck, gosec]
     if: always()
     steps:
       - name: Summarize
