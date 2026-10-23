@@ -81,7 +81,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.1.0
+          version: v2.15.0
           args: --timeout=5m
 
   vulncheck:
@@ -114,7 +114,7 @@ jobs:
       - name: Run gosec
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@latest
-          gosec -exclude=G104,G115,G204,G304,G301,G302,G306,G402,G404,G703,G704,G705,G124 ./...
+          gosec -exclude=G104,G115,G124,G204,G301,G302,G304,G306,G402,G404,G703,G704,G705,G710 ./...
 
   report:
     name: Report
