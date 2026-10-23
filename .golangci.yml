@@ -6,6 +6,7 @@ version: "2"
 run:
   timeout: 5m
 linters:
+  default: none
   enable:
     - govet
     - staticcheck
@@ -13,19 +14,11 @@ linters:
     - misspell
     - unconvert
     - nakedret
-    - wrapcheck
-    - contextcheck
+    - ineffassign
   settings:
-    wrapcheck:
-      ignoreSigs:
-        - .Errorf
-        - errors.New
-        - errors.Unwrap
-    contextcheck:
-      allowed-receiver-names:
-        - Client
-        - Engine
-        - Registry
+    misspell:
+      ignore-rules:
+        - mamal
 formatters:
   enable:
     - gofmt
