@@ -119,11 +119,6 @@ func isInteractive(r any) bool {
 	return false
 }
 
-// isStdinTerminal reports interactive stdin.
-func isStdinTerminal() bool {
-	return isInteractive(os.Stdin)
-}
-
 // waitForEnter pauses a Windows console.
 // What: "Press Enter to exit..." prompt plus single line read.
 // Why: Keeps double-click output readable until the user dismisses it.

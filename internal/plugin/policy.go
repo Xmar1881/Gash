@@ -703,9 +703,8 @@ func (p *PolicySession) limiterFor(key string) *rate.Limiter {
 	defer p.mu.Unlock()
 	l, ok := p.limiters[key]
 	if !ok {
-		// Burst: paralel pluginlerin rate limiter kuyruğunda boğulmasını önlemek
-		// için burst değerini rate × 4 veya en az 40 olarak ayarla. Bu sayede
-		// 8 paralel plugin her biri 3-5 istek attığında anlık burst taşmaz.
+		// Burst keeps parallel plugin workers from stalling in the rate limiter
+		// queue. Use rate*4 with a floor of 40 for small concurrent batches.
 		burst := int(p.cfg.RatePerSecond) * 4
 		if burst < 40 {
 			burst = 40

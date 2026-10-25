@@ -107,12 +107,6 @@ func newMenuSession(in io.Reader, out io.Writer) *menuSession {
 	}
 }
 
-func runScanMenu(in io.Reader, out io.Writer) error {
-	s := newMenuSession(in, out)
-	s.initTabs()
-	return s.scanFlow()
-}
-
 func runPluginsMenu(in io.Reader, out io.Writer) error {
 	s := newMenuSession(in, out)
 	s.initTabs()
@@ -123,18 +117,6 @@ func runBenchMenu(in io.Reader, out io.Writer) error {
 	s := newMenuSession(in, out)
 	s.initTabs()
 	return s.benchFlow()
-}
-
-func runOpenAPIMenu(in io.Reader, out io.Writer) error {
-	s := newMenuSession(in, out)
-	s.initTabs()
-	return s.openAPIFlow()
-}
-
-func runDiffMenu(in io.Reader, out io.Writer) error {
-	s := newMenuSession(in, out)
-	s.initTabs()
-	return s.diffFlow()
 }
 
 func runSuppressMenu(in io.Reader, out io.Writer) error {

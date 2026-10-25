@@ -220,7 +220,8 @@ func NewLocalProvider(listenAddr string) (*LocalProvider, error) {
 	mux.HandleFunc("/", p.handleCallback)
 
 	p.server = &http.Server{
-		Handler: mux,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	go func() {
@@ -289,7 +290,7 @@ func (p *LocalProvider) Enabled() bool {
 	return !p.closed && p.listener != nil
 }
 
-// Addr dinlenen yerel adres (host:port).
+// Addr returns the listening local address (host:port).
 func (p *LocalProvider) Addr() string {
 	return p.addr
 }
