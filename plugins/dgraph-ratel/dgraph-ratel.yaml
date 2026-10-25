@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+
+id: dgraph-ratel
+name: Dgraph Ratel Exposure
+description: Detects an exposed Dgraph Ratel Exposure management or metadata endpoint using a product-specific response marker.
+author: GASH contributors
+severity: high
+tags: [database, admin, error, exposure]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 3
+phase: discovery
+order: 325
+api_version: "1.0"
+tests: tests/fixtures/rare-critical-exposure/
+request:
+  method: GET
+  paths: ["/admin"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_rare_dgraph_ratel]

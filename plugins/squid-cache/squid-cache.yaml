@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+
+id: squid-cache
+name: Squid Cache Exposure
+description: Detects an exposed Squid Cache Exposure management or metadata endpoint using a product-specific response marker.
+author: GASH contributors
+severity: high
+tags: [proxy, admin, error, exposure]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 3
+phase: discovery
+order: 339
+api_version: "1.0"
+tests: tests/fixtures/rare-critical-exposure/
+request:
+  method: GET
+  paths: ["/squid-internal-mgr"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_rare_squid_cache]

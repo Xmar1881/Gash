@@ -1,0 +1,10 @@
+{
+    "name":  "ordinary application response",
+    "target":  "http://example.com/management",
+    "status":  200,
+    "headers":  {
+                    "Content-Type":  "text/html"
+                },
+    "body":  "\u003chtml\u003e\u003cbody\u003e\u003ch1\u003eWelcome\u003c/h1\u003e\u003cp\u003eordinary application response\u003c/p\u003e\u003c/body\u003e\u003c/html\u003e",
+    "expected_verdict":  "reject"
+}

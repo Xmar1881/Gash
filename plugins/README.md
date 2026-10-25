@@ -20,11 +20,10 @@ The engine discovers this tree automatically; no `--load-plugin` flag exists.
 
 | Tier | Count | Auto-discovered | Trust Required |
 |------|------:|:---------------:|:--------------:|
-| Tier 1 (YAML) | 174 | ✅ | ❌ |
+| Tier 1 (YAML) | 275 | ✅ | ❌ |
 | Tier 2 (JS) | 7 | ✅ | ❌ |
-| Tier 2 (Native JS) | 1 | ✅ | ❌ |
 | Tier 3 (Native) | 1 | ❌ | ✅ `gash plugins trust` |
-| **Total** | **183** | | |
+| **Total** | **283** | | |
 
 ---
 
@@ -48,7 +47,23 @@ The engine discovers this tree automatically; no `--load-plugin` flag exists.
 | **Cache / Takeover / Rate Limit** | 4 | 1 | `differential`, `error`, `header` | — |
 | **Modern Headers / API Exposure** | 20 | 1 | `header`, `version`, `error` | ✅ `permissions-policy-missing` |
 | **Critical Control-Plane / Secret Exposure** | 80 | 1 | `error` (`critical_exposure`) | ✅ `aws-credentials-exposure` |
+| **Rare Product / Admin Exposure** | 100 | 1 | `error` (`critical_exposure`) | — |
 | **Native PoC** | 1 | 3 | `header` | — |
+
+---
+
+## Rare Exposure Expansion
+
+The catalog includes 100 additional Tier 1 detectors for less-common
+management panels, observability APIs, data services, collaboration systems,
+CI/CD tools, and Kubernetes control surfaces. Each is GET-only, product-specific,
+and capped at `firm` confidence because a response marker proves exposure, not
+authorization impact.
+
+Every plugin points to the shared `tests/fixtures/rare-critical-exposure/`
+corpus and has an individual report under `docs/metrics/`. Examples include
+`n8n-editor`, `ray-dashboard`, `couchdb-admin`, `mailhog-ui`, `graylog-api`,
+`gitea-admin`, `rancher-api`, and `openfga-api`.
 
 ---
 

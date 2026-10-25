@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+
+id: mattermost-admin
+name: Mattermost Admin Exposure
+description: Detects an exposed Mattermost Admin Exposure management or metadata endpoint using a product-specific response marker.
+author: GASH contributors
+severity: high
+tags: [collaboration, admin, error, exposure]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 3
+phase: discovery
+order: 352
+api_version: "1.0"
+tests: tests/fixtures/rare-critical-exposure/
+request:
+  method: GET
+  paths: ["/api/v4/system/ping"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_rare_mattermost_admin]
