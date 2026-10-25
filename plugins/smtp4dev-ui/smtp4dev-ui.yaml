@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+
+id: smtp4dev-ui
+name: smtp4dev UI Exposure
+description: Detects an exposed smtp4dev UI Exposure management or metadata endpoint using a product-specific response marker.
+author: GASH contributors
+severity: high
+tags: [mail, admin, error, exposure]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 3
+phase: discovery
+order: 350
+api_version: "1.0"
+tests: tests/fixtures/rare-critical-exposure/
+request:
+  method: GET
+  paths: ["/api/messages"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_rare_smtp4dev_ui]

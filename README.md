@@ -57,7 +57,7 @@ permission to test (`--scope` opts into a strict allowlist; see Legal).
 
 | Area | Current state |
 |---|---|
-| Reference catalog | 183 plugins: 174 YAML, 7 sandboxed JavaScript, 1 native PoC, and 1 native Tier 2 check |
+| Reference catalog | 283 plugins: 275 Tier 1 YAML, 7 sandboxed JavaScript, and 1 Tier 3 native PoC |
 | Evidence model | Candidate -> oracle -> evidence -> finding; browser execution is required for browser-confirmed XSS |
 | Scan engine | Shared retry, redirect, scope, rate, request-budget, response-size, cancellation, and scan-deadline controls |
 | Discovery | BFS crawl, surface extraction, OpenAPI input, content discovery, passive JavaScript recon, SPA state/build scans, and optional browser crawl |
@@ -73,8 +73,8 @@ or comparison numbers.
 
 ## What's New / Highlights
 
-- **183 detectors** — verify with `go run ./cmd/gash plugins list`
-  (174 Tier 1 YAML, 7 sandboxed JS, 1 Tier 3 native PoC, 1 Tier 2 native;
+- **283 detectors** — verify with `go run ./cmd/gash plugins list`
+  (275 Tier 1 YAML, 7 sandboxed JS, 1 Tier 3 native PoC;
   see Detector Summary below).
 - **Framework-specific detectors (GASH-069..072)** — Next.js middleware
   authorization bypass (CVE-2025-29927) via a control-vs-bypass differential,
@@ -180,7 +180,7 @@ must be re-measured before being quoted as the current result; see
 
 ## How It Differs
 
-Honest comparison — Gash is experimental (`v0.1.0-dev`, 183 reference
+Honest comparison — Gash is experimental (`v0.1.0-dev`, 283 reference
 plugins) and competes on verification discipline, not on maturity or library
 size. A same-target Gash-versus-Nuclei measurement now exists on the native
 lab and fixture lab; it is small and lab-scoped, not a general parity claim.
@@ -312,8 +312,8 @@ oracle:
 
 ## Detector Summary
 
-183 detectors via `go run ./cmd/gash plugins list`
-(174 Tier 1 YAML, 7 Tier 2 sandboxed JS, 1 Tier 3 native PoC, 1 Tier 2 native).
+283 detectors via `go run ./cmd/gash plugins list`
+(275 Tier 1 YAML, 7 Tier 2 sandboxed JS, 1 Tier 3 native PoC).
 Full oracle/plugin catalog: `docs/detector-inventory.md`.
 
 | Class | Count | Examples |
@@ -331,13 +331,14 @@ Full oracle/plugin catalog: `docs/detector-inventory.md`.
 | Misconfig and headers (security headers, cookie, CORS x2, CRLF, response splitting, CSRF, clickjacking, JWT x3, version, GraphQL x2, host header, method override, error disclosure, redirect x2, management endpoints, phpinfo, WebDAV, CVE, rate limit, **debug endpoints**) | 37 | `missing-security-headers`, `permissions-policy-missing`, `hsts-hardening`, `csp-unsafe-directives`, `cookie-flags`, `cors-misconfig`, `insecure-cors-preflight`, `server-header-disclosure`, `powered-by-disclosure` |
 | Modern API and deployment exposure | 10 | `openapi-spec-exposure`, `swagger-ui-exposure`, `graphql-playground-exposure`, `prometheus-metrics-exposure`, `debug-toolbar-exposure`, `actuator-index-exposure`, `security-txt-exposure`, `git-config-exposure`, `environment-file-exposure`, `docker-compose-exposure` |
 | Critical control-plane and secret exposure | 80 | `aws-credentials-exposure`, `azure-credentials-exposure`, `gcp-service-account-exposure`, `kubernetes-config-exposure`, `vault-api-exposure`, `docker-api-exposure`, `argo-cd-api-exposure`, `keycloak-admin-exposure`, `registry-catalog-exposure` |
+| Rare product and admin exposure expansion | 100 | `n8n-editor`, `mlflow-tracking`, `couchdb-admin`, `kong-admin`, `mailhog-ui`, `graylog-api`, `gitea-admin`, `rancher-api`, `openstack-horizon`, `openfga-api` |
 | Insecure deserialization (error signature) | 1 | `insecure-deserialization-error` |
 | Subdomain takeover (unclaimed-service bodies) | 1 | `subdomain-takeover-basic` |
 | Web cache poisoning | 2 | `web-cache-poisoning-basic`, `cache-poisoning-host-header` |
 | Injection (JNDI, expression language, SSI, JSONP, prototype pollution) | 5 | `log4shell-jndi`, `expression-language-injection`, `ssi-injection`, `jsonp-callback-injection`, `prototype-pollution-differential` |
 | Framework-specific (Next.js middleware bypass, image optimizer SSRF) | 2 | `nextjs-middleware-bypass`, `nextjs-image-optimizer-ssrf` |
 | Native PoC (Tier 3, explicit trust) | 1 | `poc-native-header-check` |
-| **Total** | **183** | `go run ./cmd/gash plugins list` |
+| **Total** | **283** | `go run ./cmd/gash plugins list` |
 
 Engine-recon probes ship outside the plugin set: request smuggling
 (GASH-033, `internal/smuggle`), content discovery (GASH-028,

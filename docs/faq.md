@@ -19,7 +19,7 @@ Gash is a Go-native, plugin-driven web security scanner. Its core philosophy: **
 ### Is Gash production-ready?
 
 **Experimental** (`v0.1.0-dev`). The core architecture is stable but:
-- Plugin set is growing (183 reference plugins)
+- Plugin set is growing (283 reference plugins)
 - Real-world recall is manually measured on lab targets only
 - Deep build (browser) requires Chrome/Chromium
 - API may change before `v1.0.0`
