@@ -6,7 +6,10 @@ package probe
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Xmar1881/Gash/internal/plugin"
 	"github.com/Xmar1881/Gash/internal/testutil/vcr"
@@ -33,5 +36,26 @@ func TestSendClassifiesWAF(t *testing.T) {
 	}
 	if !resp.Untrusted {
 		t.Fatal("WAF yanıtı Untrusted işaretlenmeli")
+	}
+}
+
+func TestSendAppliesRequestTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	policy := plugin.NewPolicySession(plugin.PolicyConfig{}, nil)
+	client := NewClient(Options{
+		Policy:         policy,
+		RequestTimeout: 20 * time.Millisecond,
+	})
+	ctx := plugin.WithPlugin(context.Background(), "timeout", true, nil)
+	start := time.Now()
+	_, err := client.Send(ctx, "GET", srv.URL, nil, nil)
+	if err == nil {
+		t.Fatal("blocked request must return a timeout")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("request timeout was not applied: elapsed=%v err=%v", elapsed, err)
 	}
 }

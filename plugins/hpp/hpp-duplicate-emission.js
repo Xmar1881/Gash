@@ -9,6 +9,7 @@ safe: false
 deep: false
 active: true
 requires_auth: false
+max_requests: 60
 phase: probe
 order: 64
 api_version: "1.0"
@@ -28,6 +29,9 @@ tests: tests/fixtures/hpp-duplicate-emission/
 function run(probe, ctx) {
   const points = ctx.injectionPoints();
   const candidates = [];
+  const maxSends = 60;
+  const sendsPerPoint = 7; // 3 single + 3 duplicate + 1 control
+  let sends = 0;
   for (const point of points) {
     const loc = String(point.paramLocation || "query").toLowerCase();
     if (loc !== "query" && loc !== "body") {
@@ -36,8 +40,12 @@ function run(probe, ctx) {
     if (!point.paramName) {
       continue;
     }
+    if (sends + sendsPerPoint > maxSends) {
+      break;
+    }
     const singleResps = [];
     for (let i = 0; i < 3; i++) {
+      sends++;
       singleResps.push(probe.send(point.withValue("1")));
     }
     const dupResps = [];
@@ -52,8 +60,10 @@ function run(probe, ctx) {
         const dupUrl = base + "?" + key + "=1&" + key + "=2";
         dupPoint = {url: dupUrl, method: point.method, paramName: "", paramLocation: point.paramLocation, value: ""};
       }
+      sends++;
       dupResps.push(probe.send(dupPoint));
     }
+    sends++;
     const controlResp = probe.send(point.withValue("gash-control-neutral"));
     const ev = host.oracles.differential(dupResps, singleResps, controlResp);
     if (ev) {

@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: debug-toolbar-exposure
+name: Debug Toolbar Exposure
+description: Detects public framework debug consoles and development tool markers.
+author: GASH contributors
+severity: medium
+tags: [debug, exposure, framework, misconfig]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 12
+phase: discovery
+order: 115
+api_version: "1.0"
+tests: tests/fixtures/endpoint-exposure/
+request:
+  method: GET
+  paths: ["/_debugbar/", "/__debug__", "/debug", "/_profiler/", "/ignition"]
+oracle:
+  name: version
+  params:
+    mode: banner
+    banner_regex: '(?i)(werkzeug debugger|django debug toolbar|laravel ignition|symfony profiler)'

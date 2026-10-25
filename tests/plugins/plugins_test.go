@@ -306,8 +306,11 @@ func vulnerableResponder(tier1 *loader.Tier1File) http.HandlerFunc {
 func TestB1Tier1DropIn(t *testing.T) {
 	specs, _ := discoverAll(t)
 	var target *discoveredSpec
+	// Keep the live drop-in proof stable as the catalog grows. A generic
+	// responder can prove passive header plumbing, while endpoint-specific
+	// banner checks need their own response body and belong in fixture tests.
 	for i := range specs {
-		if specs[i].spec.Tier == plugin.TierYAML && specs[i].spec.OOB != plugin.OOBRequired {
+		if specs[i].spec.ID == "missing-security-headers" {
 			target = &specs[i]
 			break
 		}

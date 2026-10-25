@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: rabbitmq-management-exposure
+name: RabbitMQ Management Exposure
+description: Detects public RabbitMQ management API responses.
+author: GASH contributors
+severity: critical
+tags: [rabbitmq, messaging, admin, exposure]
+safe: false
+deep: false
+active: false
+requires_auth: false
+max_requests: 8
+phase: discovery
+order: 139
+api_version: "1.0"
+tests: tests/fixtures/critical-exposure/
+request:
+  method: GET
+  paths: ["/api/overview", "/api/whoami", "/api/nodes"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_rabbitmq_management]

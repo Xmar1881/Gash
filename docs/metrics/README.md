@@ -78,6 +78,96 @@ The gate is enforced by `TestMetricGate` in `tests/plugins`, not by review conve
 | expression-language-injection | [expression-language-injection.md](expression-language-injection.md) |
 | jsonp-callback-injection | [jsonp-callback-injection.md](jsonp-callback-injection.md) |
 | oauth-open-redirect | [oauth-open-redirect.md](oauth-open-redirect.md) |
+
+### Critical Control-Plane / Secret Exposure
+
+| Plugin | Report |
+|---|---|
+| aws-credentials-exposure | [aws-credentials-exposure.md](aws-credentials-exposure.md) |
+| npmrc-token-exposure | [npmrc-token-exposure.md](npmrc-token-exposure.md) |
+| composer-auth-exposure | [composer-auth-exposure.md](composer-auth-exposure.md) |
+| terraform-state-exposure | [terraform-state-exposure.md](terraform-state-exposure.md) |
+| kubernetes-config-exposure | [kubernetes-config-exposure.md](kubernetes-config-exposure.md) |
+| gitlab-runner-config-exposure | [gitlab-runner-config-exposure.md](gitlab-runner-config-exposure.md) |
+| spring-config-exposure | [spring-config-exposure.md](spring-config-exposure.md) |
+| vault-api-exposure | [vault-api-exposure.md](vault-api-exposure.md) |
+| consul-api-exposure | [consul-api-exposure.md](consul-api-exposure.md) |
+| etcd-api-exposure | [etcd-api-exposure.md](etcd-api-exposure.md) |
+| docker-api-exposure | [docker-api-exposure.md](docker-api-exposure.md) |
+| kubernetes-api-exposure | [kubernetes-api-exposure.md](kubernetes-api-exposure.md) |
+| jenkins-script-console-exposure | [jenkins-script-console-exposure.md](jenkins-script-console-exposure.md) |
+| jmx-console-exposure | [jmx-console-exposure.md](jmx-console-exposure.md) |
+| solr-admin-exposure | [solr-admin-exposure.md](solr-admin-exposure.md) |
+| elasticsearch-api-exposure | [elasticsearch-api-exposure.md](elasticsearch-api-exposure.md) |
+| kibana-api-exposure | [kibana-api-exposure.md](kibana-api-exposure.md) |
+| grafana-api-exposure | [grafana-api-exposure.md](grafana-api-exposure.md) |
+| rabbitmq-management-exposure | [rabbitmq-management-exposure.md](rabbitmq-management-exposure.md) |
+| jupyter-api-exposure | [jupyter-api-exposure.md](jupyter-api-exposure.md) |
+| phpmyadmin-exposure | [phpmyadmin-exposure.md](phpmyadmin-exposure.md) |
+| adminer-exposure | [adminer-exposure.md](adminer-exposure.md) |
+| laravel-debug-exposure | [laravel-debug-exposure.md](laravel-debug-exposure.md) |
+| django-debug-exposure | [django-debug-exposure.md](django-debug-exposure.md) |
+| h2-console-exposure | [h2-console-exposure.md](h2-console-exposure.md) |
+| saml-metadata-exposure | [saml-metadata-exposure.md](saml-metadata-exposure.md) |
+| oauth-client-secret-exposure | [oauth-client-secret-exposure.md](oauth-client-secret-exposure.md) |
+| github-actions-config-exposure | [github-actions-config-exposure.md](github-actions-config-exposure.md) |
+| heapdump-exposure | [heapdump-exposure.md](heapdump-exposure.md) |
+| minio-admin-exposure | [minio-admin-exposure.md](minio-admin-exposure.md) |
+
+### Rare Cloud, Proxy, CI/CD, and Identity Exposure
+
+| Plugin | Report |
+|---|---|
+| azure-credentials-exposure | [azure-credentials-exposure.md](azure-credentials-exposure.md) |
+| gcp-service-account-exposure | [gcp-service-account-exposure.md](gcp-service-account-exposure.md) |
+| digitalocean-token-exposure | [digitalocean-token-exposure.md](digitalocean-token-exposure.md) |
+| slack-token-exposure | [slack-token-exposure.md](slack-token-exposure.md) |
+| stripe-secret-exposure | [stripe-secret-exposure.md](stripe-secret-exposure.md) |
+| twilio-token-exposure | [twilio-token-exposure.md](twilio-token-exposure.md) |
+| sendgrid-key-exposure | [sendgrid-key-exposure.md](sendgrid-key-exposure.md) |
+| private-key-exposure | [private-key-exposure.md](private-key-exposure.md) |
+| ssh-private-key-exposure | [ssh-private-key-exposure.md](ssh-private-key-exposure.md) |
+| jwt-secret-exposure | [jwt-secret-exposure.md](jwt-secret-exposure.md) |
+| ansible-vault-exposure | [ansible-vault-exposure.md](ansible-vault-exposure.md) |
+| helm-values-exposure | [helm-values-exposure.md](helm-values-exposure.md) |
+| pip-config-exposure | [pip-config-exposure.md](pip-config-exposure.md) |
+| pypi-token-exposure | [pypi-token-exposure.md](pypi-token-exposure.md) |
+| nuget-key-exposure | [nuget-key-exposure.md](nuget-key-exposure.md) |
+| cargo-token-exposure | [cargo-token-exposure.md](cargo-token-exposure.md) |
+| netrc-credentials-exposure | [netrc-credentials-exposure.md](netrc-credentials-exposure.md) |
+| pgpass-exposure | [pgpass-exposure.md](pgpass-exposure.md) |
+| database-url-exposure | [database-url-exposure.md](database-url-exposure.md) |
+| mongodb-uri-exposure | [mongodb-uri-exposure.md](mongodb-uri-exposure.md) |
+| redis-config-exposure | [redis-config-exposure.md](redis-config-exposure.md) |
+| firebase-config-exposure | [firebase-config-exposure.md](firebase-config-exposure.md) |
+| sentry-dsn-exposure | [sentry-dsn-exposure.md](sentry-dsn-exposure.md) |
+| datadog-key-exposure | [datadog-key-exposure.md](datadog-key-exposure.md) |
+| caddy-admin-exposure | [caddy-admin-exposure.md](caddy-admin-exposure.md) |
+| traefik-api-exposure | [traefik-api-exposure.md](traefik-api-exposure.md) |
+| nginx-status-exposure | [nginx-status-exposure.md](nginx-status-exposure.md) |
+| haproxy-stats-exposure | [haproxy-stats-exposure.md](haproxy-stats-exposure.md) |
+| envoy-admin-exposure | [envoy-admin-exposure.md](envoy-admin-exposure.md) |
+| istio-debug-exposure | [istio-debug-exposure.md](istio-debug-exposure.md) |
+| zookeeper-admin-exposure | [zookeeper-admin-exposure.md](zookeeper-admin-exposure.md) |
+| kafka-rest-exposure | [kafka-rest-exposure.md](kafka-rest-exposure.md) |
+| kafka-ui-exposure | [kafka-ui-exposure.md](kafka-ui-exposure.md) |
+| argo-cd-api-exposure | [argo-cd-api-exposure.md](argo-cd-api-exposure.md) |
+| spinnaker-api-exposure | [spinnaker-api-exposure.md](spinnaker-api-exposure.md) |
+| tekton-dashboard-exposure | [tekton-dashboard-exposure.md](tekton-dashboard-exposure.md) |
+| drone-ci-exposure | [drone-ci-exposure.md](drone-ci-exposure.md) |
+| teamcity-server-exposure | [teamcity-server-exposure.md](teamcity-server-exposure.md) |
+| bamboo-server-exposure | [bamboo-server-exposure.md](bamboo-server-exposure.md) |
+| sonarqube-api-exposure | [sonarqube-api-exposure.md](sonarqube-api-exposure.md) |
+| nexus-repository-exposure | [nexus-repository-exposure.md](nexus-repository-exposure.md) |
+| artifactory-api-exposure | [artifactory-api-exposure.md](artifactory-api-exposure.md) |
+| harbor-registry-exposure | [harbor-registry-exposure.md](harbor-registry-exposure.md) |
+| keycloak-admin-exposure | [keycloak-admin-exposure.md](keycloak-admin-exposure.md) |
+| airflow-api-exposure | [airflow-api-exposure.md](airflow-api-exposure.md) |
+| superset-api-exposure | [superset-api-exposure.md](superset-api-exposure.md) |
+| metabase-api-exposure | [metabase-api-exposure.md](metabase-api-exposure.md) |
+| oauth-well-known-exposure | [oauth-well-known-exposure.md](oauth-well-known-exposure.md) |
+| oidc-config-exposure | [oidc-config-exposure.md](oidc-config-exposure.md) |
+| registry-catalog-exposure | [registry-catalog-exposure.md](registry-catalog-exposure.md) |
 | ssi-injection | [ssi-injection.md](ssi-injection.md) |
 | webdav-enabled | [webdav-enabled.md](webdav-enabled.md) |
 | source-map-exposure | [source-map-exposure.md](source-map-exposure.md) |

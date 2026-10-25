@@ -1,0 +1,11 @@
+{
+  "name": "unsafe CSP directives",
+  "target": "https://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+  },
+  "body": "<html><body>Welcome</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

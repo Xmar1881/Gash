@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: nuget-key-exposure
+name: NuGet Key Exposure
+description: Detects exposed NuGet registry API keys in package configuration.
+author: GASH contributors
+severity: critical
+tags: [dotnet, nuget, supply-chain, secrets]
+safe: false
+deep: false
+active: false
+requires_auth: false
+max_requests: 6
+phase: discovery
+order: 165
+api_version: "1.0"
+tests: tests/fixtures/critical-exposure/
+request:
+  method: GET
+  paths: ["/.nuget/NuGet.Config", "/NuGet.Config", "/nuget.config"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_nuget_key]

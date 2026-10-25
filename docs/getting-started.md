@@ -31,7 +31,14 @@ go build -o gash ./cmd/gash
 ./gash --help
 ```
 
-You should see the main help output with subcommands: `scan`, `plugins`, `bench`, `report`.
+You should see the main help output with subcommands: `menu`, `scan`, `plugins`, `bench`, `openapi`, `diff`, and `suppress`.
+
+For an interactive menu with a command console, run:
+
+```sh
+./gash menu
+# or simply ./gash in a terminal
+```
 
 ---
 
@@ -41,7 +48,7 @@ Gash includes a built-in vulnerable lab for safe testing:
 
 ```sh
 # Start the lab in background
-go run ./cmd/gash bench lab start
+go run ./cmd/gash bench lab up
 # Lab runs at http://127.0.0.1:<random-port>
 # URL is printed to stdout; note it down
 ```
@@ -202,7 +209,7 @@ Edit `my-check.yaml`, then validate and test:
 ### Option C: Use a Template
 
 ```sh
-cp templates/tier1-header-check.yaml my-check.yaml
+cp templates/template.yaml my-check.yaml
 # Edit my-check.yaml
 ```
 
@@ -279,7 +286,7 @@ jobs:
 
 ## 10. Getting Help
 
-- **GitHub Discussions**: [github.com/Xmar1881/Gash/discussions](https://github.com/Xmar1881/Gash/discussions)
+- **Support guide**: [SUPPORT.md](../SUPPORT.md)
 - **Issues**: [github.com/Xmar1881/Gash/issues](https://github.com/Xmar1881/Gash/issues)
 - **Security**: [Private advisory](https://github.com/Xmar1881/Gash/security/advisories/new)
 

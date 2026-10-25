@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: swagger-ui-exposure
+name: Swagger UI Exposure
+description: Detects publicly served Swagger UI consoles on common documentation paths.
+author: GASH contributors
+severity: low
+tags: [api, swagger, exposure, discovery]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 10
+phase: discovery
+order: 112
+api_version: "1.0"
+tests: tests/fixtures/endpoint-exposure/
+request:
+  method: GET
+  paths: ["/swagger-ui/", "/swagger/", "/api-docs/", "/docs/"]
+oracle:
+  name: version
+  params:
+    mode: banner
+    banner_regex: '(?i)(swagger-ui|swagger_ui_bundle|oauth2RedirectUrl)'

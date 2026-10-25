@@ -2,7 +2,6 @@
 
 ## Getting Help
 
-- **GitHub Discussions**: [Ask questions, share findings](https://github.com/Xmar1881/Gash/discussions)
 - **Issues**: [Bug reports & feature requests](https://github.com/Xmar1881/Gash/issues)
 - **Security**: [Private vulnerability reporting](https://github.com/Xmar1881/Gash/security/advisories/new)
 
@@ -14,16 +13,16 @@
 - [Evidence Standard](https://github.com/Xmar1881/Gash/blob/main/docs/evidence-standard.md)
 - [CI Integration](https://github.com/Xmar1881/Gash/blob/main/docs/ci-integration.md)
 - [Benchmark](https://github.com/Xmar1881/Gash/blob/main/docs/benchmark.md)
-- [All Docs](https://github.com/Xmar1881/Gash/tree/main/docs)
+- [All Docs](https://github.com/Xmar1881/Gash/blob/main/docs/README.md)
 
 ## Version Support
 
 | Version | Status |
 |---------|--------|
 | `main` (latest) | Active development |
-| Tagged releases | Supported until next release |
+| Tagged releases | None published yet |
 
-Only the latest stable release receives security updates. No LTS versions.
+Only published releases receive security updates. There are no LTS versions.
 
 ## Reporting Bugs
 

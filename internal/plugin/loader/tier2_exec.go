@@ -489,7 +489,7 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 		p := pointFromValue(call.Arguments[0])
 		resp, err := env.Send(p)
 		if err != nil {
-			panic(err.Error())
+			return respToObject(vm, JSResponse{Status: 0, Body: "", URL: p.URL})
 		}
 		return respToObject(vm, resp)
 	})

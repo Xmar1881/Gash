@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: spring-config-exposure
+name: Spring Config Exposure
+description: Detects exposed Spring Cloud Config or datasource configuration responses.
+author: GASH contributors
+severity: high
+tags: [spring, config, secrets, exposure]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 8
+phase: discovery
+order: 127
+api_version: "1.0"
+tests: tests/fixtures/critical-exposure/
+request:
+  method: GET
+  paths: ["/config/application.yml", "/application/default", "/actuator/env"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_spring_config]

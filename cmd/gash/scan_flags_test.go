@@ -6,8 +6,13 @@ package main
 
 import (
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Xmar1881/Gash/internal/engine"
+	"github.com/Xmar1881/Gash/internal/reporter"
 )
 
 // TestScanBrowserVerifyRequiresActive: tarayıcı doğrulaması aktif probdur;
@@ -397,5 +402,32 @@ func TestScanFlowBounds(t *testing.T) {
 		if !strings.Contains(err.Error(), tc[0]) {
 			t.Fatalf("gerek?e %s ta??mal?: %v", tc[0], err)
 		}
+	}
+}
+
+func TestWriteScanReportsOutputDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	rep := &engine.Report{
+		Target: "http://example.com",
+		ScanID: "test_scan",
+	}
+	opts := reporter.Options{Target: "http://example.com"}
+	cmd := newRoot()
+	_ = cmd.Flags().Set("output-dir", tmpDir)
+
+	err := writeScanReports(cmd, rep, []string{"json", "html"}, opts, "", tmpDir)
+	if err != nil {
+		t.Fatalf("writeScanReports failed: %v", err)
+	}
+
+	base := targetReportBaseName("http://example.com")
+	jsonPath := filepath.Join(tmpDir, base+".json")
+	htmlPath := filepath.Join(tmpDir, base+".html")
+
+	if _, err := os.Stat(jsonPath); err != nil {
+		t.Fatalf("json report not written: %v", err)
+	}
+	if _, err := os.Stat(htmlPath); err != nil {
+		t.Fatalf("html report not written: %v", err)
 	}
 }

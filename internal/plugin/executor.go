@@ -62,7 +62,9 @@ func Execute(ctx context.Context, pluginID string, fn PluginFunc) (res PluginRes
 			switch {
 			case errors.Is(o.err, ErrPolicyViolation):
 				res.Status = StatusPolicyError
-			case errors.Is(o.err, ErrBudgetExceeded):
+			case errors.Is(o.err, ErrBudgetExceeded),
+				errors.Is(o.err, ErrRateLimited),
+				errors.Is(o.err, ErrScopeViolation):
 				res.Status = StatusSkipped
 			case errors.Is(o.err, context.DeadlineExceeded):
 				res.Status = StatusTimeout
@@ -89,10 +91,10 @@ func Execute(ctx context.Context, pluginID string, fn PluginFunc) (res PluginRes
 	}
 }
 
-// ExecuteWithTimeout per-plugin timeout uygular (--plugin-timeout, default 30s).
+// ExecuteWithTimeout per-plugin timeout uygular (--plugin-timeout, default 60s).
 func ExecuteWithTimeout(parent context.Context, pluginID string, timeout time.Duration, fn PluginFunc) PluginResult {
 	if timeout <= 0 {
-		timeout = 30 * time.Second
+		timeout = 60 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()

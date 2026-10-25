@@ -77,10 +77,12 @@ oracle:
 
 Supported oracles and their params:
 
-- `header` (`mode: absent|weak|malformed|crlf|jwt|jwt_alg|ratelimit|csrf|frame|host_header`):
+- `header` (`mode: absent|weak|malformed|policy|crlf|jwt|jwt_alg|ratelimit|csrf|frame|host_header`):
   header logic checks; passive modes need no control, mode-specific params
   mirror the engine oracle (e.g. `ratelimit` burst budget, `host_header`
-  canary). Examples: `plugins/headers/missing-security-headers.yaml`,
+  canary). `policy` additionally accepts `header_name`, `policy` (`missing`,
+  `required`, `forbidden`, `forbidden_tokens`), `required_tokens`, and
+  `forbidden_tokens`. Examples: `plugins/headers/missing-security-headers.yaml`,
   `plugins/host-header/host-header-injection.yaml`.
 - `redirect` (`expect_external_host: true`): parses the real `Location`
   header and compares hosts, with a neutral control request. Example:
@@ -91,6 +93,9 @@ Supported oracles and their params:
   (`contexts`, `canary_by_payload`, `false_body`, `mode`, `repeats`,
   `confidence_ceiling`, ...). See `docs/detector-inventory.md` for the full
   oracle matrix.
+- The `error` oracle also accepts `mode: critical_exposure` for bounded,
+  marker-based control-plane and secret exposure checks. This mode caps
+  confidence at `firm`; it is not browser, authentication, or RCE proof.
 - `oob`: declare `oob: required|optional` in metadata; without
   `--oob-server` the plugin skips (`required`) or degrades (`optional`).
 - `middleware-bypass` (`header`, `header_values`): the declarative request is

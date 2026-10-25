@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -131,6 +132,32 @@ func TestHPPDuplicateEmissionE2E(t *testing.T) {
 		}
 		if len(cands) != 0 {
 			t.Fatalf("consistent backend must not confirm, got %d", len(cands))
+		}
+	})
+
+	t.Run("large surfaces stay within send budget", func(t *testing.T) {
+		points := make([]loader.JSPoint, 20)
+		for i := range points {
+			points[i] = loader.JSPoint{
+				URL:           "http://example.com/page-" + string(rune('a'+i)),
+				Method:        "GET",
+				ParamName:     "id",
+				ParamLocation: "query",
+			}
+		}
+		var sends atomic.Int64
+		env := &loader.JSEnv{
+			Points: points,
+			Send: func(p loader.JSPoint) (loader.JSResponse, error) {
+				sends.Add(1)
+				return loader.JSResponse{Status: 200, URL: p.URL, Body: "neutral"}, nil
+			},
+		}
+		if _, err := loader.ExecuteJS(context.Background(), spec, string(src), env, 2*time.Second); err != nil {
+			t.Fatalf("execute: %v", err)
+		}
+		if got := sends.Load(); got > 60 {
+			t.Fatalf("HPP send budget exceeded: got %d, want <= 60", got)
 		}
 	})
 }

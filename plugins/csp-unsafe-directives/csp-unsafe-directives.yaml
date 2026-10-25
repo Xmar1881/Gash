@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: csp-unsafe-directives
+name: CSP Unsafe Directives
+description: Detects Content-Security-Policy values containing unsafe-inline or unsafe-eval.
+author: GASH contributors
+severity: medium
+tags: [headers, csp, xss, misconfig]
+safe: true
+deep: false
+active: false
+requires_auth: false
+phase: probe
+order: 108
+api_version: "1.0"
+tests: tests/fixtures/header-policy-csp/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: Content-Security-Policy
+    policy: forbidden_tokens
+    forbidden_tokens: [unsafe-inline, unsafe-eval]

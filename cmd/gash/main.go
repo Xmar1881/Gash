@@ -32,7 +32,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func init() {
+	// Disable Cobra's default Windows Mousetrap splash screen so double-clicking
+	// gash.exe opens the interactive menu directly and subcommands executed from
+	// within the menu are never intercepted with "This is a command line tool."
+	cobra.MousetrapHelpText = ""
+}
+
 func main() {
+	cobra.MousetrapHelpText = ""
 	if len(os.Args) == 1 {
 		handleNoArgs(newRoot())
 		return
@@ -43,26 +51,32 @@ func main() {
 	}
 }
 
-// handleNoArgs prints usage for a bare double-click/no-arg run.
-// What: Help plus short usage for interactive console runs without args.
-// Why: Explorer double-click would otherwise flash and close with no guidance.
+// handleNoArgs opens the interactive menu when interactive, or prints usage otherwise.
+// What: Launches interactive menu by default; help fallback when non-interactive.
+// Why: Explorer double-click or running 'gash' directly opens the interactive menu.
 func handleNoArgs(root *cobra.Command) {
+	if isInteractive(os.Stdin) {
+		if err := runInteractiveMenu(os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			if shouldWaitForEnter() {
+				waitForEnter()
+			}
+		}
+		return
+	}
 	printNoArgsUsage(root)
 	if shouldWaitForEnter() {
 		waitForEnter()
 	}
 }
 
-// printNoArgsUsage shows the CLI hint plus full help.
-// What: Preserved cmd.exe hint plus short usage and examples.
-// Why: Users need copy-pasteable next steps, not just an error.
+// printNoArgsUsage shows a clean overview and command list.
+// What: Clean usage guidance without obsolete cmd.exe hints.
+// Why: Gash has a full interactive menu; non-interactive runs get concise usage.
 func printNoArgsUsage(root *cobra.Command) {
-	fmt.Fprintln(os.Stdout, "This is a command line tool. You need to open cmd.exe and run it from there.")
-	fmt.Fprintln(os.Stdout, "Usage: gash <command> [flags]")
-	fmt.Fprintln(os.Stdout, "Examples:")
-	fmt.Fprintln(os.Stdout, "  gash --help")
-	fmt.Fprintln(os.Stdout, "  gash scan --help")
-	fmt.Fprintln(os.Stdout, "  gash plugins list")
+	fmt.Fprintln(os.Stdout, "Gash — hibrit plugin mimarili güvenlik tarayıcı motoru")
+	fmt.Fprintln(os.Stdout, "Kullanım: gash [komut] [bayraklar]")
+	fmt.Fprintln(os.Stdout, "          gash menu (etkileşimli menüyü açar)")
 	fmt.Fprintln(os.Stdout, "")
 	root.SetOut(os.Stdout)
 	root.SetErr(os.Stderr)
@@ -70,24 +84,44 @@ func printNoArgsUsage(root *cobra.Command) {
 }
 
 // shouldWaitForEnter decides if a pause is needed.
-// What: True only on Windows with an interactive stdin.
+// What: True only on Windows when double-clicked or interactive.
 // Why: Double-click consoles vanish on exit; pipes/CI must never block.
 func shouldWaitForEnter() bool {
 	if runtime.GOOS != "windows" {
 		return false
 	}
-	return isStdinTerminal()
+	return isInteractive(os.Stdin)
 }
 
-// isStdinTerminal reports interactive stdin without extra deps.
-// What: Char-device check on os.Stdin.
-// Why: Pipes and redirections are not char devices, so no pause there.
-func isStdinTerminal() bool {
-	fi, err := os.Stdin.Stat()
+// isInteractive reports whether a stream is connected to an interactive terminal or console.
+// What: Char-device check plus Windows terminal environment detection.
+// Why: Terminal shells (cmd, powershell, git-bash, wt) should enter interactive flows.
+func isInteractive(r any) bool {
+	if r == nil {
+		return false
+	}
+	f, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
 	if err != nil {
 		return false
 	}
-	return fi.Mode()&os.ModeCharDevice != 0
+	if fi.Mode()&os.ModeCharDevice != 0 {
+		return true
+	}
+	if runtime.GOOS == "windows" {
+		if os.Getenv("WT_SESSION") != "" || os.Getenv("TERM") != "" || os.Getenv("MSYSTEM") != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// isStdinTerminal reports interactive stdin.
+func isStdinTerminal() bool {
+	return isInteractive(os.Stdin)
 }
 
 // waitForEnter pauses a Windows console.
@@ -100,6 +134,7 @@ func waitForEnter() {
 }
 
 func newRoot() *cobra.Command {
+	cobra.MousetrapHelpText = ""
 	root := &cobra.Command{
 		Use:   "gash",
 		Short: "Gash — hibrit plugin mimarili güvenlik tarayıcı motoru",
@@ -111,6 +146,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(newBenchCmd())
 	root.AddCommand(newSuppressCmd())
 	root.AddCommand(newDiffCmd())
+	root.AddCommand(newMenuCmd())
 	root.AddCommand(newCompletionCmd())
 	return root
 }
@@ -195,6 +231,9 @@ func newScanCmd() *cobra.Command {
 				if !cmd.Flags().Changed("show-tentative") {
 					showTentative = true
 				}
+			}
+			if strings.TrimSpace(target) == "" && len(args) > 0 && strings.TrimSpace(args[0]) != "" {
+				target = strings.TrimSpace(args[0])
 			}
 			if strings.TrimSpace(target) == "" && strings.TrimSpace(targetFile) == "" {
 				return fmt.Errorf("scan: --target veya --target-file zorunlu")
@@ -548,6 +587,9 @@ func newScanCmd() *cobra.Command {
 					}
 				}
 			}
+			if cfg.PluginTimeoutMs > 0 {
+				cfg.ScanTimeout = 10 * time.Duration(cfg.PluginTimeoutMs) * time.Millisecond
+			}
 			if strings.TrimSpace(targetFile) != "" {
 				bulkFormats := formats
 				if !cmd.Flags().Changed("format") {
@@ -555,6 +597,9 @@ func newScanCmd() *cobra.Command {
 				}
 				return runBulkScan(ctx, cmd, reg, cfg, records, targetFile, outputDir, resume, bulkFormats, failLevel, showTentative)
 			}
+			spinner := newScanSpinner(cmd.ErrOrStderr(), normalized)
+			cfg.OnProgress = spinner.OnProgress
+			spinner.Start()
 			eng := engine.New(reg, cfg)
 			for id, rec := range records {
 				platform := rec.Platform
@@ -564,11 +609,12 @@ func newScanCmd() *cobra.Command {
 				eng.SetTrustRecord(id, rec.SHA256, platform)
 			}
 			rep, err := eng.Run(ctx, normalized)
+			spinner.Stop()
 			if err != nil {
 				return err
 			}
 			opts := reporter.Options{ShowTentative: showTentative, Target: normalized}
-			if err := writeScanReports(cmd, rep, formats, opts, output); err != nil {
+			if err := writeScanReports(cmd, rep, formats, opts, output, outputDir); err != nil {
 				return err
 			}
 			if failLevel != "" && scanFailTriggered(rep, failLevel) {
@@ -589,8 +635,8 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&scope, "scope", nil, "CIDR/domain allowlist (verilirse opt-in sıkı mod; verilmezse host engeli yok)")
 	cmd.Flags().Int64Var(&maxPerTarget, "max-requests-per-target", 1000, "per-target bütçe")
 	cmd.Flags().Int64Var(&maxTotal, "max-requests-total", 10000, "global bütçe")
-	cmd.Flags().StringVar(&pluginTimeout, "plugin-timeout", "30s", "per-plugin timeout")
-	cmd.Flags().StringVar(&requestTimeout, "request-timeout", "15s", "per-HTTP-request timeout")
+	cmd.Flags().StringVar(&pluginTimeout, "plugin-timeout", "60s", "per-plugin timeout")
+	cmd.Flags().StringVar(&requestTimeout, "request-timeout", "20s", "per-HTTP-request timeout")
 	cmd.Flags().Int64Var(&maxResponseBytes, "max-response-bytes", 5*1024*1024, "max stored response body bytes")
 	cmd.Flags().StringVar(&oobWait, "oob-wait", "60s", "scan-sonu OOB penceresi")
 	cmd.Flags().StringVar(&oobServer, "oob-server", "", "self-hosted interaction sunucusu (boş=kapalı)")
@@ -827,10 +873,10 @@ func enforceScanScope(ctx context.Context, rawURL string, scope []string) error 
 	return fmt.Errorf("scan: target %q outside --scope (scope-mismatch)", host)
 }
 
-// writeScanReports renders each requested format to stdout or a file.
-// What: Single-format file output plus multi-format stdout fan-out.
-// Why: One file keeps machine-readable reports parseable; stdout stays human-first.
-func writeScanReports(cmd *cobra.Command, rep *engine.Report, formats []string, opts reporter.Options, output string) error {
+// writeScanReports renders each requested format to stdout, a specific file, or output-dir.
+// What: Single-format file output, directory output with multiple formats, or stdout fan-out.
+// Why: Prevents corrupting stdout when multiple formats are requested and honors --output-dir.
+func writeScanReports(cmd *cobra.Command, rep *engine.Report, formats []string, opts reporter.Options, output, outputDir string) error {
 	if strings.TrimSpace(output) != "" && len(formats) > 1 {
 		return fmt.Errorf("scan: --output tek --format ile kullanın (got %d format)", len(formats))
 	}
@@ -847,6 +893,44 @@ func writeScanReports(cmd *cobra.Command, rep *engine.Report, formats []string, 
 		fmt.Fprintf(cmd.OutOrStdout(), "wrote %s (%s, %d findings, %d skipped)\n", output, formats[0], len(rep.Findings), len(rep.Skipped))
 		return nil
 	}
+
+	// Birden fazla format istendiyse veya kullanıcı açıkça --output-dir verdiyse:
+	// Dosyalara (reports/<target>.<fmt>) kaydet.
+	outputDirChanged := cmd != nil && cmd.Flags().Changed("output-dir")
+	if len(formats) > 1 || outputDirChanged {
+		if strings.TrimSpace(outputDir) == "" {
+			outputDir = "reports"
+		}
+		if err := os.MkdirAll(outputDir, 0o755); err != nil {
+			return fmt.Errorf("scan: --output-dir dizini %q: %w", outputDir, err)
+		}
+		baseName := targetReportBaseName(opts.Target)
+		if baseName == "" {
+			baseName = "report"
+		}
+		for _, name := range formats {
+			outPath := filepath.Join(outputDir, baseName+"."+name)
+			f, err := openScanOutput(outPath)
+			if err != nil {
+				return err
+			}
+			err = writeOneScanFormat(f, rep, name, opts)
+			_ = f.Close()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "wrote %s (%s, %d findings, %d skipped)\n", outPath, name, len(rep.Findings), len(rep.Skipped))
+		}
+		// Eğer formats içinde text varsa, terminale de insan-okur özeti bas
+		for _, name := range formats {
+			if name == "text" {
+				_ = writeOneScanFormat(cmd.OutOrStdout(), rep, "text", opts)
+				break
+			}
+		}
+		return nil
+	}
+
 	for _, name := range formats {
 		if err := writeOneScanFormat(cmd.OutOrStdout(), rep, name, opts); err != nil {
 			return err
@@ -901,7 +985,16 @@ func scanFailTriggered(rep *engine.Report, level string) bool {
 }
 
 func newPluginsCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "plugins", Short: "Plugin yönetimi"}
+	cmd := &cobra.Command{
+		Use:   "plugins",
+		Short: "Plugin yönetimi",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if isInteractive(cmd.InOrStdin()) {
+				return runPluginsMenu(cmd.InOrStdin(), cmd.OutOrStdout())
+			}
+			return cmd.Help()
+		},
+	}
 	cmd.AddCommand(
 		&cobra.Command{Use: "list", Short: "Registry snapshot (çalıştırma yok)", RunE: runPluginsList},
 		&cobra.Command{Use: "validate <file>", Short: "Schema + rules kontrolü", Args: cobra.ExactArgs(1), RunE: runPluginsValidate},
@@ -1407,7 +1500,16 @@ func newOpenAPICmd() *cobra.Command {
 }
 
 func newSuppressCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "suppress", Short: "Yerel suppress yönetimi"}
+	cmd := &cobra.Command{
+		Use:   "suppress",
+		Short: "Yerel suppress yönetimi",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if isInteractive(cmd.InOrStdin()) {
+				return runSuppressMenu(cmd.InOrStdin(), cmd.OutOrStdout())
+			}
+			return cmd.Help()
+		},
+	}
 	cmd.AddCommand(
 		&cobra.Command{Use: "add <finding-id>", Short: "Suppress ekle", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(cmd.OutOrStdout(), "suppress add %s\n", args[0])

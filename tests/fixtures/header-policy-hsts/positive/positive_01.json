@@ -1,0 +1,11 @@
+{
+  "name": "short HSTS policy",
+  "target": "https://example.com/",
+  "status": 200,
+  "headers": {
+    "Strict-Transport-Security": "max-age=60"
+  },
+  "body": "<html><body>Welcome</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

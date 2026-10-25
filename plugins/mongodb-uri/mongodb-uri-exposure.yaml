@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: mongodb-uri-exposure
+name: MongoDB URI Exposure
+description: Detects credentialed MongoDB connection strings in exposed files.
+author: GASH contributors
+severity: critical
+tags: [mongodb, database, credentials, exposure]
+safe: false
+deep: false
+active: false
+requires_auth: false
+max_requests: 6
+phase: discovery
+order: 170
+api_version: "1.0"
+tests: tests/fixtures/critical-exposure/
+request:
+  method: GET
+  paths: ["/config/mongodb.env", "/mongo-uri.txt", "/mongodb.json"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_mongodb_uri]

@@ -238,6 +238,29 @@ func TestReflectionUntrustedReject(t *testing.T) {
 	}
 }
 
+func TestDifferentialReflectedParameterReject(t *testing.T) {
+	var o DifferentialOracle
+	trueBody := `<html><link rel="canonical" href="https://example.com/?user=*)(|(userPassword=*"/><body>Home</body></html>`
+	falseBody := `<html><link rel="canonical" href="https://example.com/?user=gash_diff_false_val"/><body>Home</body></html>`
+	ctrlBody := `<html><link rel="canonical" href="https://example.com/?user=gash-control-neutral"/><body>Home</body></html>`
+
+	ev, err := o.Verify(context.Background(), cls(), false, DifferentialParams{
+		TrueBodies:   []string{trueBody, trueBody, trueBody},
+		FalseBodies:  []string{falseBody, falseBody, falseBody},
+		ControlBody:  ctrlBody,
+		ParamName:    "user",
+		TruePayload:  "*)(|(userPassword=*",
+		FalsePayload: "gash_diff_false_val",
+		Repeats:      3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Verdict != VerdictReject {
+		t.Fatalf("yansıma içeren sayfa reject edilmeli, got: %+v", ev)
+	}
+}
+
 func TestDifferentialConfirmed(t *testing.T) {
 	var o DifferentialOracle
 	ev, err := o.Verify(context.Background(), cls(), false, DifferentialParams{

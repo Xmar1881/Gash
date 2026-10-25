@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: git-config-exposure
+name: Git Metadata Exposure
+description: Detects exposed Git metadata files through canonical repository markers and soft-404 control absence.
+author: GASH contributors
+severity: high
+tags: [git, exposure, source, misconfig]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 8
+phase: discovery
+order: 118
+api_version: "1.0"
+tests: tests/fixtures/backup-file-exposure/
+request:
+  method: GET
+  paths: ["/.git/HEAD", "/.git/config", "/.git/index"]
+oracle:
+  name: error
+  params:
+    mode: backup_file
+    signature_set: [backup_file]

@@ -77,6 +77,10 @@ type Config struct {
 	ProxyURL         string // Upstream HTTP proxy URL (e.g. http://127.0.0.1:8080)
 	// RequestTimeout per-HTTP-request timeout (default 15s).
 	RequestTimeout time.Duration
+	// ScanTimeout bounds the complete engine run, including discovery and
+	// plugin scheduling (default 10m). Per-request and per-plugin timeouts do
+	// not replace this outer deadline.
+	ScanTimeout time.Duration
 	// MaxResponseBytes caps stored response bodies (default 5MB).
 	MaxResponseBytes int64
 	// OpenAPISpec --openapi-spec karşılığıdır (dosya yolu veya http(s) URL).
@@ -125,6 +129,8 @@ type Config struct {
 	CustomProfile *config.Profile
 	// P1.2: Effective detectors enabled by profile (populated at runtime)
 	enabledDetectors map[string]bool
+	// OnProgress is an optional callback called as the engine advances through scan phases.
+	OnProgress func(phase string, detail string)
 }
 
 // DefaultConfig bayrak default'larıdır.
@@ -133,14 +139,15 @@ func DefaultConfig() Config {
 		Safe:                 true,
 		MaxRequestsPerTarget: 1000,
 		MaxRequestsTotal:     10000,
-		PluginTimeoutMs:      30000,
+		PluginTimeoutMs:      60000,
 		RatePerSecond:        10,
 		Parallelism:          8,
 		NoisyThreshold:       10,
 		IgnorePlugins:        make(map[string]bool),
 		MaxPages:             50,
 		Depth:                3,
-		RequestTimeout:       15 * time.Second,
+		RequestTimeout:       20 * time.Second,
+		ScanTimeout:          10 * time.Minute,
 		MaxResponseBytes:     5 * 1024 * 1024,
 		DBPorts:              proto.DefaultDBPorts(),
 		MaxInfraPorts:        20,
@@ -151,6 +158,13 @@ func DefaultConfig() Config {
 		FlowProbes:           6,
 		BrowserCrawlPages:    spaDefaultPages,
 	}
+}
+
+func (e *Engine) effectiveScanTimeout() time.Duration {
+	if e.cfg.ScanTimeout > 0 {
+		return e.cfg.ScanTimeout
+	}
+	return 10 * time.Minute
 }
 
 // Report tarama çıktısıdır (reporter girdisi).
@@ -435,12 +449,21 @@ func (e *Engine) SharedPolicy() *plugin.PolicySession {
 }
 
 // Run executes scheduled plugins against the target with live probing.
+func (e *Engine) notifyProgress(phase, detail string) {
+	if e.cfg.OnProgress != nil {
+		e.cfg.OnProgress(phase, detail)
+	}
+}
+
 // What: Validated target plus scheduled execution plus correlated findings.
 // Why: Empty registries still return a valid empty report while live targets
 // get deterministic Tier1/Tier2/Tier3 verification through one pipeline.
 // P2.6 sırası: istemci kur → login → teknoloji tespiti → schedule → koşum.
 func (e *Engine) Run(ctx context.Context, target string) (*Report, error) {
-	if err := ctx.Err(); err != nil {
+	e.notifyProgress("Başlatılıyor", "Hedef ve tarama istemcisi hazırlanıyor...")
+	scanCtx, cancel := context.WithTimeout(ctx, e.effectiveScanTimeout())
+	defer cancel()
+	if err := scanCtx.Err(); err != nil {
 		return nil, fmt.Errorf("engine run ctx: %w", err)
 	}
 	normalized, err := parseTarget(target)
@@ -452,7 +475,7 @@ func (e *Engine) Run(ctx context.Context, target string) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
-	login, err := e.runLogin(ctx, client)
+	login, err := e.runLogin(scanCtx, client)
 	if err != nil {
 		// Kapsam/politika ihlali: fail-closed, tarama başlamaz.
 		return nil, err
@@ -468,8 +491,10 @@ func (e *Engine) Run(ctx context.Context, target string) (*Report, error) {
 	}
 	// Çalışma-anı teknoloji tespiti: tek pasif GET ile zincir girdisi.
 	// Hata = boş küme (kullanıcı --tech tek başına yeterli); ek trafik yok.
-	e.detectRuntimeTech(ctx, normalized)
-	ordered, skipped, err := e.Schedule(ctx)
+	e.notifyProgress("Teknoloji Analizi", "Sunucu parmak izi analiz ediliyor...")
+	e.detectRuntimeTech(scanCtx, normalized, client)
+	e.notifyProgress("Planlama", "Dedektörler ve kontroller planlanıyor...")
+	ordered, skipped, err := e.Schedule(scanCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -494,7 +519,7 @@ func (e *Engine) Run(ctx context.Context, target string) (*Report, error) {
 		// B2: empty registry yields a valid empty report, not an error.
 		return rep, nil
 	}
-	return e.runLive(ctx, normalized, ordered, skipped, policy, client, login)
+	return e.runLive(scanCtx, normalized, ordered, skipped, policy, client, login)
 }
 
 // Correlate motor-tarafı dedup uygular (A-16).

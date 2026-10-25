@@ -1,0 +1,10 @@
+{
+  "name": "hardened HSTS policy",
+  "target": "https://example.com/",
+  "status": 200,
+  "headers": {
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload"
+  },
+  "body": "<html><body>Welcome</body></html>",
+  "expected_verdict": "reject"
+}

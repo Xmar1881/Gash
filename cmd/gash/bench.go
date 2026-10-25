@@ -24,6 +24,12 @@ func newBenchCmd() *cobra.Command {
 		Short: "Automated scanner benchmark (ground truth, Gash/Nuclei, reports)",
 		Long: "Benchmark harness with independently verified ground truth.\n" +
 			"Refuses non-lab targets by default; docker is only needed for the compose lab.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if isInteractive(cmd.InOrStdin()) {
+				return runBenchMenu(cmd.InOrStdin(), cmd.OutOrStdout())
+			}
+			return cmd.Help()
+		},
 	}
 	benchCmd.AddCommand(newBenchRunCmd(), newBenchValidateCmd(), newBenchCompareCmd(), newBenchBaselineCmd(), newBenchLabCmd())
 	return benchCmd

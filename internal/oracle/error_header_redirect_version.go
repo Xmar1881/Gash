@@ -27,7 +27,7 @@ type ErrorSignatureParams struct {
 	Body         string
 	ControlBody  string
 	SignatureSet []string // boşsa tümü
-	Mode         string   // "sqli" (default), "path_traversal", "generic_error", "deserialization", "takeover"
+	Mode         string   // "sqli" (default), "path_traversal", "generic_error", "deserialization", "takeover", "critical_exposure"
 }
 
 var errorSignatures = map[string]*regexp.Regexp{
@@ -82,7 +82,87 @@ var errorSignatures = map[string]*regexp.Regexp{
 	// source_map: JavaScript source map ifşası (GASH-066, CWE-540).
 	// Source map zarfı: version 3 + eşleme alanları birlikte; yalnızca
 	// "version":3 içeren jenerik JSON FP sayılmaz.
-	"source_map": regexp.MustCompile(`(?is)"version"\s*:\s*3\s*,.*?"(sources|mappings|names|sourcesContent)"\s*:`),
+	"source_map":                   regexp.MustCompile(`(?is)"version"\s*:\s*3\s*,.*?"(sources|mappings|names|sourcesContent)"\s*:`),
+	"critical_aws_credentials":     regexp.MustCompile(`(?im)^\s*(aws_access_key_id|aws_secret_access_key)\s*=`),
+	"critical_npmrc_token":         regexp.MustCompile(`(?i)(_authToken\s*=|_auth\s*=|_authToken=)`),
+	"critical_composer_auth":       regexp.MustCompile(`(?is)"(github-oauth|http-basic|gitlab-token)"\s*:`),
+	"critical_terraform_state":     regexp.MustCompile(`(?is)"terraform_version"\s*:.*"resources"\s*:`),
+	"critical_kubernetes_config":   regexp.MustCompile(`(?im)^\s*(clusters|users|contexts):\s*$`),
+	"critical_gitlab_runner":       regexp.MustCompile(`(?ims)^\s*\[\[runners\]\].*^\s*token\s*=`),
+	"critical_spring_config":       regexp.MustCompile(`(?i)(spring\.datasource\.(url|username|password)|config server|propertySources)`),
+	"critical_vault_api":           regexp.MustCompile(`(?i)("sealed"\s*:\s*(true|false)|"cluster_name"\s*:|Vault server)`),
+	"critical_consul_api":          regexp.MustCompile(`(?i)("Datacenter"\s*:|"NodeName"\s*:|Consul agent)`),
+	"critical_etcd_api":            regexp.MustCompile(`(?i)("kvs"\s*:\s*\[|etcdserver|"cluster_id"\s*:)`),
+	"critical_docker_api":          regexp.MustCompile(`(?i)("ApiVersion"\s*:|"Containers"\s*:|Docker Engine)`),
+	"critical_kubernetes_api":      regexp.MustCompile(`(?i)("kind"\s*:\s*"APIVersions"|Kubernetes Master|"apiVersion"\s*:\s*"v1".*"versions")`),
+	"critical_jenkins_script":      regexp.MustCompile(`(?i)(Jenkins-Crumb|Jenkins script console|<title>\s*Jenkins)`),
+	"critical_jmx_console":         regexp.MustCompile(`(?i)(Jolokia|jmx-console|"type"\s*:\s*"jolokia")`),
+	"critical_solr_admin":          regexp.MustCompile(`(?i)(solr-spec-version|SolrCore|Solr Admin)`),
+	"critical_elasticsearch_api":   regexp.MustCompile(`(?i)("cluster_name"\s*:|"number_of_nodes"\s*:|You Know, for Search)`),
+	"critical_kibana_api":          regexp.MustCompile(`(?i)(Kibana|"version"\s*:\s*\{\s*"number"\s*:)`),
+	"critical_grafana_api":         regexp.MustCompile(`(?i)("database"\s*:\s*"ok"|Grafana|grafana_version)`),
+	"critical_rabbitmq_management": regexp.MustCompile(`(?i)(rabbitmq_version|RabbitMQ Management|"contexts"\s*:)`),
+	"critical_jupyter_api":         regexp.MustCompile(`(?i)(Jupyter|"kernels"\s*:\s*\[|notebook)`),
+	"critical_phpmyadmin":          regexp.MustCompile(`(?i)(phpMyAdmin|pma_username|PMA_VERSION)`),
+	"critical_adminer":             regexp.MustCompile(`(?i)(<title>\s*Adminer|Adminer\s+\d+\.\d+)`),
+	"critical_laravel_debug":       regexp.MustCompile(`(?i)(Laravel Ignition|Whoops|_debugbar)`),
+	"critical_django_debug":        regexp.MustCompile(`(?i)(Django Debug Toolbar|Request information|DJANGO_SETTINGS_MODULE)`),
+	"critical_h2_console":          regexp.MustCompile(`(?i)(H2 Console|org\.h2|JDBC URL)`),
+	"critical_saml_metadata":       regexp.MustCompile(`(?i)(<EntityDescriptor\b|<IDPSSODescriptor\b|SAMLResponse)`),
+	"critical_oauth_client_secret": regexp.MustCompile(`(?i)(client_secret\s*[:=]|"client_secret"\s*:|oauth.*secret)`),
+	"critical_github_actions":      regexp.MustCompile(`(?im)^\s*(uses|secrets)\s*:\s*`),
+	"critical_heapdump":            regexp.MustCompile(`(?i)(java heap dump|HPROF|JAVA PROFILE 1\.0)`),
+	"critical_minio_admin":         regexp.MustCompile(`(?i)(MinIO|ListAllMyBucketsResult|minio admin)`),
+	"critical_azure_credentials":   regexp.MustCompile(`(?i)(AZURE_CLIENT_SECRET\s*[:=]|"clientSecret"\s*:)`),
+	"critical_gcp_service_account": regexp.MustCompile(`(?is)("type"\s*:\s*"service_account"|"private_key"\s*:\s*"-----BEGIN)`),
+	"critical_digitalocean_token":  regexp.MustCompile(`(?i)(DIGITALOCEAN_ACCESS_TOKEN\s*[:=]|doctl.*access-token)`),
+	"critical_slack_token":         regexp.MustCompile(`(?i)(xox[baprs]-[0-9A-Za-z-]{10,}|SLACK_TOKEN\s*[:=])`),
+	"critical_stripe_secret":       regexp.MustCompile(`(?i)(sk_live_[0-9A-Za-z]{16,}|STRIPE_SECRET_KEY\s*[:=])`),
+	"critical_twilio_token":        regexp.MustCompile(`(?i)(TWILIO_AUTH_TOKEN\s*[:=]|AC[0-9a-f]{32}.*auth_token)`),
+	"critical_sendgrid_key":        regexp.MustCompile(`(?i)(SG\.[A-Za-z0-9_-]{10,}|SENDGRID_API_KEY\s*[:=])`),
+	"critical_private_key":         regexp.MustCompile(`(?i)(-----BEGIN (RSA|EC|DSA|OPENSSH) PRIVATE KEY-----)`),
+	"critical_ssh_private_key":     regexp.MustCompile(`(?i)(-----BEGIN OPENSSH PRIVATE KEY-----|openssh-key-v1)`),
+	"critical_jwt_secret":          regexp.MustCompile(`(?i)(JWT_SECRET\s*[:=]|JWT_SIGNING_KEY\s*[:=])`),
+	"critical_ansible_vault":       regexp.MustCompile(`(?im)(^\$ANSIBLE_VAULT;1\.[0-9];AES256|ansible-vault encrypted)`),
+	"critical_helm_values":         regexp.MustCompile(`(?im)(^kind:\s*(Secret|ConfigMap)|helm\.sh/chart)`),
+	"critical_pip_config":          regexp.MustCompile(`(?is)(\[global\].*index-url\s*=.*@|extra-index-url\s*=.*@)`),
+	"critical_pypi_token":          regexp.MustCompile(`(?i)(pypi-[A-Za-z0-9_-]{10,}|password\s*=\s*pypi-)`),
+	"critical_nuget_key":           regexp.MustCompile(`(?i)(<add\s+key\s*=\s*"ClearTextPassword"|nuget\.org.*apiKey)`),
+	"critical_cargo_token":         regexp.MustCompile(`(?i)(registry-token\s*=\s*["']?[A-Za-z0-9_-]{10,}|CARGO_REGISTRIES_.*_TOKEN\s*=)`),
+	"critical_netrc":               regexp.MustCompile(`(?im)^\s*machine\s+\S+.*\blogin\s+\S+.*\bpassword\s+\S+`),
+	"critical_pgpass":              regexp.MustCompile(`(?m)^[^#\r\n:]+:\d+:[^:\r\n]+:[^:\r\n]+:[^:\r\n]+$`),
+	"critical_database_url":        regexp.MustCompile(`(?i)(DATABASE_URL\s*=\s*(postgres|mysql|mongodb|redis)://|DATABASE_PASSWORD\s*=)`),
+	"critical_mongodb_uri":         regexp.MustCompile(`(?i)(mongodb(\+srv)?://[^ \r\n]+:[^ \r\n]+@)`),
+	"critical_redis_config":        regexp.MustCompile(`(?im)^\s*(requirepass|masterauth)\s+\S+`),
+	"critical_firebase_config":     regexp.MustCompile(`(?is)("type"\s*:\s*"service_account".*"project_id"\s*:|firebaseConfig\s*[:=])`),
+	"critical_sentry_dsn":          regexp.MustCompile(`(?i)((https?://)?[0-9a-f]{16,}@[a-z0-9.-]*sentry\.io/[0-9]+|SENTRY_DSN\s*[:=])`),
+	"critical_datadog_key":         regexp.MustCompile(`(?i)(DD_API_KEY\s*[:=]|DD_APP_KEY\s*[:=]|datadog_api_key)`),
+	"critical_caddy_admin":         regexp.MustCompile(`(?i)(Caddy admin API|"apps"\s*:\s*\{|caddy.*admin)`),
+	"critical_traefik_api":         regexp.MustCompile(`(?i)(Traefik|"routers"\s*:\s*\{|"entryPoints"\s*:)`),
+	"critical_nginx_status":        regexp.MustCompile(`(?i)(Active connections:\s*\d+|stub_status|nginx_status)`),
+	"critical_haproxy_stats":       regexp.MustCompile(`(?i)(HAProxy Statistics|#\s*pxname,svname|haproxy.*stats)`),
+	"critical_envoy_admin":         regexp.MustCompile(`(?i)("server_info"\s*:\s*\{|"listener_status"\s*:|envoy admin)`),
+	"critical_istio_debug":         regexp.MustCompile(`(?i)("istioVersion"\s*:|istio.*debug|/debug/adsz)`),
+	"critical_zookeeper_admin":     regexp.MustCompile(`(?i)(Zookeeper version|ZookeeperServer|zk_version)`),
+	"critical_kafka_rest":          regexp.MustCompile(`(?i)("cluster_id"\s*:|kafka_cluster_id|Kafka broker)`),
+	"critical_kafka_ui":            regexp.MustCompile(`(?i)(Kafka UI|kafka-ui|"clusters"\s*:\s*\[)`),
+	"critical_argo_cd":             regexp.MustCompile(`(?i)(Argo CD|argocd|"serverVersion"\s*:)`),
+	"critical_spinnaker":           regexp.MustCompile(`(?i)(Spinnaker|gate.*version|"applications"\s*:\s*\[)`),
+	"critical_tekton":              regexp.MustCompile(`(?i)(Tekton|tekton\.dev|PipelineRun)`),
+	"critical_drone_ci":            regexp.MustCompile(`(?i)(Drone CI|drone\.io|"login"\s*:.*"admin")`),
+	"critical_teamcity":            regexp.MustCompile(`(?i)(TeamCity|teamcityVersion|app/rest/server)`),
+	"critical_bamboo":              regexp.MustCompile(`(?i)(Bamboo|bambooVersion|Atlassian Bamboo)`),
+	"critical_sonarqube":           regexp.MustCompile(`(?i)(SonarQube|sonarqube|"version"\s*:\s*"[0-9]+\.[0-9]+)`),
+	"critical_nexus":               regexp.MustCompile(`(?i)(Nexus Repository|NXRM|nexusVersion)`),
+	"critical_artifactory":         regexp.MustCompile(`(?i)(Artifactory|artifactoryVersion|JFrog)`),
+	"critical_harbor":              regexp.MustCompile(`(?i)(Harbor|harbor_version|"registry_url"\s*:)`),
+	"critical_keycloak":            regexp.MustCompile(`(?i)(Keycloak|"realm"\s*:\s*"master"|keycloakVersion)`),
+	"critical_airflow":             regexp.MustCompile(`(?i)(Airflow|airflow_version|"metadatabase"\s*:)`),
+	"critical_superset":            regexp.MustCompile(`(?i)(Apache Superset|superset_version|"database_name"\s*:)`),
+	"critical_metabase":            regexp.MustCompile(`(?i)(Metabase|metabase-version|"version"\s*:\s*"v?[0-9]+)`),
+	"critical_oauth_well_known":    regexp.MustCompile(`(?i)(authorization_endpoint|token_endpoint|oauth-authorization-server)`),
+	"critical_oidc_config":         regexp.MustCompile(`(?i)(issuer\s*[:=]\s*https?://|jwks_uri\s*[:=]|openid-configuration)`),
+	"critical_registry_catalog":    regexp.MustCompile(`(?i)("repositories"\s*:\s*\[|Docker Registry|registry catalog)`),
 	// ssi: SSI direktif yürütme kanıtı (GASH-064, CWE-97).
 	// printenv çıktısındaki CGI değişkenleri yalnızca sunucu direktifi
 	// yorumladığında görünür; iki farklı değişken birlikte aranır ki
@@ -195,6 +275,9 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 	case "source_map":
 		confidence = plugin.ConfidenceFirm // Kaynak haritası ifşası (GASH-066 tavan)
 		note = "source map zarfı imzası tespit edildi"
+	case "critical_exposure":
+		confidence = plugin.ConfidenceFirm
+		note = "critical exposure marker detected"
 	case "ssi":
 		confidence = plugin.ConfidenceFirm // printenv çıktısı yürütme kanıtı ama tek-kanallı (GASH-064 tavan)
 		note = "SSI yürütme çıktısı (printenv) imzası tespit edildi"
@@ -221,7 +304,7 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 	// Without control: path_traversal and generic_error are firm (need control for confirmed)
 	// SQLi without control is firm. deserialization/takeover/xpath/backup_file are
 	// firm by ceiling with or without control (single-channel signal, never confirmed).
-	if hit == "path_traversal" || hit == "unix_passwd" || hit == "windows_ini" || hit == "include_error" || hit == "generic_error" || hit == "deserialization" || hit == "takeover" || hit == "xpath" || hit == "backup_file" {
+	if hit == "path_traversal" || hit == "unix_passwd" || hit == "windows_ini" || hit == "include_error" || hit == "generic_error" || hit == "deserialization" || hit == "takeover" || hit == "xpath" || hit == "backup_file" || strings.HasPrefix(hit, "critical_") {
 		confidence = plugin.ConfidenceFirm
 	}
 	return &Evidence{
@@ -241,12 +324,16 @@ func (ErrorSignatureOracle) Verify(ctx context.Context, cls baseline.Classificat
 // (burst status series collected by the Tier 1 runner); absent signals stay
 // tentative because a single probe/burst cannot prove server-side policy.
 type HeaderParams struct {
-	Headers        http.Header
-	Mode           string      // "security" (default), "crlf", "jwt", "jwt_alg", "csrf", "frame", "ratelimit", "host_header", "webdav"
-	RequestHeaders http.Header // For CRLF: check if request headers were reflected
-	Body           string      // Response body (form analysis for csrf mode; host_header reflection)
-	Status         int         // Representative response status (ratelimit mode: 429 check)
-	Burst          []int       // Burst status series (ratelimit mode: any 429 means protected)
+	Headers         http.Header
+	Mode            string      // "security" (default), "policy", "crlf", "jwt", "jwt_alg", "csrf", "frame", "ratelimit", "host_header", "webdav"
+	RequestHeaders  http.Header // For CRLF: check if request headers were reflected
+	Body            string      // Response body (form analysis for csrf mode; host_header reflection)
+	Status          int         // Representative response status (ratelimit mode: 429 check)
+	Burst           []int       // Burst status series (ratelimit mode: any 429 means protected)
+	HeaderName      string      // policy mode: header under review
+	Policy          string      // policy mode: missing|required|forbidden|forbidden_tokens
+	RequiredTokens  []string    // policy mode: case-insensitive required directives
+	ForbiddenTokens []string    // policy mode: case-insensitive forbidden directives
 	// CanaryHost host_header mode: injected Host/X-Forwarded-Host kanaryası (GASH-035).
 	CanaryHost string
 	// ControlBody host_header mode: başlıksız kontrol yanıtı; kanarya burada
@@ -281,6 +368,8 @@ func (HeaderOracle) Verify(ctx context.Context, cls baseline.Classification, tai
 	switch mode {
 	case "crlf":
 		return verifyCRLF(p.Headers, p.RequestHeaders)
+	case "policy":
+		return verifyHeaderPolicy(p)
 	case "jwt":
 		return verifyJWTExposure(p.Headers)
 	case "jwt_alg":
@@ -298,6 +387,80 @@ func (HeaderOracle) Verify(ctx context.Context, cls baseline.Classification, tai
 	default:
 		return verifySecurityHeaders(p.Headers)
 	}
+}
+
+// verifyHeaderPolicy evaluates one named response-header contract.
+// What: Covers missing hardening headers, weak directives, and verbose
+// disclosure headers without adding one oracle per header family.
+// Why: Policy checks are deterministic, but the policy itself must be explicit
+// so a plugin cannot silently turn a generic header presence into a finding.
+func verifyHeaderPolicy(p HeaderParams) (*Evidence, error) {
+	name := strings.TrimSpace(p.HeaderName)
+	if name == "" {
+		return &Evidence{Verdict: VerdictReject, Note: "policy header name is empty"}, nil
+	}
+	value := strings.TrimSpace(p.Headers.Get(name))
+	policy := strings.ToLower(strings.TrimSpace(p.Policy))
+	if policy == "" {
+		policy = "required"
+	}
+	lowerValue := strings.ToLower(value)
+
+	missingTokens := func(tokens []string) []string {
+		var missing []string
+		for _, token := range tokens {
+			token = strings.TrimSpace(token)
+			if token != "" && !strings.Contains(lowerValue, strings.ToLower(token)) {
+				missing = append(missing, token)
+			}
+		}
+		return missing
+	}
+	forbiddenHits := func(tokens []string) []string {
+		var hits []string
+		for _, token := range tokens {
+			token = strings.TrimSpace(token)
+			if token != "" && strings.Contains(lowerValue, strings.ToLower(token)) {
+				hits = append(hits, token)
+			}
+		}
+		return hits
+	}
+
+	switch policy {
+	case "missing":
+		if value == "" {
+			return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceConfirmed,
+				Artifacts: map[string]string{"header": name, "signal": "missing"},
+				Note:      "required response header missing -> confirmed"}, nil
+		}
+	case "required":
+		if value == "" {
+			return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceConfirmed,
+				Artifacts: map[string]string{"header": name, "signal": "missing"},
+				Note:      "required response header missing -> confirmed"}, nil
+		}
+		if missing := missingTokens(p.RequiredTokens); len(missing) > 0 {
+			return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceFirm,
+				Artifacts: map[string]string{"header": name, "missing_directives": strings.Join(missing, ",")},
+				Note:      "required response-header directives missing -> firm"}, nil
+		}
+	case "forbidden":
+		if value != "" {
+			return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceFirm,
+				Artifacts: map[string]string{"header": name, "value": value},
+				Note:      "disclosure response header present -> firm"}, nil
+		}
+	case "forbidden_tokens":
+		if hits := forbiddenHits(p.ForbiddenTokens); len(hits) > 0 {
+			return &Evidence{Verdict: VerdictAccept, ConfidenceContribution: plugin.ConfidenceFirm,
+				Artifacts: map[string]string{"header": name, "forbidden_directives": strings.Join(hits, ",")},
+				Note:      "forbidden response-header directives present -> firm"}, nil
+		}
+	default:
+		return &Evidence{Verdict: VerdictReject, Note: "unknown header policy"}, nil
+	}
+	return &Evidence{Verdict: VerdictReject, Note: "response-header policy satisfied"}, nil
 }
 
 // verifyWebDAV OPTIONS Allow başlığındaki yazma metotlarını doğrular (GASH-065, CWE-650).

@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: artifactory-api-exposure
+name: Artifactory API Exposure
+description: Detects exposed JFrog Artifactory system and repository APIs.
+author: GASH contributors
+severity: critical
+tags: [artifactory, jfrog, supply-chain, exposure]
+safe: false
+deep: false
+active: false
+requires_auth: false
+max_requests: 6
+phase: discovery
+order: 192
+api_version: "1.0"
+tests: tests/fixtures/critical-exposure/
+request:
+  method: GET
+  paths: ["/artifactory/api/system/ping", "/artifactory/api/repositories", "/artifactory/"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_artifactory]

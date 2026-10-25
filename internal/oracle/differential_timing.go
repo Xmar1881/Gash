@@ -6,7 +6,12 @@ package oracle
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
+	"html"
 	"math"
+	"net/url"
+	"strings"
 
 	"github.com/Xmar1881/Gash/internal/baseline"
 	"github.com/Xmar1881/Gash/internal/plugin"
@@ -21,6 +26,9 @@ type DifferentialParams struct {
 	TrueBodies        []string
 	FalseBodies       []string
 	ControlBody       string
+	ParamName         string
+	TruePayload       string
+	FalsePayload      string
 	Repeats           int // default 3
 	ConfidenceCeiling string
 }
@@ -30,11 +38,44 @@ type DifferentialOracle struct{}
 
 func (DifferentialOracle) Name() string { return "differential" }
 
+func maskBody(body string, m *baseline.Model, param, payload string) string {
+	if m != nil {
+		body = string(m.Mask([]byte(body)))
+	}
+	if param != "" && payload != "" {
+		for _, p := range []string{
+			param + "=" + payload,
+			param + "%3D" + payload,
+			param + "%3d" + payload,
+			url.QueryEscape(param + "=" + payload),
+			url.PathEscape(param + "=" + payload),
+			html.EscapeString(param + "=" + payload),
+		} {
+			body = strings.ReplaceAll(body, p, "__PARAM_REFLECTED__")
+		}
+	}
+	if len(payload) >= 2 {
+		for _, p := range []string{
+			payload,
+			url.QueryEscape(payload),
+			url.PathEscape(payload),
+			html.EscapeString(payload),
+		} {
+			body = strings.ReplaceAll(body, p, "__PAYLOAD_REFLECTED__")
+		}
+	}
+	return body
+}
+
 func maskAll(bodies []string) []string {
+	return maskAllWithPayload(bodies, "", "")
+}
+
+func maskAllWithPayload(bodies []string, param, payload string) []string {
 	m := baseline.NewDefaultModel()
 	out := make([]string, len(bodies))
 	for i, b := range bodies {
-		out[i] = string(m.Mask([]byte(b)))
+		out[i] = maskBody(b, m, param, payload)
 	}
 	return out
 }
@@ -55,8 +96,8 @@ func (DifferentialOracle) Verify(ctx context.Context, cls baseline.Classificatio
 	if len(p.TrueBodies) < n || len(p.FalseBodies) < n {
 		return &Evidence{Verdict: VerdictReject, Note: "yetersiz tekrar (N=3 zorunlu)"}, nil
 	}
-	tb := maskAll(p.TrueBodies[:n])
-	fb := maskAll(p.FalseBodies[:n])
+	tb := maskAllWithPayload(p.TrueBodies[:n], p.ParamName, p.TruePayload)
+	fb := maskAllWithPayload(p.FalseBodies[:n], p.ParamName, p.FalsePayload)
 
 	trueStable := allEqual(tb)
 	falseStable := allEqual(fb)
@@ -71,12 +112,14 @@ func (DifferentialOracle) Verify(ctx context.Context, cls baseline.Classificatio
 	// aynıysa ayrışma payload'dan değil sayfanın kendi davranışından gelir.
 	if p.ControlBody != "" {
 		m := baseline.NewDefaultModel()
-		cb := string(m.Mask([]byte(p.ControlBody)))
+		cb := maskBody(p.ControlBody, m, p.ParamName, "gash-control-neutral")
 		if cb == tb[0] {
 			return &Evidence{Verdict: VerdictReject, Note: "kontrol true dalıyla aynı — ayırt edici değil"}, nil
 		}
 	}
-	art := map[string]string{"true_hash": tb[0][:min(16, len(tb[0]))], "false_hash": fb[0][:min(16, len(fb[0]))]}
+	trueHash := fmt.Sprintf("%x", sha256.Sum256([]byte(tb[0])))[:16]
+	falseHash := fmt.Sprintf("%x", sha256.Sum256([]byte(fb[0])))[:16]
+	art := map[string]string{"true_hash": trueHash, "false_hash": falseHash}
 	// Tam tutarlılık + ayrışma → confirmed (3/3); beyanlı tavan varsa indirilir.
 	conf := plugin.ConfidenceConfirmed
 	note := "3/3 tutarlı differential + kontrol"

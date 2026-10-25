@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: airflow-api-exposure
+name: Airflow API Exposure
+description: Detects exposed Apache Airflow health and metadata APIs.
+author: GASH contributors
+severity: critical
+tags: [airflow, orchestration, cicd, exposure]
+safe: false
+deep: false
+active: false
+requires_auth: false
+max_requests: 6
+phase: discovery
+order: 195
+api_version: "1.0"
+tests: tests/fixtures/critical-exposure/
+request:
+  method: GET
+  paths: ["/api/v1/monitor/health", "/health", "/api/v1/config"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_airflow]

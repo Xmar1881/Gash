@@ -177,10 +177,11 @@ same day and re-measured: standard recall 0.500 -> 1.000, deep recall
   before/after numbers, and the final standard/deep results.
 - `docs/metrics/nuclei-comparison-2026-10-14.md`: the measured Gash/Nuclei
   comparison on the fixture lab (cross-tool verdicts, per category).
-- `docs/metrics/benchmark-fixtures-2026-10-22.md`: fixtures 50-scenario run
-  (standard profile, pre-fix). Gash `TP=24 FP=0 TN=23 FN=2` precision=1.000 recall=0.923
-  F1=0.960; Nuclei `TP=1 FP=0 TN=23 FN=25` precision=1.000 recall=0.038
-  F1=0.074; cross-tool verdicts and per-category breakdown included.
+- Pre-fix fixture comparison (standard profile, 2026-10-22 run): Gash
+  `TP=24 FP=0 TN=23 FN=2` precision=1.000 recall=0.923 F1=0.960;
+  Nuclei `TP=1 FP=0 TN=23 FN=25` precision=1.000 recall=0.038 F1=0.074;
+  cross-tool verdicts and per-category breakdown were recorded in the run
+  output; no standalone report was committed.
 - `dist/bench-std-final/` and `dist/bench-deep-final/`: final fixture runs
   with open-redirect-next and path-traversal-file-access fixes.
   Standard: `TP=26 FP=0 TN=23 FN=0` (1 unverified `xss-dom-hash-sink`),

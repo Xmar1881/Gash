@@ -1,0 +1,11 @@
+{
+  "name": "known public development and API markers",
+  "target": "http://example.com/known-path",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": "{\"openapi\":\"3.0.3\",\"swagger-ui\":true,\"graphql playground\":true,\"_links\": {\"self\": {\"href\": \"/actuator\"}},\"actuator\":true}\nContact: security@example.com\n# HELP http_requests_total Total requests\n# TYPE http_requests_total counter\nservices:\nWerkzeug Debugger enabled; Django Debug Toolbar; Laravel Ignition; Symfony Profiler",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

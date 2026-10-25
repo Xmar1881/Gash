@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: github-actions-config-exposure
+name: GitHub Actions Config Exposure
+description: Detects publicly served workflow files that disclose CI execution structure or secret references.
+author: GASH contributors
+severity: high
+tags: [github, ci, supply-chain, exposure]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 8
+phase: discovery
+order: 148
+api_version: "1.0"
+tests: tests/fixtures/critical-exposure/
+request:
+  method: GET
+  paths: ["/.github/workflows/ci.yml", "/.github/workflows/build.yml", "/.github/workflows/deploy.yml"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_github_actions]

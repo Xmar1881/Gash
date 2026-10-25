@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: powered-by-disclosure
+name: X-Powered-By Disclosure
+description: Detects framework or runtime disclosure through the X-Powered-By header.
+author: GASH contributors
+severity: low
+tags: [headers, disclosure, fingerprinting]
+safe: true
+deep: false
+active: false
+requires_auth: false
+phase: probe
+order: 110
+api_version: "1.0"
+tests: tests/fixtures/header-policy-disclosure/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: X-Powered-By
+    policy: forbidden

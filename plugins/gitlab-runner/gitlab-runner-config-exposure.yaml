@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: gitlab-runner-config-exposure
+name: GitLab Runner Config Exposure
+description: Detects exposed GitLab Runner configuration containing runner tokens.
+author: GASH contributors
+severity: critical
+tags: [gitlab, ci, secrets, exposure]
+safe: false
+deep: false
+active: false
+requires_auth: false
+max_requests: 6
+phase: discovery
+order: 126
+api_version: "1.0"
+tests: tests/fixtures/critical-exposure/
+request:
+  method: GET
+  paths: ["/config.toml", "/gitlab-runner/config.toml", "/etc/gitlab-runner/config.toml"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_gitlab_runner]

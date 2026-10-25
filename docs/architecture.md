@@ -171,6 +171,12 @@ Faz 0'daki ağaç korunur; tek netleştirme: `proto/gash/v1/plugin.proto` ekleni
 | Bütçeyi plugin'e güvenme (beyan) | H2'ye aykırı; motor enforce eder. |
 | Raylı sistem (her plugin'e eşit kota) | Keşif fazı ile deep faz aynı kotayı hak etmez; global + per-target + per-plugin (`MaxRequests`) üçlüsü daha adil. |
 
+Engine hardening notes:
+
+- Engine-created `PolicySession` starts from `DefaultPolicyConfig`; scan-specific limits override only their own fields, so retry, redirect, body-size, backpressure, and scan-deadline protections remain active.
+- Redirect URLs resolve from the current hop. Authentication, cookie, API-key, and CSRF headers are removed when scheme, host, or effective port changes; ordinary tracing headers may continue.
+- Runtime technology detection uses the same policy-backed probe client as plugins, so its auth, scope, budget, redirect, and cancellation behavior is auditable in the scan report.
+
 ### 3.1 Scheduler lifecycle (tasarım, implementasyon değil)
 
 ```

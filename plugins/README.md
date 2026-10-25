@@ -20,11 +20,11 @@ The engine discovers this tree automatically; no `--load-plugin` flag exists.
 
 | Tier | Count | Auto-discovered | Trust Required |
 |------|------:|:---------------:|:--------------:|
-| Tier 1 (YAML) | 74 | ✅ | ❌ |
+| Tier 1 (YAML) | 174 | ✅ | ❌ |
 | Tier 2 (JS) | 7 | ✅ | ❌ |
 | Tier 2 (Native JS) | 1 | ✅ | ❌ |
 | Tier 3 (Native) | 1 | ❌ | ✅ `gash plugins trust` |
-| **Total** | **83** | | |
+| **Total** | **183** | | |
 
 ---
 
@@ -46,6 +46,8 @@ The engine discovers this tree automatically; no `--load-plugin` flag exists.
 | **Injection (JNDI, EL, SSI, JSONP, PP)** | 5 | 1 | `oob`, `reflection`, `error`, `differential` | — |
 | **Info Disclosure** | 8 | 1 | `error`, `header`, `version` | ✅ `phpinfo-exposure` |
 | **Cache / Takeover / Rate Limit** | 4 | 1 | `differential`, `error`, `header` | — |
+| **Modern Headers / API Exposure** | 20 | 1 | `header`, `version`, `error` | ✅ `permissions-policy-missing` |
+| **Critical Control-Plane / Secret Exposure** | 80 | 1 | `error` (`critical_exposure`) | ✅ `aws-credentials-exposure` |
 | **Native PoC** | 1 | 3 | `header` | — |
 
 ---
@@ -103,7 +105,7 @@ The engine discovers this tree automatically; no `--load-plugin` flag exists.
 | `oauth-open-redirect` | Tier 1 | `redirect` | `oauth-open-redirect/oauth-open-redirect.yaml` | |
 | `ssrf-blind-oob` | Tier 2 | `oob` (required) | `ssrf/ssrf-blind-oob.js` | |
 | `ssrf-cloud-metadata` | Tier 1 | `reflection` | `ssrf/ssrf-cloud-metadata.yaml` | |
-| `ssrf-internal-port-scan` | Tier 1 | `reflection` | `ssrf/ssrf-internal-port-scan.yaml` | |
+| `ssrf-internal-port-scan` | Tier 1 | `reflection` | `ssrf-internal/ssrf-internal-port-scan.yaml` | |
 | `nextjs-image-optimizer-ssrf` | Tier 1 | `oob` (required) | `nextjs-image-optimizer-ssrf/nextjs-image-optimizer-ssrf.yaml` | |
 
 ### NoSQL / LDAP / SSTI
@@ -115,10 +117,10 @@ The engine discovers this tree automatically; no `--load-plugin` flag exists.
 | `nosql-injection-timing` | Tier 1 | `timing` | `nosql/nosql-injection-timing.yaml` |
 | `ldap-injection-differential` | Tier 1 | `differential` | `ldap-injection/ldap-injection-differential.yaml` |
 | `ldap-injection-oob` | Tier 1 | `oob` (required) | `ldap-blind/ldap-injection-oob.yaml` |
-| `ldap-injection-blind` | Tier 1 | `differential` | `ldap-injection/ldap-injection-blind.yaml` |
+| `ldap-injection-blind` | Tier 1 | `differential` | `ldap-blind/ldap-injection-blind.yaml` |
 | `ssti-blind-oob` | Tier 1 | `oob` (required) | `ssti/ssti-blind-oob.yaml` |
 | `template-injection-reflection` | Tier 1 | `reflection` | `template-injection/template-injection-reflection.yaml` |
-| `ssti-blind-timing` | Tier 1 | `timing` | `template-injection/ssti-blind-timing.yaml` |
+| `ssti-blind-timing` | Tier 1 | `timing` | `ssti/ssti-blind-timing.yaml` |
 
 ### GraphQL
 
@@ -151,7 +153,7 @@ The engine discovers this tree automatically; no `--load-plugin` flag exists.
 | `missing-security-headers` | Tier 1 | `header` (security) | `headers/missing-security-headers.yaml` | ⭐ **Yes** |
 | `cookie-flags` | Tier 1 | `cookie` | `cookies/cookie-flags.yaml` | ⭐ **Yes** |
 | `cors-misconfig` | Tier 1 | `cors` | `cors/cors-misconfig.yaml` | |
-| `insecure-cors-preflight` | Tier 1 | `cors` | `cors/insecure-cors-preflight.yaml` | |
+| `insecure-cors-preflight` | Tier 1 | `cors` | `insecure-cors/insecure-cors-preflight.yaml` | |
 | `crlf-header-injection` | Tier 1 | `header` (crlf) | `crlf/crlf-header-injection.yaml` | |
 | `http-response-splitting` | Tier 1 | `header` | `http-response-splitting/http-response-splitting.yaml` | |
 | `csrf-token-absence` | Tier 1 | `header` (csrf) | `csrf/csrf-token-absence.yaml` | |
@@ -181,7 +183,7 @@ The engine discovers this tree automatically; no `--load-plugin` flag exists.
 | `xxe-oob` | Tier 1 | `oob` (required) | `xxe/xxe-oob.yaml` |
 | `xxe-reflected-basic` | Tier 1 | `reflection` | `xxe/xxe-reflected-basic.yaml` |
 | `xxe-blind-oob` | Tier 1 | `oob` (required) | `xxe-blind/xxe-blind-oob.yaml` |
-| `xml-external-entity-blind` | Tier 1 | `error` | `xxe/xml-external-entity-blind.yaml` |
+| `xml-external-entity-blind` | Tier 1 | `error` | `xxe-blind-oob/xml-external-entity-blind.yaml` |
 | `ssi-injection` | Tier 1 | `error` (ssi) | `ssi-injection/ssi-injection.yaml` |
 
 ### Framework-specific
@@ -222,6 +224,96 @@ The engine discovers this tree automatically; no `--load-plugin` flag exists.
 | `web-cache-poisoning-basic` | Tier 1 | `differential` | `web-cache/web-cache-poisoning-basic.yaml` |
 | `cache-poisoning-host-header` | Tier 1 | `differential` | `cache-poisoning/cache-poisoning-host-header.yaml` |
 | `missing-rate-limit` | Tier 1 | `header` (ratelimit) | `rate-limit/missing-rate-limit.yaml` |
+
+### Critical Control-Plane / Secret Exposure
+
+These read-only probes cover rare but high-impact exposure surfaces. Their
+custom `critical_exposure` signatures are marker-based and capped at `firm`;
+they do not claim browser execution, authentication bypass, or RCE by
+themselves.
+
+| Plugin | Tier | Oracle | File | Severity |
+|--------|------|--------|------|----------|
+| `aws-credentials-exposure` | Tier 1 | `error` (`critical_exposure`) | `aws-credentials/aws-credentials-exposure.yaml` | critical |
+| `npmrc-token-exposure` | Tier 1 | `error` (`critical_exposure`) | `npmrc-token/npmrc-token-exposure.yaml` | critical |
+| `composer-auth-exposure` | Tier 1 | `error` (`critical_exposure`) | `composer-auth/composer-auth-exposure.yaml` | critical |
+| `terraform-state-exposure` | Tier 1 | `error` (`critical_exposure`) | `terraform-state/terraform-state-exposure.yaml` | critical |
+| `kubernetes-config-exposure` | Tier 1 | `error` (`critical_exposure`) | `kubernetes-config/kubernetes-config-exposure.yaml` | critical |
+| `gitlab-runner-config-exposure` | Tier 1 | `error` (`critical_exposure`) | `gitlab-runner/gitlab-runner-config-exposure.yaml` | critical |
+| `spring-config-exposure` | Tier 1 | `error` (`critical_exposure`) | `spring-config/spring-config-exposure.yaml` | high |
+| `vault-api-exposure` | Tier 1 | `error` (`critical_exposure`) | `vault-api/vault-api-exposure.yaml` | critical |
+| `consul-api-exposure` | Tier 1 | `error` (`critical_exposure`) | `consul-api/consul-api-exposure.yaml` | high |
+| `etcd-api-exposure` | Tier 1 | `error` (`critical_exposure`) | `etcd-api/etcd-api-exposure.yaml` | critical |
+| `docker-api-exposure` | Tier 1 | `error` (`critical_exposure`) | `docker-api/docker-api-exposure.yaml` | critical |
+| `kubernetes-api-exposure` | Tier 1 | `error` (`critical_exposure`) | `kubernetes-api/kubernetes-api-exposure.yaml` | critical |
+| `jenkins-script-console-exposure` | Tier 1 | `error` (`critical_exposure`) | `jenkins-script/jenkins-script-console-exposure.yaml` | critical |
+| `jmx-console-exposure` | Tier 1 | `error` (`critical_exposure`) | `jmx-console/jmx-console-exposure.yaml` | critical |
+| `solr-admin-exposure` | Tier 1 | `error` (`critical_exposure`) | `solr-admin/solr-admin-exposure.yaml` | high |
+| `elasticsearch-api-exposure` | Tier 1 | `error` (`critical_exposure`) | `elasticsearch-api/elasticsearch-api-exposure.yaml` | critical |
+| `kibana-api-exposure` | Tier 1 | `error` (`critical_exposure`) | `kibana-api/kibana-api-exposure.yaml` | high |
+| `grafana-api-exposure` | Tier 1 | `error` (`critical_exposure`) | `grafana-api/grafana-api-exposure.yaml` | high |
+| `rabbitmq-management-exposure` | Tier 1 | `error` (`critical_exposure`) | `rabbitmq-management/rabbitmq-management-exposure.yaml` | critical |
+| `jupyter-api-exposure` | Tier 1 | `error` (`critical_exposure`) | `jupyter-api/jupyter-api-exposure.yaml` | critical |
+| `phpmyadmin-exposure` | Tier 1 | `error` (`critical_exposure`) | `phpmyadmin/phpmyadmin-exposure.yaml` | critical |
+| `adminer-exposure` | Tier 1 | `error` (`critical_exposure`) | `adminer/adminer-exposure.yaml` | critical |
+| `laravel-debug-exposure` | Tier 1 | `error` (`critical_exposure`) | `laravel-debug/laravel-debug-exposure.yaml` | high |
+| `django-debug-exposure` | Tier 1 | `error` (`critical_exposure`) | `django-debug/django-debug-exposure.yaml` | high |
+| `h2-console-exposure` | Tier 1 | `error` (`critical_exposure`) | `h2-console/h2-console-exposure.yaml` | critical |
+| `saml-metadata-exposure` | Tier 1 | `error` (`critical_exposure`) | `saml-metadata/saml-metadata-exposure.yaml` | high |
+| `oauth-client-secret-exposure` | Tier 1 | `error` (`critical_exposure`) | `oauth-client-secret/oauth-client-secret-exposure.yaml` | critical |
+| `github-actions-config-exposure` | Tier 1 | `error` (`critical_exposure`) | `github-actions/github-actions-config-exposure.yaml` | high |
+| `heapdump-exposure` | Tier 1 | `error` (`critical_exposure`) | `heapdump/heapdump-exposure.yaml` | critical |
+| `minio-admin-exposure` | Tier 1 | `error` (`critical_exposure`) | `minio-admin/minio-admin-exposure.yaml` | critical |
+| `azure-credentials-exposure` | Tier 1 | `error` (`critical_exposure`) | `azure-credentials/azure-credentials-exposure.yaml` | critical |
+| `gcp-service-account-exposure` | Tier 1 | `error` (`critical_exposure`) | `gcp-service-account/gcp-service-account-exposure.yaml` | critical |
+| `digitalocean-token-exposure` | Tier 1 | `error` (`critical_exposure`) | `digitalocean-token/digitalocean-token-exposure.yaml` | critical |
+| `slack-token-exposure` | Tier 1 | `error` (`critical_exposure`) | `slack-token/slack-token-exposure.yaml` | critical |
+| `stripe-secret-exposure` | Tier 1 | `error` (`critical_exposure`) | `stripe-secret/stripe-secret-exposure.yaml` | critical |
+| `twilio-token-exposure` | Tier 1 | `error` (`critical_exposure`) | `twilio-token/twilio-token-exposure.yaml` | critical |
+| `sendgrid-key-exposure` | Tier 1 | `error` (`critical_exposure`) | `sendgrid-key/sendgrid-key-exposure.yaml` | critical |
+| `private-key-exposure` | Tier 1 | `error` (`critical_exposure`) | `private-key/private-key-exposure.yaml` | critical |
+| `ssh-private-key-exposure` | Tier 1 | `error` (`critical_exposure`) | `ssh-private-key/ssh-private-key-exposure.yaml` | critical |
+| `jwt-secret-exposure` | Tier 1 | `error` (`critical_exposure`) | `jwt-secret/jwt-secret-exposure.yaml` | critical |
+| `ansible-vault-exposure` | Tier 1 | `error` (`critical_exposure`) | `ansible-vault/ansible-vault-exposure.yaml` | critical |
+| `helm-values-exposure` | Tier 1 | `error` (`critical_exposure`) | `helm-values/helm-values-exposure.yaml` | critical |
+| `pip-config-exposure` | Tier 1 | `error` (`critical_exposure`) | `pip-config/pip-config-exposure.yaml` | critical |
+| `pypi-token-exposure` | Tier 1 | `error` (`critical_exposure`) | `pypi-token/pypi-token-exposure.yaml` | critical |
+| `nuget-key-exposure` | Tier 1 | `error` (`critical_exposure`) | `nuget-key/nuget-key-exposure.yaml` | critical |
+| `cargo-token-exposure` | Tier 1 | `error` (`critical_exposure`) | `cargo-token/cargo-token-exposure.yaml` | critical |
+| `netrc-credentials-exposure` | Tier 1 | `error` (`critical_exposure`) | `netrc-credentials/netrc-credentials-exposure.yaml` | critical |
+| `pgpass-exposure` | Tier 1 | `error` (`critical_exposure`) | `pgpass/pgpass-exposure.yaml` | critical |
+| `database-url-exposure` | Tier 1 | `error` (`critical_exposure`) | `database-url/database-url-exposure.yaml` | critical |
+| `mongodb-uri-exposure` | Tier 1 | `error` (`critical_exposure`) | `mongodb-uri/mongodb-uri-exposure.yaml` | critical |
+| `redis-config-exposure` | Tier 1 | `error` (`critical_exposure`) | `redis-config/redis-config-exposure.yaml` | critical |
+| `firebase-config-exposure` | Tier 1 | `error` (`critical_exposure`) | `firebase-config/firebase-config-exposure.yaml` | critical |
+| `sentry-dsn-exposure` | Tier 1 | `error` (`critical_exposure`) | `sentry-dsn/sentry-dsn-exposure.yaml` | high |
+| `datadog-key-exposure` | Tier 1 | `error` (`critical_exposure`) | `datadog-key/datadog-key-exposure.yaml` | critical |
+| `caddy-admin-exposure` | Tier 1 | `error` (`critical_exposure`) | `caddy-admin/caddy-admin-exposure.yaml` | critical |
+| `traefik-api-exposure` | Tier 1 | `error` (`critical_exposure`) | `traefik-api/traefik-api-exposure.yaml` | critical |
+| `nginx-status-exposure` | Tier 1 | `error` (`critical_exposure`) | `nginx-status/nginx-status-exposure.yaml` | high |
+| `haproxy-stats-exposure` | Tier 1 | `error` (`critical_exposure`) | `haproxy-stats/haproxy-stats-exposure.yaml` | high |
+| `envoy-admin-exposure` | Tier 1 | `error` (`critical_exposure`) | `envoy-admin/envoy-admin-exposure.yaml` | critical |
+| `istio-debug-exposure` | Tier 1 | `error` (`critical_exposure`) | `istio-debug/istio-debug-exposure.yaml` | critical |
+| `zookeeper-admin-exposure` | Tier 1 | `error` (`critical_exposure`) | `zookeeper-admin/zookeeper-admin-exposure.yaml` | critical |
+| `kafka-rest-exposure` | Tier 1 | `error` (`critical_exposure`) | `kafka-rest/kafka-rest-exposure.yaml` | critical |
+| `kafka-ui-exposure` | Tier 1 | `error` (`critical_exposure`) | `kafka-ui/kafka-ui-exposure.yaml` | high |
+| `argo-cd-api-exposure` | Tier 1 | `error` (`critical_exposure`) | `argo-cd/argo-cd-api-exposure.yaml` | critical |
+| `spinnaker-api-exposure` | Tier 1 | `error` (`critical_exposure`) | `spinnaker/spinnaker-api-exposure.yaml` | critical |
+| `tekton-dashboard-exposure` | Tier 1 | `error` (`critical_exposure`) | `tekton/tekton-dashboard-exposure.yaml` | high |
+| `drone-ci-exposure` | Tier 1 | `error` (`critical_exposure`) | `drone-ci/drone-ci-exposure.yaml` | critical |
+| `teamcity-server-exposure` | Tier 1 | `error` (`critical_exposure`) | `teamcity-server/teamcity-server-exposure.yaml` | critical |
+| `bamboo-server-exposure` | Tier 1 | `error` (`critical_exposure`) | `bamboo-server/bamboo-server-exposure.yaml` | critical |
+| `sonarqube-api-exposure` | Tier 1 | `error` (`critical_exposure`) | `sonarqube-api/sonarqube-api-exposure.yaml` | high |
+| `nexus-repository-exposure` | Tier 1 | `error` (`critical_exposure`) | `nexus-repository/nexus-repository-exposure.yaml` | critical |
+| `artifactory-api-exposure` | Tier 1 | `error` (`critical_exposure`) | `artifactory/artifactory-api-exposure.yaml` | critical |
+| `harbor-registry-exposure` | Tier 1 | `error` (`critical_exposure`) | `harbor-registry/harbor-registry-exposure.yaml` | critical |
+| `keycloak-admin-exposure` | Tier 1 | `error` (`critical_exposure`) | `keycloak-admin/keycloak-admin-exposure.yaml` | critical |
+| `airflow-api-exposure` | Tier 1 | `error` (`critical_exposure`) | `airflow-api/airflow-api-exposure.yaml` | critical |
+| `superset-api-exposure` | Tier 1 | `error` (`critical_exposure`) | `superset-api/superset-api-exposure.yaml` | critical |
+| `metabase-api-exposure` | Tier 1 | `error` (`critical_exposure`) | `metabase-api/metabase-api-exposure.yaml` | critical |
+| `oauth-well-known-exposure` | Tier 1 | `error` (`critical_exposure`) | `oauth-well-known/oauth-well-known-exposure.yaml` | high |
+| `oidc-config-exposure` | Tier 1 | `error` (`critical_exposure`) | `oidc-config/oidc-config-exposure.yaml` | high |
+| `registry-catalog-exposure` | Tier 1 | `error` (`critical_exposure`) | `registry-catalog/registry-catalog-exposure.yaml` | critical |
 
 ### Native PoC (Tier 3)
 

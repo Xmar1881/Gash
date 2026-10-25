@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: actuator-index-exposure
+name: Actuator Index Exposure
+description: Detects an exposed Spring Boot Actuator index listing management links.
+author: GASH contributors
+severity: medium
+tags: [spring, actuator, exposure, management]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 4
+phase: discovery
+order: 116
+api_version: "1.0"
+tests: tests/fixtures/endpoint-exposure/
+request:
+  method: GET
+  paths: ["/actuator", "/actuator/"]
+oracle:
+  name: version
+  params:
+    mode: banner
+    banner_regex: '(?i)("_links"\s*:|"health"\s*:|"env"\s*:|"beans"\s*:).*actuator'

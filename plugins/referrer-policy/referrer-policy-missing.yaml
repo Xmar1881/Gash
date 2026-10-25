@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: referrer-policy-missing
+name: Referrer Policy Missing
+description: Detects responses that omit Referrer-Policy privacy hardening.
+author: GASH contributors
+severity: low
+tags: [headers, privacy, misconfig]
+safe: true
+deep: false
+active: false
+requires_auth: false
+phase: probe
+order: 102
+api_version: "1.0"
+tests: tests/fixtures/header-policy-missing/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: Referrer-Policy
+    policy: missing

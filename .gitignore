@@ -8,6 +8,9 @@ dist/
 # Local scanner state (suppress file, trust db copies, local runs).
 .gash/
 
+# Local scan output (findings and reports stay on the operator's machine).
+reports/
+
 # Windows executables (built artifacts, covered by dist/ too).
 *.exe
 

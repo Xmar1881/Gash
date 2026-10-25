@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: traefik-api-exposure
+name: Traefik API Exposure
+description: Detects exposed Traefik routers and entrypoint configuration.
+author: GASH contributors
+severity: critical
+tags: [traefik, proxy, control-plane, exposure]
+safe: false
+deep: false
+active: false
+requires_auth: false
+max_requests: 6
+phase: discovery
+order: 176
+api_version: "1.0"
+tests: tests/fixtures/critical-exposure/
+request:
+  method: GET
+  paths: ["/api/rawdata", "/api/http/routers", "/dashboard/"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_traefik_api]
