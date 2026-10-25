@@ -225,10 +225,41 @@ func signalOf(path, window string) (signal string, strong bool) {
 		strings.Contains(lower, "php version") && strings.Contains(lower, "phpinfo()") {
 		return "phpinfo", true
 	}
+	// Binary / Data extensions that should NEVER be HTML:
+	isHTML := strings.Contains(lower, "<!doctype html") || strings.Contains(lower, "<html") || strings.Contains(lower, "<body")
+	if isHTML {
+		for _, ext := range []string{".sql", ".zip", ".tar", ".gz", ".tgz", ".swp", ".ds_store", ".log"} {
+			if strings.HasSuffix(pathLower, ext) {
+				return "", false // HTML body returned for binary/sql/log path is a soft-404, not an exposed file
+			}
+		}
+	}
+
+	if strings.HasSuffix(pathLower, ".sql") {
+		if !isHTML && (strings.Contains(lower, "create table") || strings.Contains(lower, "insert into") || strings.Contains(lower, "-- mysql") || strings.Contains(lower, "-- postgres") || strings.Contains(lower, "drop table")) {
+			return "sql-dump", true
+		}
+		return "", false
+	}
+	if strings.HasSuffix(pathLower, ".swp") {
+		if strings.HasPrefix(window, "b0") {
+			return "vim-swap", true
+		}
+		return "", false
+	}
+	if strings.HasSuffix(pathLower, ".zip") {
+		if strings.HasPrefix(window, "PK") {
+			return "zip-archive", true
+		}
+		return "", false
+	}
 	if containsAny(configPatterns) {
 		return "config-pattern", true
 	}
-	if containsAny(adminKeywords) {
+	isAdminPath := strings.Contains(pathLower, "admin") || strings.Contains(pathLower, "login") ||
+		strings.Contains(pathLower, "dashboard") || strings.Contains(pathLower, "console") ||
+		strings.Contains(pathLower, "panel") || strings.Contains(pathLower, "manager")
+	if isAdminPath && containsAny(adminKeywords) {
 		if containsAny(notFoundMarkers) {
 			return "admin-keyword+soft404-phrase", false
 		}

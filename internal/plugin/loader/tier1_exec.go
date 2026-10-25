@@ -436,10 +436,14 @@ func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File
 			}
 		}
 		ev, err := o.Verify(ctx, cls, false, oracle.HeaderParams{
-			Headers:        headers,
-			Mode:           mode,
-			RequestHeaders: reqHeadersChk,
-			Body:           body,
+			Headers:         headers,
+			Mode:            mode,
+			RequestHeaders:  reqHeadersChk,
+			Body:            body,
+			HeaderName:      getStringParam(oracleParams, "header_name", ""),
+			Policy:          getStringParam(oracleParams, "policy", ""),
+			RequiredTokens:  getStringSliceParam(oracleParams, "required_tokens"),
+			ForbiddenTokens: getStringSliceParam(oracleParams, "forbidden_tokens"),
 		})
 		if err != nil {
 			return nil, err
@@ -530,7 +534,7 @@ func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File
 					controlBody = cBody
 				}
 			}
-		} else if strings.EqualFold(mode, "backup_file") || strings.EqualFold(mode, "content") {
+		} else if strings.EqualFold(mode, "backup_file") || strings.EqualFold(mode, "content") || strings.EqualFold(mode, "critical_exposure") {
 			// Soft-404 kontrolü (GASH-037/057/058/059/066): imza genel hata/SPA
 			// sayfasından gelmiyorsa kanıt değeri vardır. Kontrol isteği tek
 			// ve isimsizdir; yalnızca 200 gövdesi karşılaştırılır.
@@ -720,6 +724,9 @@ func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File
 			TrueBodies:        trueBodies,
 			FalseBodies:       falseBodies,
 			ControlBody:       ctrlBody,
+			ParamName:         param,
+			TruePayload:       payload,
+			FalsePayload:      falsePayload,
 			Repeats:           repeats,
 			ConfidenceCeiling: ceiling,
 		})

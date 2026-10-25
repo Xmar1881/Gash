@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: security-txt-exposure
+name: Security TXT Discovery
+description: Detects a public security.txt policy and extracts its contact marker for reconnaissance.
+author: GASH contributors
+severity: info
+tags: [well-known, security-txt, discovery]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 2
+phase: discovery
+order: 117
+api_version: "1.0"
+tests: tests/fixtures/endpoint-exposure/
+request:
+  method: GET
+  paths: ["/.well-known/security.txt"]
+oracle:
+  name: version
+  params:
+    mode: banner
+    banner_regex: '(?im)^\s*(Contact|Expires|Policy):\s*\S+'

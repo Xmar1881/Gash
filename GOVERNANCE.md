@@ -9,13 +9,13 @@
 - **Code changes**: Single maintainer review; PRs from community require maintainer approval
 - **Security issues**: Handled via GitHub Security Advisories; maintainer coordinates disclosure
 - **Release decisions**: Maintainer tags releases; changelog generated from conventional commits
-- **Direction/roadmap**: Maintainer sets priorities; community input via GitHub Discussions
+- **Direction/roadmap**: Maintainer sets priorities; community input via GitHub Issues
 
 ## Contributor Roles
 
 | Role | Criteria | Permissions |
 |------|----------|-------------|
-| Contributor | Merged ≥1 PR | GitHub Discussions, Issues |
+| Contributor | Merged ≥1 PR | Issues |
 | Regular Contributor | Merged ≥5 PRs, active ≥3 months | Can review non-security PRs |
 | Security Reviewer | Approved by maintainer | Security advisory access |
 

@@ -6,58 +6,43 @@ package engine
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/Xmar1881/Gash/internal/discovery"
+	"github.com/Xmar1881/Gash/internal/plugin"
+	"github.com/Xmar1881/Gash/internal/probe"
 )
 
 // detectRuntimeTech targets one passive GET plus optional favicon fetch.
 // What: Header, cookie-name, body-marker, and favicon-hash fingerprint.
-// Why: Chain gating needs runtime context; both fetches are same-target,
-// bounded (512KB/64KB), short-timeout, and best-effort (error yields empty).
-func (e *Engine) detectRuntimeTech(ctx context.Context, target string) {
+// Why: Chain gating needs runtime context; both fetches use the same policy,
+// auth context, scope, budget, redirect, and outer scan deadline as plugins.
+func (e *Engine) detectRuntimeTech(ctx context.Context, target string, client *probe.Client) {
 	e.detectedTech = map[string]bool{}
 	e.detectedCaps = map[string]bool{}
-	if e.sharedPolicy != nil && e.cfg.MaxRequestsTotal > 0 && e.sharedPolicy.TotalCount() >= e.cfg.MaxRequestsTotal {
+	if client == nil {
 		return
 	}
 	u, err := url.Parse(target)
 	if err != nil || u.Host == "" {
 		return
 	}
-	var tr = http.DefaultTransport
-	if strings.TrimSpace(e.cfg.ProxyURL) != "" {
-		if pu, err := url.Parse(strings.TrimSpace(e.cfg.ProxyURL)); err == nil {
-			if defTr, ok := http.DefaultTransport.(*http.Transport); ok {
-				t := defTr.Clone()
-				t.Proxy = http.ProxyURL(pu)
-				tr = t
-			}
-		}
-	}
-	client := &http.Client{Transport: tr, Timeout: 8 * time.Second}
-	reqCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, target, nil)
+	detectCtx := plugin.WithPlugin(ctx, "engine-tech-detect", true, nil)
+	detectCtx = probe.WithNoWAFBypass(detectCtx)
+	resp, err := client.Send(detectCtx, http.MethodGet, target, map[string]string{
+		"User-Agent": "Gash-techfp/1.0",
+	}, nil)
 	if err != nil {
 		return
 	}
-	req.Header.Set("User-Agent", "Gash-techfp/1.0")
-	resp, err := client.Do(req)
-	if err != nil {
-		return
+	body := resp.Body
+	if len(body) > 512*1024 {
+		body = body[:512*1024]
 	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
-	var cookies []*http.Cookie
-	if resp.Cookies() != nil {
-		cookies = resp.Cookies()
-	}
-	fp := discovery.FingerprintTech(resp.Header, cookies, string(body))
+	cookies := (&http.Response{Header: resp.Headers}).Cookies()
+	fp := discovery.FingerprintTech(resp.Headers, cookies, string(body))
 	for _, t := range fp.Tech {
 		e.detectedTech[strings.ToLower(strings.TrimSpace(t))] = true
 	}
@@ -67,18 +52,16 @@ func (e *Engine) detectRuntimeTech(ctx context.Context, target string) {
 	// Favicon: only when the page references it (one extra same-host GET).
 	if strings.Contains(strings.ToLower(string(body)), "favicon") {
 		favURL := (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: "/favicon.ico"}).String()
-		fctx, fcancel := context.WithTimeout(ctx, 5*time.Second)
-		defer fcancel()
-		freq, err := http.NewRequestWithContext(fctx, http.MethodGet, favURL, nil)
+		fresp, err := client.Send(detectCtx, http.MethodGet, favURL, map[string]string{
+			"User-Agent": "Gash-techfp/1.0",
+		}, nil)
 		if err != nil {
 			return
 		}
-		fresp, err := client.Do(freq)
-		if err != nil {
-			return
+		fdata := fresp.Body
+		if len(fdata) > 64*1024 {
+			fdata = fdata[:64*1024]
 		}
-		defer func() { _ = fresp.Body.Close() }()
-		fdata, _ := io.ReadAll(io.LimitReader(fresp.Body, 64*1024))
 		if h := discovery.FaviconHash(fdata); h != "" {
 			e.detectedCaps["favicon:"+h[:16]] = true
 		}

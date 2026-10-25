@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: jenkins-script-console-exposure
+name: Jenkins Script Console Exposure
+description: Detects public Jenkins administration and script console pages.
+author: GASH contributors
+severity: critical
+tags: [jenkins, ci, admin, exposure]
+safe: false
+deep: false
+active: false
+requires_auth: false
+max_requests: 8
+phase: discovery
+order: 133
+api_version: "1.0"
+tests: tests/fixtures/critical-exposure/
+request:
+  method: GET
+  paths: ["/script", "/scriptText", "/manage"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_jenkins_script]

@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: terraform-state-exposure
+name: Terraform State Exposure
+description: Detects publicly served Terraform state containing infrastructure and secret references.
+author: GASH contributors
+severity: critical
+tags: [terraform, cloud, secrets, exposure]
+safe: false
+deep: false
+active: false
+requires_auth: false
+max_requests: 8
+phase: discovery
+order: 124
+api_version: "1.0"
+tests: tests/fixtures/critical-exposure/
+request:
+  method: GET
+  paths: ["/terraform.tfstate", "/terraform.tfstate.backup", "/.terraform/terraform.tfstate"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_terraform_state]

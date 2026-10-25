@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: kubernetes-config-exposure
+name: Kubernetes Config Exposure
+description: Detects exposed kubeconfig files containing cluster and user profiles.
+author: GASH contributors
+severity: critical
+tags: [kubernetes, cloud, secrets, exposure]
+safe: false
+deep: false
+active: false
+requires_auth: false
+max_requests: 8
+phase: discovery
+order: 125
+api_version: "1.0"
+tests: tests/fixtures/critical-exposure/
+request:
+  method: GET
+  paths: ["/.kube/config", "/kubeconfig", "/k8s/config"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_kubernetes_config]

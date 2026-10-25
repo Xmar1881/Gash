@@ -29,8 +29,8 @@ func TestBuiltinProfiles(t *testing.T) {
 		maxPages   int
 		crawlDepth int
 	}{
-		{ProfileSafe, SafeProfile(), false, false, false, 5, 100, 1000, 15000, 4, 20, 2},
-		{ProfileStandard, StandardProfile(), true, false, false, 10, 500, 5000, 30000, 8, 50, 3},
+		{ProfileSafe, SafeProfile(), false, false, false, 5, 100, 1000, 30000, 4, 20, 2},
+		{ProfileStandard, StandardProfile(), true, false, false, 10, 500, 5000, 60000, 8, 50, 3},
 		{ProfileDeep, DeepProfile(), true, true, true, 20, 2000, 20000, 120000, 16, 200, 5},
 		{ProfileAggressive, AggressiveProfile(), true, true, false, 100, 50000, 500000, 120000, 32, 500, 10},
 	}

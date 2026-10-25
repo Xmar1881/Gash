@@ -166,14 +166,23 @@ func runBulkScan(
 		maxResponseBytes = 5 * 1024 * 1024
 	}
 	// Shared policy session: global budget (MaxRequestsTotal) is strictly shared across all targets
-	sharedPolicy := plugin.NewPolicySession(plugin.PolicyConfig{
-		MaxRequestsPerTarget: cfg.MaxRequestsPerTarget,
-		MaxRequestsTotal:     cfg.MaxRequestsTotal,
-		Scope:                cfg.Scope,
-		RatePerSecond:        cfg.RatePerSecond,
-		MaxResponseBytes:     maxResponseBytes,
-		ProxyURL:             parsedProxy,
-	}, nil)
+	pcfg := plugin.DefaultPolicyConfig()
+	pcfg.MaxRequestsPerTarget = cfg.MaxRequestsPerTarget
+	pcfg.MaxRequestsTotal = cfg.MaxRequestsTotal
+	pcfg.Scope = cfg.Scope
+	pcfg.RatePerSecond = cfg.RatePerSecond
+	pcfg.MaxResponseBytes = maxResponseBytes
+	pcfg.ProxyURL = parsedProxy
+	if cfg.ScanTimeout > 0 {
+		pcfg.ScanTimeout = cfg.ScanTimeout
+	} else if cfg.PluginTimeoutMs > 0 {
+		pcfg.ScanTimeout = 10 * time.Duration(cfg.PluginTimeoutMs) * time.Millisecond
+	}
+	// All targets share this policy session. Keep host concurrency bounded
+	// so parallel plugin workers do not pile up behind one rate limiter.
+	pcfg.MaxConcurrencyPerHost = 8
+	pcfg.BackpressureLimit = 32
+	sharedPolicy := plugin.NewPolicySession(pcfg, nil)
 
 	eng := engine.New(reg, cfg)
 	for id, rec := range records {

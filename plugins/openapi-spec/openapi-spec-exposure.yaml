@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: openapi-spec-exposure
+name: OpenAPI Specification Exposure
+description: Detects publicly served OpenAPI documents on common specification paths.
+author: GASH contributors
+severity: low
+tags: [api, openapi, exposure, discovery]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 12
+phase: discovery
+order: 111
+api_version: "1.0"
+tests: tests/fixtures/endpoint-exposure/
+request:
+  method: GET
+  paths: ["/openapi.json", "/openapi.yaml", "/swagger.json", "/v3/api-docs", "/api-docs"]
+oracle:
+  name: version
+  params:
+    mode: banner
+    banner_regex: '(?i)"openapi"\s*:\s*"3\.'

@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: hsts-hardening
+name: HSTS Directive Hardening
+description: Detects weak Strict-Transport-Security directives that omit long-lived transport protection.
+author: GASH contributors
+severity: medium
+tags: [headers, hsts, misconfig]
+safe: true
+deep: false
+active: false
+requires_auth: false
+phase: probe
+order: 107
+api_version: "1.0"
+tests: tests/fixtures/header-policy-hsts/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: Strict-Transport-Security
+    policy: required
+    required_tokens: ["max-age=31536000", includeSubDomains]

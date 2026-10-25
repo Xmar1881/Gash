@@ -144,6 +144,10 @@ func TestHeaderSpecialModesMatrix(t *testing.T) {
 		{"frame weak", HeaderParams{Mode: "frame", Headers: http.Header{"X-Frame-Options": {"ALLOW-FROM https://x"}}}, VerdictAccept, plugin.ConfidenceFirm},
 		{"frame csp wildcard", HeaderParams{Mode: "frame", Headers: http.Header{"Content-Security-Policy": {"frame-ancestors *"}}}, VerdictAccept, plugin.ConfidenceConfirmed},
 		{"frame csp allowlist", HeaderParams{Mode: "frame", Headers: http.Header{"Content-Security-Policy": {"frame-ancestors https://x"}}}, VerdictReject, ""},
+		{"policy missing", HeaderParams{Mode: "policy", HeaderName: "Permissions-Policy", Policy: "missing"}, VerdictAccept, plugin.ConfidenceConfirmed},
+		{"policy required token missing", HeaderParams{Mode: "policy", HeaderName: "Strict-Transport-Security", Policy: "required", RequiredTokens: []string{"max-age=31536000"}, Headers: http.Header{"Strict-Transport-Security": {"max-age=60"}}}, VerdictAccept, plugin.ConfidenceFirm},
+		{"policy forbidden header", HeaderParams{Mode: "policy", HeaderName: "Server", Policy: "forbidden", Headers: http.Header{"Server": {"nginx"}}}, VerdictAccept, plugin.ConfidenceFirm},
+		{"policy forbidden token absent", HeaderParams{Mode: "policy", HeaderName: "Content-Security-Policy", Policy: "forbidden_tokens", ForbiddenTokens: []string{"unsafe-inline"}, Headers: http.Header{"Content-Security-Policy": {"default-src 'self'"}}}, VerdictReject, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

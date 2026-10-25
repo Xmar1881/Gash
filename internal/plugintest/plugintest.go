@@ -201,13 +201,17 @@ func Evaluate(ctx context.Context, oracleName string, f Fixture, oobEnabled bool
 			}
 		}
 		return o.Verify(ctx, cls, false, oracle.HeaderParams{
-			Headers:        toHeader(f.Headers),
-			Mode:           mode,
-			RequestHeaders: reqHeaders,
-			Body:           f.Body,
-			Status:         f.Status,
-			CanaryHost:     getStringParam(oracleParams, "canary_host", canary),
-			ControlBody:    f.ControlBody,
+			Headers:         toHeader(f.Headers),
+			Mode:            mode,
+			RequestHeaders:  reqHeaders,
+			Body:            f.Body,
+			Status:          f.Status,
+			CanaryHost:      getStringParam(oracleParams, "canary_host", canary),
+			ControlBody:     f.ControlBody,
+			HeaderName:      getStringParam(oracleParams, "header_name", ""),
+			Policy:          getStringParam(oracleParams, "policy", ""),
+			RequiredTokens:  getStringSliceParam(oracleParams, "required_tokens"),
+			ForbiddenTokens: getStringSliceParam(oracleParams, "forbidden_tokens"),
 		})
 	case "redirect":
 		var o oracle.RedirectOracle

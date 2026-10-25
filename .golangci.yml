@@ -19,6 +19,18 @@ linters:
     misspell:
       ignore-rules:
         - mamal
+  exclusions:
+    # Default builds link always-error headless stubs; deep builds link the real
+    # verifier. SA4023 cannot see across build tags.
+    rules:
+      - path: internal/bench/verify\.go
+        linters:
+          - staticcheck
+        text: "SA4023"
+      - path: internal/engine/browser_verify\.go
+        linters:
+          - staticcheck
+        text: "SA4023"
 formatters:
   enable:
     - gofmt

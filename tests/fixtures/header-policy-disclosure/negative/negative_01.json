@@ -1,0 +1,10 @@
+{
+  "name": "fingerprint headers removed",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body>Welcome</body></html>",
+  "expected_verdict": "reject"
+}

@@ -22,9 +22,10 @@ Why: One page for purpose, model, quickstart, docs, metrics, and license.
 [![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go)](go.mod)
 [![Toolchain](https://img.shields.io/badge/toolchain-go1.27.3-00ADD8)](go.mod)
 [![CI](https://github.com/Xmar1881/Gash/actions/workflows/plugin-ci.yml/badge.svg?branch=main)](https://github.com/Xmar1881/Gash/actions/workflows/plugin-ci.yml)
-[![Release](https://img.shields.io/github/v/release/Xmar1881/Gash?include_prereleases&sort=semver)](https://github.com/Xmar1881/Gash/releases)
 
 > Evidence first. Plugins everywhere. Findings you can defend.
+
+**Menu:** [Quickstart](#quickstart) · [Install](#installation) · [Detectors](#detector-summary) · [Docs](docs/README.md) · [Plugins](plugins/README.md) · [Contributing](CONTRIBUTING.md) · [Support](SUPPORT.md)
 
 Gash is a Go-native, plugin-driven web security scanner for teams that care
 about signal, explainability, and controlled execution. Plugins propose
@@ -52,10 +53,29 @@ permission to test (`--scope` opts into a strict allowlist; see Legal).
   repeat rules, baseline gating (soft-404, WAF, dynamic masking), and a
   per-plugin fixture report under `docs/metrics/`.
 
+## Current Status
+
+| Area | Current state |
+|---|---|
+| Reference catalog | 183 plugins: 174 YAML, 7 sandboxed JavaScript, 1 native PoC, and 1 native Tier 2 check |
+| Evidence model | Candidate -> oracle -> evidence -> finding; browser execution is required for browser-confirmed XSS |
+| Scan engine | Shared retry, redirect, scope, rate, request-budget, response-size, cancellation, and scan-deadline controls |
+| Discovery | BFS crawl, surface extraction, OpenAPI input, content discovery, passive JavaScript recon, SPA state/build scans, and optional browser crawl |
+| Out-of-band checks | Disabled by default; self-hosted server or the bounded local provider must be explicitly selected |
+| CI quality gates | Build, vet, vulnerability scan, static security scan, full tests, race tests, lint, fixture precision, corpus, contract, and benchmark gates |
+| Local output | Scan reports stay under `reports/` and are intentionally ignored by Git |
+
+This repository is in active development. The catalog and measurements are
+auditable, but the project is not presented as a drop-in replacement for a
+mature proxy or a broad commercial scanner. See [Known Limits](docs/known-limits.md)
+and the [benchmark reports](docs/metrics/README.md) before interpreting recall
+or comparison numbers.
+
 ## What's New / Highlights
 
-- **75 detectors** — verify with `go run ./cmd/gash plugins list`
-  (67 YAML, 7 sandboxed JS, 1 native PoC; see Detector Summary below).
+- **183 detectors** — verify with `go run ./cmd/gash plugins list`
+  (174 Tier 1 YAML, 7 sandboxed JS, 1 Tier 3 native PoC, 1 Tier 2 native;
+  see Detector Summary below).
 - **Framework-specific detectors (GASH-069..072)** — Next.js middleware
   authorization bypass (CVE-2025-29927) via a control-vs-bypass differential,
   Next.js image optimizer blind SSRF via OOB callback, secrets serialized into
@@ -72,6 +92,18 @@ permission to test (`--scope` opts into a strict allowlist; see Legal).
   differential with dual-channel proof (follow-up divergence *and* delay),
   `firm` ceiling, aggressive-gated, bounded to 10 requests on one keep-alive
   connection.
+- **Modern coverage pack** — 20 GET-only checks for browser-isolation headers,
+  CSP/HSTS hardening, runtime disclosure, API consoles, monitoring endpoints,
+  debug tooling, Git/env files, and Docker Compose exposure. Endpoint banners
+  remain explicitly `tentative` until stronger behavioral proof exists.
+- **Critical exposure pack** — 30 GET-only checks for cloud credentials,
+  CI/CD secrets, orchestration APIs, admin consoles, debug pages, heap dumps,
+  and control-plane endpoints. These use the `critical_exposure` oracle mode:
+  a marker can produce at most `firm` confidence until stronger verification
+  exists.
+- **Rare platform pack** — 50 additional GET-only checks for cloud/provider
+  keys, package-manager credentials, proxy admin APIs, service-mesh debug
+  surfaces, CI/CD control planes, artifact registries, and identity metadata.
 - **Login automation** — `--login-url` plus one credential set
   (`--login-pass-env` preferred) establishes a real form session through the
   policy pipeline; success requires an anonymous-control diff with no password
@@ -148,7 +180,7 @@ must be re-measured before being quoted as the current result; see
 
 ## How It Differs
 
-Honest comparison — Gash is experimental (`v0.1.0-dev`, 83 reference
+Honest comparison — Gash is experimental (`v0.1.0-dev`, 183 reference
 plugins) and competes on verification discipline, not on maturity or library
 size. A same-target Gash-versus-Nuclei measurement now exists on the native
 lab and fixture lab; it is small and lab-scoped, not a general parity claim.
@@ -174,10 +206,10 @@ manual depth. Use Gash when you want a small, auditable core where no plugin
 | Method | Command |
 |--------|---------|
 | **Go install** (latest) | `go install github.com/Xmar1881/Gash/cmd/gash@latest` |
-| **Binary release** | Download from [GitHub Releases](https://github.com/Xmar1881/Gash/releases) |
 | **From source** | See [Building from Source](#building-from-source) below |
 
-> Homebrew, Scoop, and Docker images are planned — see [#123](https://github.com/Xmar1881/Gash/issues/123) for tracking.
+> Homebrew, Scoop, and Docker packages are not published yet. Use `go install`
+> or build from source until those packaging paths are available.
 
 ### Building from Source
 
@@ -205,7 +237,7 @@ CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o dist/gash-$VER-darwin-arm64 .
 ```
 
 Windows note: `gash-*-windows-amd64.exe` is a console tool. Double-clicking
-only shows help and waits for `Enter`; run it from a terminal instead:
+opens the interactive menu; use a terminal for command output or automation:
 
 ```powershell
 .\dist\gash-v0.1.0-dev-windows-amd64.exe --help
@@ -214,6 +246,13 @@ only shows help and waits for `Enter`; run it from a terminal instead:
 ```
 
 ## Quickstart
+
+Interactive menu and command console (scan, plugins, bench, diff, suppress):
+
+```sh
+go run ./cmd/gash menu
+# or run the binary with no arguments in a terminal
+```
 
 Linux / macOS (`sh`) — copy-paste:
 
@@ -273,8 +312,8 @@ oracle:
 
 ## Detector Summary
 
-83 detectors via `go run ./cmd/gash plugins list`
-(74 Tier 1 YAML, 7 Tier 2 sandboxed JS, 1 Tier 3 native PoC, 1 Tier 2 native).
+183 detectors via `go run ./cmd/gash plugins list`
+(174 Tier 1 YAML, 7 Tier 2 sandboxed JS, 1 Tier 3 native PoC, 1 Tier 2 native).
 Full oracle/plugin catalog: `docs/detector-inventory.md`.
 
 | Class | Count | Examples |
@@ -289,14 +328,16 @@ Full oracle/plugin catalog: `docs/detector-inventory.md`.
 | Template injection (SSTI: reflection, blind timing, **OOB**) | 3 | `template-injection-reflection`, `ssti-blind-timing`, `ssti-blind-oob` |
 | File / path (RFI, traversal, upload, backup, listing, source maps, **sensitive files**) | 8 | `rfi-remote-include`, `path-traversal-error`, `file-upload-unrestricted`, `backup-file-exposure`, `directory-listing`, `source-map-exposure`, `file-inclusion-rfi`, `sensitive-file-exposure` |
 | Access control and logic (IDOR, LDAP x3, HPP x2, mass assignment, verb tampering, **GraphQL auth/DOS**) | 10 | `idor-differential`, `ldap-injection-differential`, `ldap-injection-blind`, `ldap-injection-oob`, `hpp-parameter-pollution`, `hpp-duplicate-emission`, `mass-assignment-basic`, `verb-tampering-bypass`, `graphql-auth-bypass`, `graphql-dos` |
-| Misconfig and headers (security headers, cookie, CORS x2, CRLF, response splitting, CSRF, clickjacking, JWT x3, version, GraphQL x2, host header, method override, error disclosure, redirect x2, management endpoints, phpinfo, WebDAV, CVE, rate limit, **debug endpoints**) | 27 | `missing-security-headers`, `cookie-flags`, `cors-misconfig`, `insecure-cors-preflight`, `crlf-header-injection`, `http-response-splitting`, `csrf-token-absence`, `clickjacking-frameable`, `jwt-token-exposure`, `jwt-alg-confusion`, `jwt-none-alg-confusion`, `server-version-disclosure`, `graphql-endpoint-discovery`, `graphql-introspection-enabled`, `host-header-injection`, `http-method-override-abuse`, `error-message-disclosure`, `open-redirect-param`, `oauth-open-redirect`, `management-endpoint-exposure`, `phpinfo-exposure`, `webdav-enabled`, `cve-dependency-scan`, `missing-rate-limit`, `debug-endpoint-exposure` |
+| Misconfig and headers (security headers, cookie, CORS x2, CRLF, response splitting, CSRF, clickjacking, JWT x3, version, GraphQL x2, host header, method override, error disclosure, redirect x2, management endpoints, phpinfo, WebDAV, CVE, rate limit, **debug endpoints**) | 37 | `missing-security-headers`, `permissions-policy-missing`, `hsts-hardening`, `csp-unsafe-directives`, `cookie-flags`, `cors-misconfig`, `insecure-cors-preflight`, `server-header-disclosure`, `powered-by-disclosure` |
+| Modern API and deployment exposure | 10 | `openapi-spec-exposure`, `swagger-ui-exposure`, `graphql-playground-exposure`, `prometheus-metrics-exposure`, `debug-toolbar-exposure`, `actuator-index-exposure`, `security-txt-exposure`, `git-config-exposure`, `environment-file-exposure`, `docker-compose-exposure` |
+| Critical control-plane and secret exposure | 80 | `aws-credentials-exposure`, `azure-credentials-exposure`, `gcp-service-account-exposure`, `kubernetes-config-exposure`, `vault-api-exposure`, `docker-api-exposure`, `argo-cd-api-exposure`, `keycloak-admin-exposure`, `registry-catalog-exposure` |
 | Insecure deserialization (error signature) | 1 | `insecure-deserialization-error` |
 | Subdomain takeover (unclaimed-service bodies) | 1 | `subdomain-takeover-basic` |
 | Web cache poisoning | 2 | `web-cache-poisoning-basic`, `cache-poisoning-host-header` |
 | Injection (JNDI, expression language, SSI, JSONP, prototype pollution) | 5 | `log4shell-jndi`, `expression-language-injection`, `ssi-injection`, `jsonp-callback-injection`, `prototype-pollution-differential` |
 | Framework-specific (Next.js middleware bypass, image optimizer SSRF) | 2 | `nextjs-middleware-bypass`, `nextjs-image-optimizer-ssrf` |
 | Native PoC (Tier 3, explicit trust) | 1 | `poc-native-header-check` |
-| **Total** | **83** | `go run ./cmd/gash plugins list` |
+| **Total** | **183** | `go run ./cmd/gash plugins list` |
 
 Engine-recon probes ship outside the plugin set: request smuggling
 (GASH-033, `internal/smuggle`), content discovery (GASH-028,
@@ -314,31 +355,32 @@ match. Counts above are plugin inventory, not real-target recall.
 
 | Document | Audience |
 |---|---|
-| `CONTRIBUTING.md` | Contribution flow, gates, checklist |
-| `docs/plugin-development.md` | Tier-independent author guide |
-| `docs/yaml-plugin-spec.md` | Tier 1 YAML reference |
-| `docs/js-plugin-spec.md` | Tier 2 JS reference (timing + execution bindings) |
-| `docs/native-plugin-spec.md` | Tier 3 native reference |
-| `docs/architecture.md` | Full engine design (Phase 1) |
-| `docs/evidence-standard.md` | Per-class proof rules (Faz 1 detail GASH-001..021; inventory through GASH-072) |
-| `docs/design/00-scope.md` | Phase 0 scope decisions |
-| `docs/SECURITY.md` | Responsible use and reporting |
-| `docs/user-guide-tr.md` | Turkish beginner guide (Türkçe, profiles + aggressive) |
-| `docs/getting-started.md` | Narrative tutorial for new users |
-| `docs/faq.md` | Frequently asked questions |
-| `docs/auth.md` | Auth contexts, dual-user BOLA matrix, and form login automation |
-| `docs/api-discovery.md` | OpenAPI test-plan flow |
-| `docs/proto-checks.md` | DNS/TLS/TCP checks and CAA gap |
-| `docs/known-limits.md` | BLOCKED and gap register (lab recall, benchmark, browser limits) |
-| `docs/technical-audit-2026-10-14.md` | Latest technical audit, priorities, and measured status |
-| `docs/report-formats.md` | JSON/SARIF/text/HTML/JUnit contracts |
-| `docs/benchmark.md` | Benchmark harness: datasets, verification, scoring, gates |
-| `docs/ci-integration.md` | CI gates (`--fail-on`, corpus, bench) |
-| `docs/detector-inventory.md` | Oracle and plugin catalog |
-| `docs/metrics/README.md` | Precision and recall index |
-| `templates/README.md` | Copy-rename starters |
-| `plugins/README.md` | Reference plugin index |
-| `CHANGELOG.md` | Release history |
+| [docs/README.md](docs/README.md) | Categorized documentation index |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contribution flow, gates, checklist |
+| [docs/plugin-development.md](docs/plugin-development.md) | Tier-independent author guide |
+| [docs/yaml-plugin-spec.md](docs/yaml-plugin-spec.md) | Tier 1 YAML reference |
+| [docs/js-plugin-spec.md](docs/js-plugin-spec.md) | Tier 2 JS reference (timing + execution bindings) |
+| [docs/native-plugin-spec.md](docs/native-plugin-spec.md) | Tier 3 native reference |
+| [docs/architecture.md](docs/architecture.md) | Full engine design (Phase 1) |
+| [docs/evidence-standard.md](docs/evidence-standard.md) | Per-class proof rules (Faz 1 detail GASH-001..021; inventory through GASH-072) |
+| [docs/design/00-scope.md](docs/design/00-scope.md) | Phase 0 scope decisions |
+| [docs/SECURITY.md](docs/SECURITY.md) | Responsible use and reporting |
+| [docs/user-guide-tr.md](docs/user-guide-tr.md) | Turkish beginner guide (Türkçe, profiles + aggressive) |
+| [docs/getting-started.md](docs/getting-started.md) | Narrative tutorial for new users |
+| [docs/faq.md](docs/faq.md) | Frequently asked questions |
+| [docs/auth.md](docs/auth.md) | Auth contexts, dual-user BOLA matrix, and form login automation |
+| [docs/api-discovery.md](docs/api-discovery.md) | OpenAPI test-plan flow |
+| [docs/proto-checks.md](docs/proto-checks.md) | DNS/TLS/TCP checks and CAA gap |
+| [docs/known-limits.md](docs/known-limits.md) | BLOCKED and gap register (lab recall, benchmark, browser limits) |
+| [docs/technical-audit-2026-10-14.md](docs/technical-audit-2026-10-14.md) | Historical technical audit, priorities, and measured status |
+| [docs/report-formats.md](docs/report-formats.md) | JSON/SARIF/text/HTML/JUnit contracts |
+| [docs/benchmark.md](docs/benchmark.md) | Benchmark harness: datasets, verification, scoring, gates |
+| [docs/ci-integration.md](docs/ci-integration.md) | CI gates (`--fail-on`, corpus, bench) |
+| [docs/detector-inventory.md](docs/detector-inventory.md) | Oracle and plugin catalog |
+| [docs/metrics/README.md](docs/metrics/README.md) | Precision and recall index |
+| [templates/README.md](templates/README.md) | Copy-rename starters |
+| [plugins/README.md](plugins/README.md) | Reference plugin index |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
 
 ## Metrics
 
@@ -368,15 +410,9 @@ native and fixture labs (`docs/metrics/nuclei-comparison-2026-10-14.md`).
 
 ## Community & Support
 
-- **GitHub Discussions**: [Ask questions, share findings](https://github.com/Xmar1881/Gash/discussions)
 - **Issues**: [Bug reports & feature requests](https://github.com/Xmar1881/Gash/issues)
+- **Support guide**: [SUPPORT.md](SUPPORT.md) — setup help, bug report checklist, version policy
 - **Security**: [Private vulnerability reporting](https://github.com/Xmar1881/Gash/security/advisories/new)
-
-## Funding
-
-Gash is an independent open-source project. If you find it valuable, consider sponsoring:
-
-- **GitHub Sponsors**: [github.com/sponsors/Xmar1881](https://github.com/sponsors/Xmar1881)
 
 ## Responsible Use
 

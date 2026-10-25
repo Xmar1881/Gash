@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: bamboo-server-exposure
+name: Bamboo Server Exposure
+description: Detects exposed Atlassian Bamboo server and project metadata.
+author: GASH contributors
+severity: critical
+tags: [bamboo, atlassian, cicd, exposure]
+safe: false
+deep: false
+active: false
+requires_auth: false
+max_requests: 6
+phase: discovery
+order: 189
+api_version: "1.0"
+tests: tests/fixtures/critical-exposure/
+request:
+  method: GET
+  paths: ["/rest/api/latest/server", "/rest/api/latest/projects", "/bamboo/rest/api/latest/server"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_bamboo]

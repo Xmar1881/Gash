@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: caddy-admin-exposure
+name: Caddy Admin API Exposure
+description: Detects an exposed Caddy administration API surface.
+author: GASH contributors
+severity: critical
+tags: [caddy, proxy, control-plane, exposure]
+safe: false
+deep: false
+active: false
+requires_auth: false
+max_requests: 6
+phase: discovery
+order: 175
+api_version: "1.0"
+tests: tests/fixtures/critical-exposure/
+request:
+  method: GET
+  paths: ["/config/", "/id/", "/caddy/config"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_caddy_admin]

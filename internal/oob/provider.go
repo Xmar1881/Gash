@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -24,6 +25,8 @@ const (
 	ProviderSelfHosted ProviderType = iota
 	// ProviderExternal dış servis (opsiyonel).
 	ProviderExternal
+	// ProviderLocal dahili in-process dinleyici (sunucusuz).
+	ProviderLocal
 )
 
 // Provider OOB callback sağlayıcı arayüzüdür.
@@ -183,4 +186,166 @@ func (p *SelfHostedProvider) Close() error {
 // splitHost host:port ayrıştırır.
 func splitHost(hostport string) (string, string, error) {
 	return net.SplitHostPort(hostport)
+}
+
+// LocalProvider dahili yerel HTTP dinleyicisidir.
+// Harici sunucu gerektirmeden, işlem içinde loopback üzerinde bir callback sunucusu açar.
+type LocalProvider struct {
+	listener net.Listener
+	server   *http.Server
+	addr     string
+	mu       sync.RWMutex
+	events   map[string]*CallbackEvent
+	closed   bool
+}
+
+// NewLocalProvider dahili yerel OOB dinleyici kurar ve başlatır.
+// listenAddr boş veya "local" ise "127.0.0.1:0" kullanılır (otomatik boş port).
+func NewLocalProvider(listenAddr string) (*LocalProvider, error) {
+	if listenAddr == "" || strings.EqualFold(listenAddr, "local") {
+		listenAddr = "127.0.0.1:0"
+	}
+	l, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		return nil, fmt.Errorf("local oob listen: %w", err)
+	}
+
+	p := &LocalProvider{
+		listener: l,
+		addr:     l.Addr().String(),
+		events:   make(map[string]*CallbackEvent),
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", p.handleCallback)
+
+	p.server = &http.Server{
+		Handler: mux,
+	}
+
+	go func() {
+		_ = p.server.Serve(l)
+	}()
+
+	return p, nil
+}
+
+func (p *LocalProvider) handleCallback(w http.ResponseWriter, r *http.Request) {
+	path := strings.Trim(r.URL.Path, "/")
+	parts := strings.Split(path, "/")
+	corrID := r.URL.Query().Get("corr")
+	if corrID == "" && len(parts) >= 2 && (parts[0] == "cb" || parts[0] == "c") {
+		corrID = parts[1]
+	} else if corrID == "" && len(parts) == 1 && parts[0] != "" && parts[0] != "favicon.ico" {
+		corrID = parts[0]
+	}
+
+	if corrID != "" {
+		remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if remoteIP == "" {
+			remoteIP = r.RemoteAddr
+		}
+		p.mu.Lock()
+		p.events[corrID] = &CallbackEvent{
+			CorrelationID: corrID,
+			Protocol:      "http",
+			RemoteIP:      remoteIP,
+			Timestamp:     time.Now(),
+			Payload:       r.URL.RawQuery,
+		}
+		p.mu.Unlock()
+	}
+
+	// Eğer polling sorgusuysa JSON yanıt döndür (interactsh / self-hosted uyumluluğu)
+	if r.URL.Path == "/api/v1/poll" && r.URL.Query().Get("corr") != "" {
+		qCorr := r.URL.Query().Get("corr")
+		p.mu.RLock()
+		ev := p.events[qCorr]
+		p.mu.RUnlock()
+		w.Header().Set("Content-Type", "application/json")
+		if ev != nil {
+			_ = json.NewEncoder(w).Encode([]CallbackEvent{*ev})
+		} else {
+			_ = json.NewEncoder(w).Encode([]CallbackEvent{})
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+// Type sağlayıcı türü.
+func (p *LocalProvider) Type() ProviderType { return ProviderLocal }
+
+// Name sağlayıcı adı.
+func (p *LocalProvider) Name() string { return "local" }
+
+// Enabled sağlayıcı aktif mi.
+func (p *LocalProvider) Enabled() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return !p.closed && p.listener != nil
+}
+
+// Addr dinlenen yerel adres (host:port).
+func (p *LocalProvider) Addr() string {
+	return p.addr
+}
+
+// RegisterScan scan + correlation kaydeder (yerel sağlayıcıda no-op).
+func (p *LocalProvider) RegisterScan(ctx context.Context, scanID, corrID string) error {
+	if !p.Enabled() {
+		return fmt.Errorf("%w: local provider disabled", ErrNotConfigured)
+	}
+	return nil
+}
+
+// PollCallback correlation ID için yerel bellekten callback sorgular.
+func (p *LocalProvider) PollCallback(ctx context.Context, corrID string) (*CallbackEvent, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if !p.Enabled() {
+		return nil, fmt.Errorf("%w: local provider disabled", ErrNotConfigured)
+	}
+	if ev, ok := p.events[corrID]; ok {
+		return ev, nil
+	}
+	return nil, nil
+}
+
+// HTTPCallbackURL correlation ID için HTTP callback URL üretir.
+func (p *LocalProvider) HTTPCallbackURL(corrID string) string {
+	if !p.Enabled() {
+		return ""
+	}
+	return fmt.Sprintf("http://%s/cb/%s", p.addr, corrID)
+}
+
+// DNSCallbackDomain correlation ID için DNS callback domain üretir.
+func (p *LocalProvider) DNSCallbackDomain(corrID string) string {
+	if !p.Enabled() {
+		return ""
+	}
+	return fmt.Sprintf("%s.127.0.0.1.nip.io", corrID)
+}
+
+// Close yerel dinleyiciyi kapatır.
+func (p *LocalProvider) Close() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return nil
+	}
+	p.closed = true
+	if p.server != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		_ = p.server.Shutdown(ctx)
+	}
+	if p.listener != nil {
+		_ = p.listener.Close()
+	}
+	return nil
 }

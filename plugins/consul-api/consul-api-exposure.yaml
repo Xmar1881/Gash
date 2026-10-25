@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: consul-api-exposure
+name: Consul API Exposure
+description: Detects unauthenticated Consul agent and catalog API responses.
+author: GASH contributors
+severity: high
+tags: [consul, cloud, service-discovery, exposure]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 8
+phase: discovery
+order: 129
+api_version: "1.0"
+tests: tests/fixtures/critical-exposure/
+request:
+  method: GET
+  paths: ["/v1/agent/self", "/v1/catalog/services", "/v1/catalog/datacenters"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_consul_api]

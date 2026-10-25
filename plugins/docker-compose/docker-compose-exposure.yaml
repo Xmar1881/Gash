@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: docker-compose-exposure
+name: Docker Compose File Exposure
+description: Detects publicly served Docker Compose manifests containing a services definition.
+author: GASH contributors
+severity: medium
+tags: [docker, exposure, secrets, discovery]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 8
+phase: discovery
+order: 120
+api_version: "1.0"
+tests: tests/fixtures/endpoint-exposure/
+request:
+  method: GET
+  paths: ["/docker-compose.yml", "/docker-compose.yaml", "/compose.yml", "/compose.yaml"]
+oracle:
+  name: version
+  params:
+    mode: banner
+    banner_regex: '(?im)^\s*services\s*:'

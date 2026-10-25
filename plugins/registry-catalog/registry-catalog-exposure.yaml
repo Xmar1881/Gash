@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: registry-catalog-exposure
+name: Registry Catalog Exposure
+description: Detects unauthenticated container registry catalog endpoints.
+author: GASH contributors
+severity: critical
+tags: [registry, containers, supply-chain, exposure]
+safe: false
+deep: false
+active: false
+requires_auth: false
+max_requests: 6
+phase: discovery
+order: 200
+api_version: "1.0"
+tests: tests/fixtures/critical-exposure/
+request:
+  method: GET
+  paths: ["/v2/_catalog", "/v2/", "/registry/v2/_catalog"]
+oracle:
+  name: error
+  params:
+    mode: critical_exposure
+    signature_set: [critical_registry_catalog]

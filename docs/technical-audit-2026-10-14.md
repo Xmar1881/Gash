@@ -8,12 +8,24 @@ What: Evidence-backed priority audit for XSS reflection, WAF measurement,
 and fixture reliability.
 -->
 
-# Technical Audit: Priority Findings
+# Technical Audit: Priority Findings (Historical Baseline)
 
-## Scope\n\nThis report records the priority work requested for the current checkout (last refreshed 2026-10-18, 75 detectors, GASH-001..072). It
-does not turn design-document claims into implementation claims. The full
-detector catalog remains in `docs/detector-inventory.md`; unresolved limits are
-in `docs/known-limits.md`.
+## Scope
+
+This report records the priority work requested during the 2026-10-14 audit
+cycle and was last refreshed on 2026-10-18. Its measurements and findings are
+historical; they are not a snapshot of the current checkout. It does not turn
+design-document claims into implementation claims. The current catalog is
+documented in `docs/detector-inventory.md` and the unresolved limits remain in
+`docs/known-limits.md`.
+
+## Current Repository Reference
+
+As of 2026-10-25, the repository contains 183 reference plugins (174 Tier 1
+YAML, 7 sandboxed JavaScript, 1 native PoC, and 1 native Tier 2 check). Current
+engine behavior and verification status are summarized in the root README and
+the benchmark/metrics index; the historical measurements below are preserved
+for traceability and are not silently re-labeled as current results.
 
 ## Findings And Fixes
 

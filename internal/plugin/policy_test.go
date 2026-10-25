@@ -218,12 +218,14 @@ func TestDefaultRedirectPolicy_UpgradeOnly(t *testing.T) {
 type scriptedRoundTripper struct {
 	mu       sync.Mutex
 	requests []string
+	headers  []http.Header
 	handler  func(*http.Request) *http.Response
 }
 
 func (s *scriptedRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	s.mu.Lock()
 	s.requests = append(s.requests, req.URL.String())
+	s.headers = append(s.headers, req.Header.Clone())
 	s.mu.Unlock()
 	return s.handler(req), nil
 }
@@ -232,6 +234,16 @@ func (s *scriptedRoundTripper) seen() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.requests...)
+}
+
+func (s *scriptedRoundTripper) seenHeaders() []http.Header {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]http.Header, 0, len(s.headers))
+	for _, header := range s.headers {
+		out = append(out, header.Clone())
+	}
+	return out
 }
 
 // scriptedRedirect answers 301 with location on the first hop and 200 afterwards.
@@ -328,6 +340,73 @@ func TestRedirectPolicy_HTTPToHTTPSUpgradeFollowed(t *testing.T) {
 	seen := rt.seen()
 	if len(seen) != 2 || seen[0] != "http://example.com/" || seen[1] != "https://example.com/home" {
 		t.Fatalf("unexpected request chain: %v", seen)
+	}
+}
+
+func TestRedirectCrossOriginStripsSensitiveHeaders(t *testing.T) {
+	policy, rt := newTestPolicySession(t, "https://example.com", map[string][]net.IP{
+		"example.com": ipList("93.184.216.34"),
+	}, scriptedRedirect("https://cdn.example.net/home"))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://example.com/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Cookie", "sid=secret")
+	req.Header.Set("X-API-Key", "secret")
+	req.Header.Set("X-Request-ID", "trace-123")
+
+	resp, err := policy.RoundTripWithRetry(req)
+	if err != nil {
+		t.Fatalf("cross-origin redirect: %v", err)
+	}
+	resp.Body.Close()
+	headers := rt.seenHeaders()
+	if len(headers) != 2 {
+		t.Fatalf("expected two requests, got %d", len(headers))
+	}
+	if headers[0].Get("Authorization") == "" || headers[0].Get("Cookie") == "" || headers[0].Get("X-API-Key") == "" {
+		t.Fatal("initial request must carry the caller's credentials")
+	}
+	for _, name := range []string{"Authorization", "Cookie", "X-API-Key"} {
+		if got := headers[1].Get(name); got != "" {
+			t.Fatalf("%s leaked across redirect: %q", name, got)
+		}
+	}
+	if got := headers[1].Get("X-Request-ID"); got != "trace-123" {
+		t.Fatalf("ordinary tracing header must survive redirect, got %q", got)
+	}
+}
+
+func TestRedirectRelativeLocationUsesCurrentHop(t *testing.T) {
+	rt := &scriptedRoundTripper{handler: func(req *http.Request) *http.Response {
+		switch req.URL.Path {
+		case "/":
+			return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": []string{"step/"}}, Body: http.NoBody, Request: req}
+		case "/step/":
+			return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": []string{"final"}}, Body: http.NoBody, Request: req}
+		default:
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("ok")), Request: req}
+		}
+	}}
+	cfg := DefaultPolicyConfig()
+	policy := NewPolicySession(cfg, rt)
+	policy.SetOriginalTarget("https://example.com")
+
+	resp, err := doRedirectRequest(t, policy, "https://example.com/")
+	if err != nil {
+		t.Fatalf("relative redirect chain: %v", err)
+	}
+	resp.Body.Close()
+	want := []string{"https://example.com/", "https://example.com/step/", "https://example.com/step/final"}
+	if got := rt.seen(); len(got) != len(want) {
+		t.Fatalf("request chain length = %d, want %d: %v", len(got), len(want), got)
+	} else {
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("request %d = %q, want %q; chain=%v", i, got[i], want[i], got)
+			}
+		}
 	}
 }
 

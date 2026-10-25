@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Xmar1881/Gash/internal/baseline"
@@ -31,6 +32,18 @@ import (
 	"github.com/Xmar1881/Gash/internal/smuggle"
 	"golang.org/x/time/rate"
 )
+
+// acquireContextSlot makes bounded worker queues cancellation-aware. Without
+// the select, a cancelled scan can remain blocked behind occupied slots until
+// every earlier network operation returns.
+func acquireContextSlot(ctx context.Context, sem chan struct{}) bool {
+	select {
+	case sem <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
 
 // parseTarget validates a scan target URL.
 // What: Strict http/https validation with host presence check.
@@ -164,14 +177,23 @@ func (e *Engine) newScanClient(target string) (*plugin.PolicySession, *probe.Cli
 	}
 	policy := e.sharedPolicy
 	if policy == nil {
-		policy = plugin.NewPolicySession(plugin.PolicyConfig{
-			MaxRequestsPerTarget: e.cfg.MaxRequestsPerTarget,
-			MaxRequestsTotal:     e.cfg.MaxRequestsTotal,
-			Scope:                e.cfg.Scope,
-			RatePerSecond:        e.cfg.RatePerSecond,
-			MaxResponseBytes:     maxResponseBytes,
-			ProxyURL:             parsedProxy,
-		}, nil)
+		// Start from policy defaults so retry, redirect, request-size, and
+		// scan-deadline protections are not lost when engine flags override
+		// only the scan-specific limits.
+		pcfg := plugin.DefaultPolicyConfig()
+		pcfg.MaxRequestsPerTarget = e.cfg.MaxRequestsPerTarget
+		pcfg.MaxRequestsTotal = e.cfg.MaxRequestsTotal
+		pcfg.Scope = e.cfg.Scope
+		pcfg.RatePerSecond = e.cfg.RatePerSecond
+		pcfg.MaxResponseBytes = maxResponseBytes
+		pcfg.ProxyURL = parsedProxy
+		pcfg.ScanTimeout = e.effectiveScanTimeout()
+		// The target rate limiter is shared by every plugin. A large host
+		// semaphore lets many plugin goroutines queue behind the same token
+		// bucket and makes otherwise healthy plugins expire together.
+		pcfg.MaxConcurrencyPerHost = 8
+		pcfg.BackpressureLimit = 32
+		policy = plugin.NewPolicySession(pcfg, nil)
 	}
 	// P1.3: Set original target for scope rebinding detection
 	policy.SetOriginalTarget(target)
@@ -210,7 +232,7 @@ func (e *Engine) newScanClient(target string) (*plugin.PolicySession, *probe.Cli
 func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.PluginSpec, skipped []plugin.SkippedPlugin, policy *plugin.PolicySession, client *probe.Client, login loginOutcome) (*Report, error) {
 	timeoutMs := e.cfg.PluginTimeoutMs
 	if timeoutMs <= 0 {
-		timeoutMs = 30000
+		timeoutMs = 60000
 	}
 	pluginTimeout := time.Duration(timeoutMs) * time.Millisecond
 
@@ -221,18 +243,22 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 	if parallelism > len(ordered) {
 		parallelism = len(ordered)
 	}
-	sem := make(chan struct{}, parallelism)
+	var sem chan struct{}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	// Faz 2: TLS el sıkışma sonucu burada yakalanır ve altyapı derin TLS
 	// denetimine geçirilir; sertifika/zincir olguları ek dial açmadan aynı
 	// gözlemden türetilir.
+	e.notifyProgress("Protokol Denetimi", "TLS el sıkışması ve sertifikalar...")
 	protoFindings, protoSkipped, tlsObs := e.runProtoReconTLS(ctx, target)
 	allFindings := protoFindings
 	var execSkipped []plugin.SkippedPlugin
 	execSkipped = append(execSkipped, protoSkipped...)
 	// Faz 0/1/2 altyapı recon: SSH banner + DB port envanteri + derin TLS
 	// gözlemi. Tüm bayraklar kapalıysa sıfır ek trafik; kapsam fail-closed.
+	if e.cfg.SSHAudit || e.cfg.DBPortScan || e.cfg.TLSAuditDeep {
+		e.notifyProgress("Altyapı Keşfi", "Port ve altyapı servisleri...")
+	}
 	infraFindings, infraSkipped, infraStats := e.runInfraReconTLS(ctx, target, tlsObs)
 	allFindings = append(allFindings, infraFindings...)
 	execSkipped = append(execSkipped, infraSkipped...)
@@ -268,9 +294,11 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		"spa_pages_rendered": 0, "spa_forms": 0,
 		"spa_endpoints": 0, "spa_skipped": 0,
 	}
+	e.notifyProgress("Sayfa & Yüzey Keşfi", "Web sayfaları ve linkler taranıyor...")
 	crawlRes, err := discovery.Crawl(ctx, client, target, crawlOpts)
 	var surfacePoints []loader.JSPoint
 	if err == nil && crawlRes != nil {
+		e.notifyProgress("JS & Kaynak Analizi", "JavaScript dosyaları ve uç noktalar...")
 		for _, page := range crawlRes.Pages {
 			e.mergeSurfaceTech(page.Headers, nil, page.Body)
 		}
@@ -497,13 +525,37 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		execSkipped = append(execSkipped, plugin.SkippedPlugin{PluginID: smuggle.PluginID, Reason: "skipped (smuggle-probe requires --active --aggressive)"})
 	}
 
+	// Large discovered surfaces make Tier 2 plugins request-heavy. Keep only
+	// two long-running plugin workers in that case so the shared per-target
+	// limiter serves whole plugins instead of timing out all of them together.
+	if len(surfacePoints) > 16 && e.cfg.RatePerSecond > 0 && parallelism > 2 {
+		parallelism = 2
+	}
+	sem = make(chan struct{}, parallelism)
+	totalPlugins := len(ordered)
+	var completedPlugins atomic.Int32
+	e.notifyProgress("Güvenlik Testleri", fmt.Sprintf("0/%d plugin koşturuluyor...", totalPlugins))
+
 	for _, spec := range ordered {
 		wg.Add(1)
 		go func(s plugin.PluginSpec) {
 			defer wg.Done()
-			sem <- struct{}{}
+			if !acquireContextSlot(ctx, sem) {
+				done := completedPlugins.Add(1)
+				e.notifyProgress("Güvenlik Testleri", fmt.Sprintf("%d/%d (%s)", done, totalPlugins, s.ID))
+				mu.Lock()
+				execSkipped = append(execSkipped, plugin.SkippedPlugin{
+					PluginID: s.ID,
+					Reason:   fmt.Sprintf("skipped (scan context: %v)", ctx.Err()),
+				})
+				mu.Unlock()
+				return
+			}
 			defer func() { <-sem }()
-			found, reason, ok := e.executeOne(ctx, s, target, client, pluginTimeout, surfacePoints)
+			points := pluginSurfacePoints(e.cfg, s, surfacePoints)
+			found, reason, ok := e.executeOne(ctx, s, target, client, pluginTimeout, points)
+			done := completedPlugins.Add(1)
+			e.notifyProgress("Güvenlik Testleri", fmt.Sprintf("%d/%d (%s)", done, totalPlugins, s.ID))
 			mu.Lock()
 			defer mu.Unlock()
 			if !ok {
@@ -518,6 +570,7 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		}(spec)
 	}
 	wg.Wait()
+	e.notifyProgress("Korelasyon", "Bulgular analiz ediliyor ve doğrulanıyor...")
 
 	// Generic browser-verify pass (opt-in, deep builds): static XSS findings
 	// may reach confirmed only through a real trigger plus a clean control;
@@ -631,6 +684,12 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 			if err != nil {
 				return nil, err
 			}
+			// Redirect oracles need the original 3xx + Location response;
+			// following that hop would erase the evidence they classify.
+			pluginCtx := pctx
+			if strings.EqualFold(file.Oracle.Name, "redirect") {
+				pluginCtx = plugin.WithNoRedirect(pluginCtx)
+			}
 			sender := func(c context.Context, method, rawURL string, reqHeaders map[string]string, reqBody []byte) (int, http.Header, string, error) {
 				resp, err := client.Send(c, method, rawURL, reqHeaders, reqBody)
 				if err != nil {
@@ -638,7 +697,7 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 				}
 				return resp.Status, resp.Headers, string(resp.Body), nil
 			}
-			results, err := loader.ExecuteTier1WithOptions(pctx, &spec, file, target, sender, loader.Tier1Options{OOB: e.oobSource()})
+			results, err := loader.ExecuteTier1WithOptions(pluginCtx, &spec, file, target, sender, loader.Tier1Options{OOB: e.oobSource()})
 			if err != nil {
 				return nil, err
 			}
@@ -653,7 +712,7 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 				for _, dp := range tier1DiscoveryPoints(target, file.Request.ParamNames, points) {
 					pointFile := *file
 					pointFile.Request.ParamNames = []string{dp.Param}
-					pointResults, _ := loader.ExecuteTier1WithOptions(pctx, &spec, &pointFile, dp.URL, sender, loader.Tier1Options{OOB: e.oobSource()})
+					pointResults, _ := loader.ExecuteTier1WithOptions(pluginCtx, &spec, &pointFile, dp.URL, sender, loader.Tier1Options{OOB: e.oobSource()})
 					results = append(results, pointResults...)
 				}
 			}
@@ -748,7 +807,22 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 	switch res.Status {
 	case plugin.StatusOK:
 		return collected, "", true
-	case plugin.StatusSkipped, plugin.StatusTimeout, plugin.StatusError, plugin.StatusPolicyError, plugin.StatusPanic:
+	case plugin.StatusSkipped:
+		reason := res.Reason
+		if reason == "" {
+			reason = string(res.Status)
+		}
+		return collected, "skipped (bounded: " + reason + ")", true
+	case plugin.StatusTimeout:
+		if parent.Err() != nil {
+			return collected, fmt.Sprintf("skipped (scan context: %v)", parent.Err()), true
+		}
+		reason := res.Reason
+		if reason == "" {
+			reason = string(res.Status)
+		}
+		return collected, "error (" + string(res.Status) + "): " + reason, false
+	case plugin.StatusError, plugin.StatusPolicyError, plugin.StatusPanic:
 		reason := res.Reason
 		if reason == "" {
 			reason = string(res.Status)
@@ -851,7 +925,11 @@ func (e *Engine) jsEnvForScan(pctx context.Context, target string, client *probe
 
 	var oobProvider oob.Provider
 	if strings.TrimSpace(e.cfg.OOBServer) != "" {
-		oobProvider = oob.NewSelfHostedProvider(e.cfg.OOBServer, "")
+		if strings.EqualFold(strings.TrimSpace(e.cfg.OOBServer), "local") {
+			oobProvider, _ = oob.NewLocalProvider("")
+		} else {
+			oobProvider = oob.NewSelfHostedProvider(e.cfg.OOBServer, "")
+		}
 	}
 
 	env := &loader.JSEnv{
@@ -916,6 +994,64 @@ func readOnlyJSPoints(points []loader.JSPoint) []loader.JSPoint {
 	for _, p := range points {
 		switch strings.ToUpper(strings.TrimSpace(p.Method)) {
 		case "", http.MethodGet, http.MethodHead, http.MethodOptions:
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// pluginSurfacePoints bounds the fan-out of Tier 2 plugins over very large
+// discovered surfaces. A single JS plugin can otherwise issue several
+// requests per point; when seven such plugins share one target limiter, the
+// later plugins all expire while waiting for tokens. The selection is stable
+// and prefers points that carry an observed value or form context.
+func pluginSurfacePoints(cfg Config, spec plugin.PluginSpec, points []loader.JSPoint) []loader.JSPoint {
+	if spec.Tier != plugin.TierJS || len(points) == 0 {
+		return points
+	}
+	// These scripts enforce their own request cap while ranking the full
+	// surface. Truncating before they rank it would hide valid late points.
+	switch spec.ID {
+	case "sqli-error-based", "ssrf-blind-oob", "xss-reflected-basic", "xss-stored-two-step":
+		return points
+	}
+	limit := 16
+	switch cfg.Profile {
+	case config.ProfileDeep:
+		limit = 32
+	case config.ProfileAggressive:
+		limit = 48
+	}
+	if len(points) <= limit {
+		return points
+	}
+
+	var tiers [4][]loader.JSPoint
+	seen := make(map[string]struct{}, len(points))
+	for _, p := range points {
+		key := strings.ToUpper(strings.TrimSpace(p.Method)) + "|" + p.URL + "|" + strings.ToLower(strings.TrimSpace(p.ParamLocation)) + "|" + p.ParamName
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		location := strings.ToLower(strings.TrimSpace(p.ParamLocation))
+		tier := 3
+		if len(p.FormValues) > 0 && (location == "query" || location == "body") {
+			tier = 0
+		} else if (location == "query" || location == "body") && (p.ParamName != "" || p.Value != "") {
+			tier = 1
+		} else if location == "fragment" || location == "hash" {
+			tier = 2
+		}
+		tiers[tier] = append(tiers[tier], p)
+	}
+
+	out := make([]loader.JSPoint, 0, limit)
+	for _, tier := range tiers {
+		for _, p := range tier {
+			if len(out) == limit {
+				return out
+			}
 			out = append(out, p)
 		}
 	}
@@ -1280,7 +1416,9 @@ func (e *Engine) runInfraReconTLS(ctx context.Context, target string, tlsObs *pr
 			wg.Add(1)
 			go func(h, p, addr string) {
 				defer wg.Done()
-				sem <- struct{}{}
+				if !acquireContextSlot(ctx, sem) {
+					return
+				}
 				defer func() { <-sem }()
 				if !wait() {
 					return
@@ -1335,7 +1473,9 @@ func (e *Engine) runInfraReconTLS(ctx context.Context, target string, tlsObs *pr
 			wg.Add(1)
 			go func(h, p, addr string) {
 				defer wg.Done()
-				sem <- struct{}{}
+				if !acquireContextSlot(ctx, sem) {
+					return
+				}
 				defer func() { <-sem }()
 				if !wait() {
 					return
@@ -1380,7 +1520,9 @@ func (e *Engine) runInfraReconTLS(ctx context.Context, target string, tlsObs *pr
 				wg.Add(1)
 				go func(h string, port int) {
 					defer wg.Done()
-					sem <- struct{}{}
+					if !acquireContextSlot(ctx, sem) {
+						return
+					}
 					defer func() { <-sem }()
 					if !wait() {
 						return
@@ -1436,7 +1578,9 @@ func (e *Engine) runInfraReconTLS(ctx context.Context, target string, tlsObs *pr
 				wg.Add(1)
 				go func(h string, port int) {
 					defer wg.Done()
-					sem <- struct{}{}
+					if !acquireContextSlot(ctx, sem) {
+						return
+					}
 					defer func() { <-sem }()
 					if !wait() {
 						return
@@ -1472,7 +1616,9 @@ func (e *Engine) runInfraReconTLS(ctx context.Context, target string, tlsObs *pr
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				sem <- struct{}{}
+				if !acquireContextSlot(ctx, sem) {
+					return
+				}
 				defer func() { <-sem }()
 				if !wait() {
 					return

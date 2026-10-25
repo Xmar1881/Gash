@@ -27,9 +27,17 @@ type engineOOBSource struct {
 
 // oobSource returns the Tier 1 OOB source when --oob-server is configured.
 // What: nil without a server (payloads stay inert, no finding is fabricated).
+// "local" değeri dahili yerel dinleyici kullanır (sunucusuz).
 func (e *Engine) oobSource() loader.OOBSource {
 	if e == nil || strings.TrimSpace(e.cfg.OOBServer) == "" {
 		return nil
+	}
+	if strings.EqualFold(strings.TrimSpace(e.cfg.OOBServer), "local") {
+		p, err := oob.NewLocalProvider("")
+		if err != nil {
+			return nil
+		}
+		return &engineOOBSource{provider: p}
 	}
 	return &engineOOBSource{provider: oob.NewSelfHostedProvider(e.cfg.OOBServer, "")}
 }

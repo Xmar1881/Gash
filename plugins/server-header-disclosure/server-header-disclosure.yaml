@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+
+id: server-header-disclosure
+name: Server Header Disclosure
+description: Detects responses that disclose the origin server through the Server header.
+author: GASH contributors
+severity: low
+tags: [headers, disclosure, fingerprinting]
+safe: true
+deep: false
+active: false
+requires_auth: false
+phase: probe
+order: 109
+api_version: "1.0"
+tests: tests/fixtures/header-policy-disclosure/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: Server
+    policy: forbidden

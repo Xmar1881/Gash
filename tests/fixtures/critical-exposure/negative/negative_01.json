@@ -1,0 +1,10 @@
+{
+  "name": "ordinary application response",
+  "target": "http://example.com/known-path",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body><h1>Welcome</h1><p>Not a control-plane response.</p></body></html>",
+  "expected_verdict": "reject"
+}

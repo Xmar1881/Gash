@@ -99,3 +99,23 @@ func TestExecutePolicyError(t *testing.T) {
 		t.Fatalf("policy_error bekleniyordu, got %s", res.Status)
 	}
 }
+
+func TestExecuteControlledPolicyStopsAreSkipped(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "budget", err: ErrBudgetExceeded},
+		{name: "rate", err: ErrRateLimited},
+		{name: "scope", err: ErrScopeViolation},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := Execute(context.Background(), tc.name, func(context.Context) ([]Candidate, error) {
+				return nil, tc.err
+			})
+			if res.Status != StatusSkipped {
+				t.Fatalf("controlled policy stop must be skipped, got %s", res.Status)
+			}
+		})
+	}
+}

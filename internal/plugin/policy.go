@@ -239,6 +239,19 @@ type PolicySession struct {
 
 // NewPolicySession proxy'yi kurar (base nil ise http.DefaultTransport).
 func NewPolicySession(cfg PolicyConfig, base http.RoundTripper) *PolicySession {
+	if cfg.BackpressureLimit <= 0 {
+		cfg.BackpressureLimit = 100
+	}
+	if cfg.MaxConcurrencyPerHost <= 0 {
+		cfg.MaxConcurrencyPerHost = 50
+	}
+	if cfg.MaxResponseBytes <= 0 {
+		cfg.MaxResponseBytes = 5 * 1024 * 1024
+	}
+	if cfg.MaxRequestBytes <= 0 {
+		cfg.MaxRequestBytes = 1024 * 1024
+	}
+
 	if base == nil {
 		if cfg.ProxyURL != nil {
 			if defTr, ok := http.DefaultTransport.(*http.Transport); ok {
@@ -254,6 +267,10 @@ func NewPolicySession(cfg PolicyConfig, base http.RoundTripper) *PolicySession {
 			base = http.DefaultTransport
 		}
 	}
+	maxPerPath := cfg.MaxRequestsPerTarget
+	if cfg.MaxRequestsTotal > maxPerPath {
+		maxPerPath = cfg.MaxRequestsTotal
+	}
 	ps := &PolicySession{
 		cfg:             cfg,
 		base:            base,
@@ -261,9 +278,9 @@ func NewPolicySession(cfg PolicyConfig, base http.RoundTripper) *PolicySession {
 		perPlugin:       make(map[string]*atomic.Int64),
 		limiters:        make(map[string]*rate.Limiter),
 		hostSemaphores:  make(map[string]chan struct{}),
-		backpressureSem: make(chan struct{}, max(cfg.BackpressureLimit, 1)),
+		backpressureSem: make(chan struct{}, max(cfg.BackpressureLimit, 50)),
 		scopeManager:    newScopeManager(cfg.Scope),
-		scanBudget:      newScanBudget(cfg.MaxRequestsTotal, cfg.MaxRequestsPerTarget, 1000), // per-path budget
+		scanBudget:      newScanBudget(cfg.MaxRequestsTotal, cfg.MaxRequestsPerTarget, maxPerPath),
 	}
 	if cfg.GlobalRatePerSecond > 0 {
 		ps.globalLimiter = rate.NewLimiter(rate.Limit(cfg.GlobalRatePerSecond), int(cfg.GlobalRatePerSecond)+1)
@@ -538,6 +555,58 @@ func isSchemeDowngrade(from, to string) bool {
 	return strings.EqualFold(from, "https") && strings.EqualFold(to, "http")
 }
 
+// sameRedirectOrigin reports whether credentials may safely follow a redirect.
+// What: Compare scheme, hostname, and effective port rather than raw Host text.
+// Why: A redirect to another authority must not inherit authentication or
+// session headers, even when the operator intentionally scans in open mode.
+func sameRedirectOrigin(from, to *url.URL) bool {
+	if from == nil || to == nil {
+		return false
+	}
+	return strings.EqualFold(from.Scheme, to.Scheme) &&
+		strings.EqualFold(from.Hostname(), to.Hostname()) &&
+		effectiveURLPort(from) == effectiveURLPort(to)
+}
+
+func effectiveURLPort(u *url.URL) string {
+	if u == nil {
+		return ""
+	}
+	if port := u.Port(); port != "" {
+		return port
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
+}
+
+func isSensitiveRedirectHeader(name string) bool {
+	switch strings.ToLower(name) {
+	case "authorization", "proxy-authorization", "cookie",
+		"x-api-key", "x-auth-token", "x-csrf-token":
+		return true
+	default:
+		return false
+	}
+}
+
+func copyRedirectHeaders(dst, src http.Header, sameOrigin bool) {
+	for k, values := range src {
+		if strings.EqualFold(k, "Host") {
+			continue
+		}
+		if !sameOrigin && isSensitiveRedirectHeader(k) {
+			continue
+		}
+		dst[k] = append([]string(nil), values...)
+	}
+}
+
 // scanBudget tracks total scan budget to prevent unlimited scans (P1.3).
 type scanBudget struct {
 	maxRequestsTotal   int64
@@ -634,7 +703,14 @@ func (p *PolicySession) limiterFor(key string) *rate.Limiter {
 	defer p.mu.Unlock()
 	l, ok := p.limiters[key]
 	if !ok {
-		l = rate.NewLimiter(rate.Limit(p.cfg.RatePerSecond), int(p.cfg.RatePerSecond)+1)
+		// Burst: paralel pluginlerin rate limiter kuyruğunda boğulmasını önlemek
+		// için burst değerini rate × 4 veya en az 40 olarak ayarla. Bu sayede
+		// 8 paralel plugin her biri 3-5 istek attığında anlık burst taşmaz.
+		burst := int(p.cfg.RatePerSecond) * 4
+		if burst < 40 {
+			burst = 40
+		}
+		l = rate.NewLimiter(rate.Limit(p.cfg.RatePerSecond), burst)
 		p.limiters[key] = l
 	}
 	return l
@@ -660,8 +736,22 @@ func (p *PolicySession) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	// 3. rate-limit (per-target).
+	// Paylaşılan limiter'ın plugin context'inin deadline'ına yaklaşmasında
+	// beklemek yerine kısa bir pencereyle (max 5s) dener; bitiremezse
+	// rate hatasını fırlatır ama plugin'i anında öldürmez — kalan istekler
+	// bir sonraki slot'ta denemesini yapabilir.
 	if lim := p.limiterFor(targetKey(req.URL)); lim != nil {
-		if err := lim.Wait(req.Context()); err != nil {
+		waitCtx := req.Context()
+		if dl, ok := waitCtx.Deadline(); ok {
+			remaining := time.Until(dl)
+			maxWait := 5 * time.Second
+			if remaining > maxWait {
+				var cancel context.CancelFunc
+				waitCtx, cancel = context.WithTimeout(waitCtx, maxWait)
+				defer cancel()
+			}
+		}
+		if err := lim.Wait(waitCtx); err != nil {
 			return nil, &PolicyError{PluginID: pc.ID, Op: "rate",
 				Err: fmt.Errorf("%w: %v", ErrRateLimited, err)}
 		}
@@ -926,8 +1016,9 @@ func (p *PolicySession) RoundTripWithRetry(req *http.Request) (*http.Response, e
 			location := resp.Header.Get("Location")
 			resp.Body.Close()
 
-			// Resolve redirect URL
-			nextURL, err := req.URL.Parse(location)
+			// Resolve against the current hop. Using the original request here
+			// breaks relative redirects after the first path segment.
+			nextURL, err := currentReq.URL.Parse(location)
 			if err != nil {
 				return nil, &PolicyError{PluginID: pc.ID, Op: "redirect",
 					Err: fmt.Errorf("%w: invalid redirect location %q: %v", ErrPolicyViolation, location, err)}
@@ -977,13 +1068,9 @@ func (p *PolicySession) RoundTripWithRetry(req *http.Request) (*http.Response, e
 			if err != nil {
 				return nil, fmt.Errorf("policy redirect new request: %w", err)
 			}
-			// Copy headers except Host (will be set by transport)
-			for k, v := range currentReq.Header {
-				if strings.EqualFold(k, "Host") {
-					continue
-				}
-				newReq.Header[k] = v
-			}
+			// Copy ordinary headers, but never carry credentials across an
+			// origin boundary. The transport sets Host from the new URL.
+			copyRedirectHeaders(newReq.Header, currentReq.Header, sameRedirectOrigin(currentReq.URL, nextURL))
 
 			redirectCount++
 			currentReq = newReq

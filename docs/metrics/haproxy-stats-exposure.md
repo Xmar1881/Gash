@@ -1,0 +1,22 @@
+# Metrics: haproxy-stats-exposure
+
+## Overview
+Fixed-path HAProxy statistics exposure check using `critical_exposure`.
+
+## Corpus
+Precision 1.00; positive marker accepted, neutral response rejected.
+
+## Lab
+Pending controlled proxy-observability fixture run.
+
+## Precision
+TP=1, FP=0. Precision 1.00.
+
+## Recall
+Fixture recall 1/1. Recall 1.00.
+
+## Gate Verdict
+PASS. Evidence ceiling is `firm`; this is not authentication or RCE proof.
+
+## Dataset
+`d8b993e52ad0e9b9930ef4497312aa051476890a6c56c3490a9858a8ccd0971f`

@@ -78,13 +78,14 @@ func (s *Store) Get(id string) (*Response, bool) {
 
 // Client politika-filtreli HTTP istemcisidir.
 type Client struct {
-	policy     *plugin.PolicySession
-	transport  *http.Transport
-	proxyURL   *url.URL
-	store      *Store
-	maxBytes   int64
-	extra      map[string]string
-	classifier func(status int, headers http.Header, body []byte) baseline.Classification
+	policy         *plugin.PolicySession
+	transport      *http.Transport
+	proxyURL       *url.URL
+	store          *Store
+	maxBytes       int64
+	requestTimeout time.Duration
+	extra          map[string]string
+	classifier     func(status int, headers http.Header, body []byte) baseline.Classification
 	// enableWAFBypass blok yanıtında sınırlı varyant denemesine izin verir.
 	// Yalnızca agresif profil açar (varsayılan kapalı — stealth YOK).
 	enableWAFBypass bool
@@ -145,12 +146,13 @@ func NewClient(opts Options) *Client {
 		opts.Policy.SetBase(tr)
 	}
 	c := &Client{
-		policy:    opts.Policy,
-		transport: tr,
-		proxyURL:  opts.ProxyURL,
-		store:     NewStore(),
-		maxBytes:  opts.MaxBytes,
-		extra:     cloneMap(opts.ExtraHeaders),
+		policy:         opts.Policy,
+		transport:      tr,
+		proxyURL:       opts.ProxyURL,
+		store:          NewStore(),
+		maxBytes:       opts.MaxBytes,
+		requestTimeout: opts.RequestTimeout,
+		extra:          cloneMap(opts.ExtraHeaders),
 		classifier: func(status int, headers http.Header, body []byte) baseline.Classification {
 			return baseline.ClassifyStatic(status, headers, body)
 		},
@@ -298,7 +300,13 @@ func (c *Client) WAFStats() (detected, bypassed int64) {
 }
 
 func (c *Client) doSingle(ctx context.Context, method, rawURL string, headers map[string]string, body []byte) (*Response, error) {
-	req, err := http.NewRequestWithContext(ctx, method, rawURL, readerOf(body))
+	reqCtx := ctx
+	var cancel context.CancelFunc
+	if c.requestTimeout > 0 {
+		reqCtx, cancel = context.WithTimeout(ctx, c.requestTimeout)
+		defer cancel()
+	}
+	req, err := http.NewRequestWithContext(reqCtx, method, rawURL, readerOf(body))
 	if err != nil {
 		return nil, fmt.Errorf("probe new request: %w", err)
 	}
