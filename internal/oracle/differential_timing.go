@@ -67,10 +67,6 @@ func maskBody(body string, m *baseline.Model, param, payload string) string {
 	return body
 }
 
-func maskAll(bodies []string) []string {
-	return maskAllWithPayload(bodies, "", "")
-}
-
 func maskAllWithPayload(bodies []string, param, payload string) []string {
 	m := baseline.NewDefaultModel()
 	out := make([]string, len(bodies))
