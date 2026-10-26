@@ -107,22 +107,38 @@ func newMenuSession(in io.Reader, out io.Writer) *menuSession {
 	}
 }
 
-func runPluginsMenu(in io.Reader, out io.Writer) error {
+// runFlow tek bir menü akışını kendi oturumunda çalıştırır.
+// What: `scan`, `plugins`, `bench`, `openapi`, `diff`, `suppress` komutları için ortak giriş.
+// Why: Akışı komut satırından açan her komut aynı davranışı paylaşmalı; "iptal"
+// veya EOF akış sonu demektir, hata mesajı değildir.
+func runFlow(in io.Reader, out io.Writer, flow func(*menuSession) error) error {
 	s := newMenuSession(in, out)
 	s.initTabs()
-	return s.pluginsFlow()
+	err := flow(s)
+	if err == nil || errors.Is(err, errCancel) || errors.Is(err, io.EOF) {
+		return nil
+	}
+	return err
+}
+
+func runPluginsMenu(in io.Reader, out io.Writer) error {
+	return runFlow(in, out, func(ms *menuSession) error { return ms.pluginsFlow() })
 }
 
 func runBenchMenu(in io.Reader, out io.Writer) error {
-	s := newMenuSession(in, out)
-	s.initTabs()
-	return s.benchFlow()
+	return runFlow(in, out, func(ms *menuSession) error { return ms.benchFlow() })
+}
+
+func runOpenAPIMenu(in io.Reader, out io.Writer) error {
+	return runFlow(in, out, func(ms *menuSession) error { return ms.openAPIFlow() })
+}
+
+func runDiffMenu(in io.Reader, out io.Writer) error {
+	return runFlow(in, out, func(ms *menuSession) error { return ms.diffFlow() })
 }
 
 func runSuppressMenu(in io.Reader, out io.Writer) error {
-	s := newMenuSession(in, out)
-	s.initTabs()
-	return s.suppressFlow()
+	return runFlow(in, out, func(ms *menuSession) error { return ms.suppressFlow() })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -655,7 +671,7 @@ func (s *menuSession) helpScreen() {
 	s.println()
 	inner := s.boxWidth() - 4
 	rows := [][2]string{
-		{"1-8", "Sekmeyi doğrudan aç"},
+		{fmt.Sprintf("1-%d", len(s.tabs)), "Sekmeyi doğrudan aç"},
 		{"Enter", "Vurgulanan sekmeyi aç"},
 		{"n / p", "Sonraki / önceki sekme"},
 		{":komut", "Menüden çıkmadan komut çalıştır (örn. :plugins list)"},
@@ -671,8 +687,26 @@ func (s *menuSession) helpScreen() {
 	s.println()
 	s.printCommands()
 	s.println()
-	s.println("  " + s.th.muted("Menüdeki tüm işlemleri [1-6] sekmelerinden etkileşimli olarak yapabilirsiniz."))
-	s.println("  " + s.th.muted("İleri düzey veya özel bayraklar için 7 (Konsol) sekmesini kullanabilirsiniz."))
+	// Sekme numaraları elle yazılmaz: sekme listesi büyüdükçe metin bayatlar.
+	var flowTabs []string
+	consoleNo := 0
+	for i, t := range s.tabs {
+		switch t.name {
+		case "Konsol":
+			consoleNo = i + 1
+		case "Yardım":
+		default:
+			flowTabs = append(flowTabs, t.short)
+		}
+	}
+	if n := len(flowTabs); n > 0 {
+		s.println("  " + s.th.muted(fmt.Sprintf(
+			"Menüdeki tüm işlemleri %s-%s sekmelerinden etkileşimli olarak yapabilirsiniz.", flowTabs[0], flowTabs[n-1])))
+	}
+	if consoleNo > 0 {
+		s.println("  " + s.th.muted(fmt.Sprintf(
+			"İleri düzey veya özel bayraklar için %d (Konsol) sekmesini kullanabilirsiniz.", consoleNo)))
+	}
 }
 
 // printCommands gash komutlarını cobra kök komutundan okuyup tablo olarak basar.

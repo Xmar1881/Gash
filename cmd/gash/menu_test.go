@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 )
@@ -109,6 +110,64 @@ func TestMenuAggressiveScanRequiresConfirmation(t *testing.T) {
 	}
 	if strings.Contains(out, "Tarama başlatılıyor") {
 		t.Fatalf("cancelled aggressive scan must not start:\n%s", out)
+	}
+}
+
+// TestMenuAllTabsReachable: her sekme açılabilmeli ve akış paneli görünmeli.
+// What: Sekme numarasını verip akışı iptal/geri ile kapatır.
+// Why: Menüye eklenen bir sekme akışına bağlanmazsa bu test kırılır.
+func TestMenuAllTabsReachable(t *testing.T) {
+	for _, tc := range []struct {
+		tab    string
+		input  string
+		marker string
+	}{
+		{"1 tarama", "1\niptal\nq\n", "Hedef URL"},
+		{"2 pluginler", "2\n0\nq\n", "Plugin yönetimi"},
+		{"3 benchmark", "3\n0\nq\n", "Dataset doğrula"},
+		{"4 openapi", "4\niptal\nq\n", "Spec dosyası veya http(s) URL"},
+		{"5 diff", "5\niptal\nq\n", "Eski/baseline JSON raporu"},
+		{"6 suppress", "6\n0\nq\n", "Suppress yönetimi"},
+		{"7 konsol", "7\nmenu\nq\n", "Komut terminali"},
+		{"8 yardım", "8\nq\n", "Klavye kısayolları"},
+	} {
+		t.Run(tc.tab, func(t *testing.T) {
+			out, err := runMenu(t, tc.input)
+			if err != nil {
+				t.Fatalf("menu tab %s: %v", tc.tab, err)
+			}
+			if !strings.Contains(out, tc.marker) {
+				t.Fatalf("tab %s akışına bağlı değil (%q yok):\n%s", tc.tab, tc.marker, out)
+			}
+			if !strings.Contains(out, "Görüşürüz.") {
+				t.Fatalf("tab %s sonrası menü temiz kapanmadı:\n%s", tc.tab, out)
+			}
+		})
+	}
+}
+
+// TestMenuFlowEntrypoints: komut satırından açılan akışlar "iptal"/EOF'u hata
+// olarak raporlamamalı.
+// What: Her run*Menu girişini kısa girdiyle çalıştırır.
+// Why: Akış girişleri ortak runFlow sarmalayıcısını paylaşmalı; aksi halde
+// `gash scan` (ve benzeri) iptalde hata mesajı basar.
+func TestMenuFlowEntrypoints(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(io.Reader, io.Writer) error
+	}{
+		{"plugins", runPluginsMenu},
+		{"bench", runBenchMenu},
+		{"openapi", runOpenAPIMenu},
+		{"diff", runDiffMenu},
+		{"suppress", runSuppressMenu},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			if err := tc.run(strings.NewReader("iptal\n"), &out); err != nil {
+				t.Fatalf("%s akış girişi iptalde hata döndürdü: %v", tc.name, err)
+			}
+		})
 	}
 }
 

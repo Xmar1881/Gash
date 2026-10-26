@@ -1439,6 +1439,9 @@ func newOpenAPICmd() *cobra.Command {
 		Short: "OpenAPI/Swagger spec'ten test planı üret (taramasız)",
 		Long:  "Parse an OpenAPI 3.x / Swagger 2.0 document (local file or http(s) URL) and print the endpoint/parameter test plan.\nNo scanning is performed; a remote --spec URL is fetched once and never probed further.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 && cmd.Flags().NFlag() == 0 && isInteractive(cmd.InOrStdin()) {
+				return runOpenAPIMenu(cmd.InOrStdin(), cmd.OutOrStdout())
+			}
 			if strings.TrimSpace(spec) == "" {
 				return fmt.Errorf("openapi: --spec zorunlu (dosya yolu veya http(s) URL)")
 			}
@@ -1537,6 +1540,9 @@ func newDiffCmd() *cobra.Command {
 			"  gash diff --old baseline.json --new current.json\n" +
 			"  gash diff --old baseline.json --new current.json --format json --fail-on new",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 && cmd.Flags().NFlag() == 0 && isInteractive(cmd.InOrStdin()) {
+				return runDiffMenu(cmd.InOrStdin(), cmd.OutOrStdout())
+			}
 			if strings.TrimSpace(oldPath) == "" || strings.TrimSpace(newPath) == "" {
 				return fmt.Errorf("diff: --old and --new are required")
 			}
