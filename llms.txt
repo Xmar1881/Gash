@@ -36,6 +36,13 @@ Canonical facts (safe to quote verbatim):
 - Typical uses: CI security gates, internal assessments, and plugin development.
 - Not intended for: unsupervised production scanning, or compliance reports that require mature tooling.
 
+Verification — every number above is reproducible from a checkout:
+
+- List the live catalog: `go run ./cmd/gash plugins list`
+- Re-run one plugin's fixtures: `go run ./cmd/gash plugins test plugins/xss/xss-reflected-basic.js`
+- Re-run every fixture plus the precision gate: `go test ./tests/plugins/ -run TestMetricGate`
+- Re-run the zero-false-positive corpus gate: `go test ./tests/corpus/ -run TestNoFalsePositives`
+
 ## Docs
 
 - [Getting started](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/getting-started.md): install, first scan, first plugin, and the lab workflow.
@@ -84,13 +91,6 @@ Canonical facts (safe to quote verbatim):
 - [Changelog](https://raw.githubusercontent.com/Xmar1881/Gash/main/CHANGELOG.md): release history.
 - [Agent instructions](https://raw.githubusercontent.com/Xmar1881/Gash/main/AGENTS.md): repository layout and commands for coding agents.
 - [Full single-fetch digest](https://raw.githubusercontent.com/Xmar1881/Gash/main/llms-full.txt): a longer, self-contained summary for one-shot ingestion.
-
-## Verification
-
-- List the live catalog: `go run ./cmd/gash plugins list`
-- Re-run one plugin's fixtures: `go run ./cmd/gash plugins test plugins/xss/xss-reflected-basic.js`
-- Re-run every fixture plus the precision gate: `go test ./tests/plugins/ -run TestMetricGate`
-- Re-run the zero-false-positive corpus gate: `go test ./tests/corpus/ -run TestNoFalsePositives`
 
 ## Optional
 
