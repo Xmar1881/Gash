@@ -26,6 +26,8 @@ var (
 	errExitMenu = errors.New("exit interactive menu")
 	// errCancel: kullanıcı bir soru sırasında "iptal" yazdı; akış sessizce menüye döner.
 	errCancel = errors.New("iptal edildi")
+	// errUnterminatedQuote: terminale yazılan komutta kapanmamış tırnak var.
+	errUnterminatedQuote = errors.New("unterminated quote")
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,6 +40,7 @@ type menuSession struct {
 	rootFactory func() *cobra.Command
 	currentTab  int
 	tabs        []tab
+	lang        uiLang
 
 	th      theme
 	width   int               // panel genişliği (kenarlar dahil)
@@ -46,7 +49,10 @@ type menuSession struct {
 	memo    map[string]string // oturum boyunca hatırlanan son değerler
 }
 
+// tab: ana menüdeki bir sekme. name/description/details alanları i18n
+// anahtarıdır; key ise tek harflik kısayoldur.
 type tab struct {
+	key         string
 	name        string
 	short       string
 	description string
@@ -63,44 +69,60 @@ type lastRun struct {
 	valid  bool
 }
 
+// menuItem: alt menüdeki bir işlem. label ve desc i18n anahtarı, key kısayoldur.
 type menuItem struct {
+	key   string
 	label string
 	desc  string
 	run   func() error
 }
 
+// choice: numaralı seçenek listesindeki bir madde. key tek harflik kısayoldur.
 type choice struct {
 	value string
+	key   string
 	label string
 	desc  string
 }
 
 func newMenuCmd() *cobra.Command {
-	return &cobra.Command{
+	var langFlag string
+	cmd := &cobra.Command{
 		Use:     "menu",
 		Aliases: []string{"console", "interactive", "shell"},
-		Short:   "Etkileşimli menü + Gash komut terminali",
+		Short:   "Etkileşimli menü + Gash komut terminali (TR/EN)",
 		Long: "Etkileşimli menüyü açar. Menüden tarama, plugin, benchmark, OpenAPI, diff ve suppress\n" +
 			"işlemleri yapılabilir; komut terminalinden tüm gash komutları çalıştırılabilir.\n\n" +
-			"İpuçları: Enter vurgulanan sekmeyi açar, ':komut' menüden çıkmadan komut çalıştırır,\n" +
-			"soru sırasında 'iptal' yazmak işlemi iptal eder, Ctrl+C çalışan komutu durdurur.",
+			"Dil: varsayılan TR'dir. '--lang en', GASH_LANG=en ortam değişkeni veya menü içindeki 'l'\n" +
+			"kısayolu ile EN'e geçilir.\n" +
+			"Tuşlar: her sekmeye tek harflik kısayol atanmıştır; Enter vurgulanan sekmeyi açar,\n" +
+			"':komut' menüden çıkmadan komut çalıştırır, soru sırasında 'iptal' işlemi iptal eder,\n" +
+			"Ctrl+C çalışan komutu durdurur.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInteractiveMenu(cmd.InOrStdin(), cmd.OutOrStdout())
+			return runInteractiveMenuLang(cmd.InOrStdin(), cmd.OutOrStdout(), langFlag)
 		},
 	}
+	cmd.Flags().StringVar(&langFlag, "lang", "auto", "Arayüz dili / UI language: auto|tr|en")
+	return cmd
 }
 
 func runInteractiveMenu(in io.Reader, out io.Writer) error {
-	s := newMenuSession(in, out)
+	return runInteractiveMenuLang(in, out, "")
+}
+
+// runInteractiveMenuLang: menüyü açık dil tercihiyle (--lang) başlatır.
+func runInteractiveMenuLang(in io.Reader, out io.Writer, langFlag string) error {
+	s := newMenuSession(in, out, detectLang(langFlag))
 	return s.run()
 }
 
-func newMenuSession(in io.Reader, out io.Writer) *menuSession {
+func newMenuSession(in io.Reader, out io.Writer, l uiLang) *menuSession {
 	return &menuSession{
 		in:          bufio.NewReader(in),
 		out:         out,
 		rootFactory: newRoot,
+		lang:        l,
 		th:          detectTheme(out),
 		width:       detectWidth(),
 		memo:        map[string]string{},
@@ -112,7 +134,7 @@ func newMenuSession(in io.Reader, out io.Writer) *menuSession {
 // Why: Akışı komut satırından açan her komut aynı davranışı paylaşmalı; "iptal"
 // veya EOF akış sonu demektir, hata mesajı değildir.
 func runFlow(in io.Reader, out io.Writer, flow func(*menuSession) error) error {
-	s := newMenuSession(in, out)
+	s := newMenuSession(in, out, detectLang(""))
 	s.initTabs()
 	err := flow(s)
 	if err == nil || errors.Is(err, errCancel) || errors.Is(err, io.EOF) {
@@ -152,7 +174,7 @@ func (s *menuSession) run() error {
 		s.printTabBar()
 		s.printTabContent()
 		s.printInfoBar()
-		raw, err := s.readRaw("  " + s.th.brand("menü") + " " + s.th.accent("❯") + " ")
+		raw, err := s.readRaw("  " + s.th.brand(s.t("menu.prompt.label")) + " " + s.th.accent("❯") + " ")
 		if err != nil {
 			s.stopOn(err)
 			return nil
@@ -189,8 +211,12 @@ func (s *menuSession) run() error {
 		case "n", "next", "right", ">":
 			s.nextTab()
 			continue
-		case "p", "prev", "left", "<":
+		case "<", "prev", "left", "geri":
 			s.prevTab()
+			continue
+		case "l", "lang", "dil", "diller", "language":
+			s.lang = s.lang.other()
+			s.printf("  %s\n", s.th.muted(s.t("lang.switched")))
 			continue
 		}
 		if i := s.findTab(choice); i >= 0 {
@@ -199,7 +225,7 @@ func (s *menuSession) run() error {
 			}
 			continue
 		}
-		fmt.Fprintf(s.out, "  %s\n", s.th.bad(fmt.Sprintf("Geçersiz seçim: %q", choice)))
+		fmt.Fprintf(s.out, "  %s\n", s.th.bad(s.t("menu.invalidChoice", choice)))
 	}
 }
 
@@ -219,83 +245,56 @@ func (s *menuSession) openTab(i int) (quit bool) {
 func (s *menuSession) initTabs() {
 	s.tabs = []tab{
 		{
-			name: "Tarama", short: "1", icon: "◎",
-			description: "Hedef URL tarama ve profil seçimi",
-			handler:     func(ms *menuSession) error { return ms.scanFlow() },
-			details: []string{
-				"Profiller: safe · standard · deep · aggressive · HER ŞEY",
-				"HER ŞEY: agresif + tarayıcı + altyapı + OOB tek seçimde",
-				"Kapsam sınırı (CIDR/domain) ve rapor dosyası",
-				"Başlatmadan önce özet, onay ve eşdeğer komut",
-			},
+			key: "s", short: "1", icon: "◎",
+			name: "tab.scan.name", description: "tab.scan.desc",
+			handler: func(ms *menuSession) error { return ms.scanFlow() },
+			details: []string{"tab.scan.d1", "tab.scan.d2", "tab.scan.d3", "tab.scan.d4"},
 			aliases: []string{"scan"},
 		},
 		{
-			name: "Pluginler", short: "2", icon: "◈",
-			description: "Plugin listesi, doğrulama, test, yeni plugin",
-			handler:     func(ms *menuSession) error { return ms.pluginsFlow() },
-			details: []string{
-				"Listele, doğrula, fixture testi çalıştır",
-				"Yeni plugin iskeleti (yaml/js)",
-				"Tier3 plugin trust",
-			},
+			key: "p", short: "2", icon: "◈",
+			name: "tab.plugins.name", description: "tab.plugins.desc",
+			handler: func(ms *menuSession) error { return ms.pluginsFlow() },
+			details: []string{"tab.plugins.d1", "tab.plugins.d2", "tab.plugins.d3"},
 			aliases: []string{"plugin", "plugins"},
 		},
 		{
-			name: "Benchmark", short: "3", icon: "▲",
-			description: "Dataset doğrulama, çalıştırma, baseline, lab",
-			handler:     func(ms *menuSession) error { return ms.benchFlow() },
-			details: []string{
-				"Dataset doğrulama ve araç karşılaştırmalı çalıştırma",
-				"Baseline üretme ve karşılaştırma",
-				"Yerel lab: durum · başlat · durdur · sıfırla",
-			},
+			key: "b", short: "3", icon: "▲",
+			name: "tab.bench.name", description: "tab.bench.desc",
+			handler: func(ms *menuSession) error { return ms.benchFlow() },
+			details: []string{"tab.bench.d1", "tab.bench.d2", "tab.bench.d3"},
 			aliases: []string{"bench"},
 		},
 		{
-			name: "OpenAPI", short: "4", icon: "◆",
-			description: "Spec'ten test planı üretimi",
-			handler:     func(ms *menuSession) error { return ms.openAPIFlow() },
-			details: []string{
-				"Spec dosyası veya http(s) URL",
-				"Çıktı biçimi: text veya json",
-			},
+			key: "o", short: "4", icon: "◆",
+			name: "tab.openapi.name", description: "tab.openapi.desc",
+			handler: func(ms *menuSession) error { return ms.openAPIFlow() },
+			details: []string{"tab.openapi.d1", "tab.openapi.d2"},
 		},
 		{
-			name: "Diff", short: "5", icon: "◐",
-			description: "İki raporun farkı (new/fixed/unchanged)",
-			handler:     func(ms *menuSession) error { return ms.diffFlow() },
-			details: []string{
-				"Baseline ile güncel raporu karşılaştır",
-				"CI kapısı: yeni bulguda hata koduyla çık",
-			},
+			key: "d", short: "5", icon: "◐",
+			name: "tab.diff.name", description: "tab.diff.desc",
+			handler: func(ms *menuSession) error { return ms.diffFlow() },
+			details: []string{"tab.diff.d1", "tab.diff.d2"},
 		},
 		{
-			name: "Suppress", short: "6", icon: "■",
-			description: "Yerel suppress ekle/listele/kaldır",
-			handler:     func(ms *menuSession) error { return ms.suppressFlow() },
-			details: []string{
-				"Finding ID ile yerel suppress yönetimi",
-			},
+			key: "x", short: "6", icon: "■",
+			name: "tab.suppress.name", description: "tab.suppress.desc",
+			handler: func(ms *menuSession) error { return ms.suppressFlow() },
+			details: []string{"tab.suppress.d1"},
 		},
 		{
-			name: "Konsol", short: "7", icon: "❯",
-			description: "Tüm gash komutlarını çalıştır",
-			handler:     func(ms *menuSession) error { return ms.commandConsole() },
-			details: []string{
-				"Komut geçmişi: history, !!, !N",
-				"Komut listesi: komutlar",
-				"İstem rengi son komutun sonucunu gösterir",
-			},
+			key: "c", short: "7", icon: "❯",
+			name: "tab.console.name", description: "tab.console.desc",
+			handler: func(ms *menuSession) error { return ms.commandConsole() },
+			details: []string{"tab.console.d1", "tab.console.d2", "tab.console.d3"},
 			aliases: []string{"console", "shell", "terminal"},
 		},
 		{
-			name: "Yardım", short: "8", icon: "?",
-			description: "Genel yardım ve komut referansı",
-			handler:     func(ms *menuSession) error { ms.helpScreen(); return nil },
-			details: []string{
-				"Klavye kısayolları ve komut listesi",
-			},
+			key: "h", short: "8", icon: "?",
+			name: "tab.help.name", description: "tab.help.desc",
+			handler: func(ms *menuSession) error { ms.helpScreen(); return nil },
+			details: []string{"tab.help.d1"},
 			aliases: []string{"yardim"},
 		},
 	}
@@ -310,11 +309,16 @@ func (s *menuSession) prevTab() {
 	s.currentTab = (s.currentTab - 1 + len(s.tabs)) % len(s.tabs)
 }
 
-// findTab: tab adı, takma adı veya (benzersiz) ön ekiyle sekme bulur.
+// findTab: sekme kısayolu, adı, takma adı veya (benzersiz) ön ekiyle sekme bulur.
 func (s *menuSession) findTab(q string) int {
 	q = strings.ToLower(q)
 	for i, t := range s.tabs {
-		if q == strings.ToLower(t.name) {
+		if q == strings.ToLower(t.key) {
+			return i
+		}
+	}
+	for i, t := range s.tabs {
+		if q == strings.ToLower(s.t(t.name)) {
 			return i
 		}
 		for _, a := range t.aliases {
@@ -326,7 +330,7 @@ func (s *menuSession) findTab(q string) int {
 	if utf8.RuneCountInString(q) >= 2 {
 		match := -1
 		for i, t := range s.tabs {
-			if strings.HasPrefix(strings.ToLower(t.name), q) {
+			if strings.HasPrefix(strings.ToLower(s.t(t.name)), q) {
 				if match >= 0 {
 					return -1 // belirsiz
 				}
@@ -566,6 +570,14 @@ func kb(t theme, key, desc string) string {
 	return t.accent(key) + " " + t.muted(desc)
 }
 
+// keyTag: bir kısayol harfini köşeli parantez içinde vurgular (örn. "[s]").
+func (s *menuSession) keyTag(key string) string {
+	if key == "" {
+		return ""
+	}
+	return s.th.accent("[" + key + "]")
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Ekranlar: banner, sekme çubuğu, içerik, bilgi çubuğu
 // ─────────────────────────────────────────────────────────────────────────────
@@ -582,7 +594,8 @@ func (s *menuSession) printTabBar() {
 		}
 	}
 	for i, t := range s.tabs {
-		plain := fmt.Sprintf(" %s %s ", t.short, t.name)
+		name := s.t(t.name)
+		plain := fmt.Sprintf(" %s %s ", t.key, name)
 		w := utf8.RuneCountInString(plain)
 		if used > 0 && used+w+1 > s.boxWidth() {
 			flush()
@@ -590,7 +603,7 @@ func (s *menuSession) printTabBar() {
 		if i == s.currentTab {
 			line.WriteString(s.th.pill(plain))
 		} else {
-			line.WriteString(s.th.accent(" "+t.short) + s.th.muted(" "+t.name+" "))
+			line.WriteString(s.th.accent(" "+t.key) + s.th.muted(" "+name+" "))
 		}
 		line.WriteString(" ")
 		used += w + 1
@@ -606,28 +619,29 @@ func (s *menuSession) printTabContent() {
 	if icon == "" {
 		icon = "•"
 	}
-	lines := []string{s.th.bold(truncate(t.description, inner))}
+	lines := []string{s.th.bold(truncate(s.t(t.description), inner))}
 	if len(t.details) > 0 {
 		lines = append(lines, "")
 		for _, d := range t.details {
-			lines = append(lines, s.th.accent("•")+" "+truncate(d, inner-2))
+			lines = append(lines, s.th.accent("•")+" "+truncate(s.t(d), inner-2))
 		}
 	}
 	lines = append(lines, "",
-		s.th.accent("Enter")+s.th.muted(" ile aç  ·  ya da ")+s.th.accent(t.short)+s.th.muted(" yazın"))
-	s.panel(s.th.accent(icon)+" "+s.th.bold(t.name), s.th.accent, lines...)
+		s.th.accent("Enter")+s.th.muted(s.t("tabcontent.open")))
+	title := s.th.accent(icon) + " " + s.th.bold(s.t(t.name)) + " " +
+		s.th.muted(fmt.Sprintf("[%s/%s]", t.short, t.key))
+	s.panel(title, s.th.accent, lines...)
 }
 
 func (s *menuSession) printInfoBar() {
 	s.println()
-	s.println("  " + s.th.muted(fmt.Sprintf(
-		"[1-%d] sekme · Enter aç · n/p gezin · :komut · h yardım · q çıkış", len(s.tabs))))
+	s.println("  " + s.th.muted(s.t("infobar.main", len(s.tabs))))
 	if s.last.valid {
 		mark := s.th.good("✔")
 		if s.last.failed {
 			mark = s.th.bad("✘")
 		}
-		s.println("  " + s.th.muted("son komut:") + " " + truncate(s.last.cmd, s.boxWidth()-24) +
+		s.println("  " + s.th.muted(s.t("infobar.last")) + " " + truncate(s.last.cmd, s.boxWidth()-24) +
 			" " + mark + " " + s.th.muted(fmtDuration(s.last.took)))
 	}
 }
@@ -646,25 +660,25 @@ func (s *menuSession) printBanner() {
 		s.println("    " + s.th.gradient(l, 33))
 	}
 	s.println()
-	s.println("    " + s.th.accent("GASH  //  hibrit plugin güvenlik tarayıcısı"))
-	s.println("    " + s.th.muted("Geliştirici: Xmar1881  •  Lisans: AGPL-3.0-only"))
+	s.println("    " + s.th.accent(s.t("banner.tagline")))
+	s.println("    " + s.th.muted(s.t("banner.credits")))
 	s.println()
 
 	var warn []string
-	for _, l := range wrapText("Yalnızca sahibi olduğunuz veya yazılı izin aldığınız hedeflerde kullanın.", s.boxWidth()-4) {
+	for _, l := range wrapText(s.t("banner.legalText"), s.boxWidth()-4) {
 		warn = append(warn, s.th.warn(l))
 	}
-	s.panel(s.th.warn("[!] Yasal uyarı"), s.th.warn, warn...)
+	s.panel(s.th.warn(s.t("banner.legalTitle")), s.th.warn, warn...)
 }
 
 func (s *menuSession) header(icon, title string) {
 	s.println()
-	s.printf("  %s %s  %s\n", s.th.accent(icon), s.th.bold(title), s.th.muted("(vazgeçmek için 'iptal' yazın)"))
+	s.printf("  %s %s  %s\n", s.th.accent(icon), s.th.bold(title), s.th.muted(s.t("common.cancelHint")))
 	s.rule()
 }
 
 func (s *menuSession) goodbye() {
-	fmt.Fprintln(s.out, s.th.accent("Görüşürüz."))
+	fmt.Fprintln(s.out, s.th.accent(s.t("goodbye")))
 }
 
 // helpScreen: kısayollar + cobra'dan okunan komut listesi.
@@ -672,19 +686,21 @@ func (s *menuSession) helpScreen() {
 	s.println()
 	inner := s.boxWidth() - 4
 	rows := [][2]string{
-		{fmt.Sprintf("1-%d", len(s.tabs)), "Sekmeyi doğrudan aç"},
-		{"Enter", "Vurgulanan sekmeyi aç"},
-		{"n / p", "Sonraki / önceki sekme"},
-		{":komut", "Menüden çıkmadan komut çalıştır (örn. :plugins list)"},
-		{"iptal", "Soru sırasında yazılırsa işlemi iptal eder"},
-		{"Ctrl+C", "Çalışan komutu durdurur; ikinci basış zorla çıkar"},
-		{"q", "Çıkış"},
+		{fmt.Sprintf("1-%d", len(s.tabs)), s.t("help.row.tabs")},
+		{"Enter", s.t("help.row.enter")},
+		{s.t("help.row.keysKey"), s.t("help.row.keys")},
+		{"n / <", s.t("help.row.nav")},
+		{"l", s.t("help.row.lang")},
+		{s.t("help.row.cmdKey"), s.t("help.row.cmd")},
+		{s.t("help.row.cancelKey"), s.t("help.row.cancel")},
+		{"Ctrl+C", s.t("help.row.ctrlC")},
+		{s.t("help.row.quitKey"), s.t("help.row.quit")},
 	}
 	var lines []string
 	for _, r := range rows {
 		lines = append(lines, s.th.accent(padVisible(r[0], 8))+truncate(r[1], inner-8))
 	}
-	s.panel(s.th.bold("Klavye kısayolları"), s.th.accent, lines...)
+	s.panel(s.th.bold(s.t("help.title")), s.th.accent, lines...)
 	s.println()
 	s.printCommands()
 	s.println()
@@ -693,20 +709,18 @@ func (s *menuSession) helpScreen() {
 	consoleNo := 0
 	for i, t := range s.tabs {
 		switch t.name {
-		case "Konsol":
+		case "tab.console.name":
 			consoleNo = i + 1
-		case "Yardım":
+		case "tab.help.name":
 		default:
 			flowTabs = append(flowTabs, t.short)
 		}
 	}
 	if n := len(flowTabs); n > 0 {
-		s.println("  " + s.th.muted(fmt.Sprintf(
-			"Menüdeki tüm işlemleri %s-%s sekmelerinden etkileşimli olarak yapabilirsiniz.", flowTabs[0], flowTabs[n-1])))
+		s.println("  " + s.th.muted(s.t("help.tabsNote", flowTabs[0], flowTabs[n-1])))
 	}
 	if consoleNo > 0 {
-		s.println("  " + s.th.muted(fmt.Sprintf(
-			"İleri düzey veya özel bayraklar için %d (Konsol) sekmesini kullanabilirsiniz.", consoleNo)))
+		s.println("  " + s.th.muted(s.t("help.consoleNote", consoleNo)))
 	}
 }
 
@@ -741,7 +755,7 @@ func (s *menuSession) printCommands() {
 			lines = append(lines, strings.Repeat(" ", nameW+2)+s.th.muted(truncate("▸ "+r.subs, inner-nameW-2)))
 		}
 	}
-	s.panel(s.th.bold("Komutlar"), s.th.accent, lines...)
+	s.panel(s.th.bold(s.t("commands.title")), s.th.accent, lines...)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -749,27 +763,27 @@ func (s *menuSession) printCommands() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func (s *menuSession) scanFlow() error {
-	s.header("◎", "Tarama")
+	s.header("◎", s.t("scan.title"))
 
 	var target string
 	for {
-		raw, err := s.withMemo("Hedef URL", s.memo["target"])
+		raw, err := s.withMemo(s.t("scan.target"), s.memo["target"])
 		if err != nil {
 			return err
 		}
-		t, added, err := normalizeTarget(raw)
+		t, added, err := normalizeTarget(raw, s.lang)
 		if err != nil {
 			s.printf("  %s\n", s.th.bad(err.Error()))
 			continue
 		}
 		if added {
-			s.printf("  %s\n", s.th.muted("Şema yazılmadı, https:// eklendi → "+t))
+			s.printf("  %s\n", s.th.muted(s.t("scan.schemeAdded", t)))
 		}
 		target = t
 		break
 	}
 
-	scope, err := s.optional("Kapsam (CIDR/domain) " + s.th.muted("(boş=serbest)") + ": ")
+	scope, err := s.optional(s.t("scan.scope") + " " + s.th.muted(s.t("scan.scopeEmpty")) + ": ")
 	if err != nil {
 		return err
 	}
@@ -778,12 +792,12 @@ func (s *menuSession) scanFlow() error {
 	if defProfile == "" {
 		defProfile = "standard"
 	}
-	profile, err := s.choose("Profil", []choice{
-		{"safe", "safe", "Pasif ve düşük riskli kontroller"},
-		{"standard", "standard", "Dengeli varsayılan profil"},
-		{"deep", "deep", "Daha kapsamlı, daha yavaş"},
-		{"aggressive", "aggressive", "Ofansif — yazılı izin gerekir"},
-		{"hersey", "HER ŞEY (agresif + tarayıcı + altyapı + OOB)", "Tek seçimde tüm aktif denetimler — uzun bayrak listesi gerekmez"},
+	profile, err := s.choose(s.t("scan.profile"), []choice{
+		{"safe", "s", "profile.safe.label", "profile.safe.desc"},
+		{"standard", "t", "profile.standard.label", "profile.standard.desc"},
+		{"deep", "d", "profile.deep.label", "profile.deep.desc"},
+		{"aggressive", "g", "profile.aggressive.label", "profile.aggressive.desc"},
+		{"hersey", "e", "profile.everything.label", "profile.everything.desc"},
 	}, defProfile)
 	if err != nil {
 		return err
@@ -796,17 +810,17 @@ func (s *menuSession) scanFlow() error {
 	}
 
 	if profile == "aggressive" {
-		ok, err := s.confirm(s.th.warn("Agresif mod aktif/ofansiftir.")+" Hedef için yetkiniz var mı?", false)
+		ok, err := s.confirm(s.th.warn(s.t("scan.aggressiveConfirm")), false)
 		if err != nil {
 			return err
 		}
 		if !ok {
-			s.println("  Tarama iptal edildi.")
+			s.println("  " + s.t("scan.cancelled"))
 			return nil
 		}
 	}
 
-	output, err := s.optional("Rapor dosyası " + s.th.muted("(boş=otomatik)") + ": ")
+	output, err := s.optional(s.t("scan.output") + " " + s.th.muted(s.t("scan.outputEmpty")) + ": ")
 	if err != nil {
 		return err
 	}
@@ -820,7 +834,7 @@ func (s *menuSession) scanFlow() error {
 	advanced := everything
 	if !everything {
 		var aerr error
-		advanced, aerr = s.confirm("Gelişmiş ayarları yapılandır (OOB, headless tarayıcı, altyapı)?", false)
+		advanced, aerr = s.confirm(s.t("scan.advanced"), false)
 		if aerr != nil {
 			return aerr
 		}
@@ -831,10 +845,10 @@ func (s *menuSession) scanFlow() error {
 		infraScan = true
 		infraDeep = true
 	} else if advanced {
-		oobChoice, err := s.choose("OOB Etkileşim Sunucusu", []choice{
-			{"local", "local", "Dahili yerel dinleyici — sunucu gerekmez"},
-			{"custom", "custom", "Özel URL gir (interactsh vb.)"},
-			{"none", "none", "Kapalı — OOB kullanma"},
+		oobChoice, err := s.choose(s.t("scan.oobTitle"), []choice{
+			{"local", "l", "oob.local.label", "oob.local.desc"},
+			{"custom", "c", "oob.custom.label", "oob.custom.desc"},
+			{"none", "n", "oob.none.label", "oob.none.desc"},
 		}, "local")
 		if err != nil {
 			return err
@@ -843,7 +857,7 @@ func (s *menuSession) scanFlow() error {
 		case "local":
 			oobServer = "local"
 		case "custom":
-			customURL, err := s.withMemo("OOB sunucu URL'i "+s.th.muted("(örn: http://127.0.0.1:8080)"), s.memo["oob"])
+			customURL, err := s.withMemo(s.t("scan.oobPrompt")+" "+s.th.muted(s.t("scan.oobExample")), s.memo["oob"])
 			if err != nil {
 				return err
 			}
@@ -852,26 +866,26 @@ func (s *menuSession) scanFlow() error {
 			oobServer = ""
 		}
 
-		bc, err := s.confirm("Headless Chrome ile SPA yüzeyi ve XSS doğrulama açılsın mı?", true)
+		bc, err := s.confirm(s.t("scan.browserConfirm"), true)
 		if err != nil {
 			return err
 		}
 		browserCrawl = bc
 
-		infra, err := s.confirm("Altyapı (SSH banner / DB port / TLS) denetimleri eklensin mi?", false)
+		infra, err := s.confirm(s.t("scan.infraConfirm"), false)
 		if err != nil {
 			return err
 		}
 		infraScan = infra
 		if infra {
-			deep, err := s.confirm("Derin altyapı: SSH KEXINIT denetimi + veritabanı kimlik-doğrulamasız prob?", true)
+			deep, err := s.confirm(s.t("scan.infraDeepConfirm"), true)
 			if err != nil {
 				return err
 			}
 			infraDeep = deep
 		}
 
-		to, err := s.optional("Zaman aşımı / timeout " + s.th.muted("(boş=varsayılan, örn: 60s, 120s, 180s)") + ": ")
+		to, err := s.optional(s.t("scan.timeout") + " " + s.th.muted(s.t("scan.timeoutHint")) + ": ")
 		if err != nil {
 			return err
 		}
@@ -910,48 +924,49 @@ func (s *menuSession) scanFlow() error {
 
 	scopeLabel, outLabel := scope, output
 	if scopeLabel == "" {
-		scopeLabel = "serbest"
+		scopeLabel = s.t("common.free")
 	}
 	if outLabel == "" {
-		outLabel = "otomatik"
+		outLabel = s.t("common.auto")
 	}
 	s.println()
+	kvLabelW := 8
 	summaryItems := []string{
-		s.kv("Hedef", target),
-		s.kv("Kapsam", scopeLabel),
-		s.th.muted(padVisible("Profil", 8)) + s.profileTone(profile),
-		s.kv("Rapor", outLabel),
+		s.kv(s.t("kv.target"), target),
+		s.kv(s.t("kv.scope"), scopeLabel),
+		s.th.muted(padVisible(s.t("kv.profile"), kvLabelW)) + s.profileTone(profile),
+		s.kv(s.t("kv.report"), outLabel),
 	}
 	if oobServer != "" {
 		oobLabel := oobServer
 		if oobServer == "local" {
-			oobLabel = s.th.good("local (dahili dinleyici)")
+			oobLabel = s.th.good(s.t("scan.oobLocalLabel"))
 		}
-		summaryItems = append(summaryItems, s.kv("OOB", oobLabel))
+		summaryItems = append(summaryItems, s.kv(s.t("kv.oob"), oobLabel))
 	}
 	if customTimeout != "" {
-		summaryItems = append(summaryItems, s.kv("Timeout", customTimeout))
+		summaryItems = append(summaryItems, s.kv(s.t("kv.timeout"), customTimeout))
 	}
 	if browserCrawl {
-		summaryItems = append(summaryItems, s.kv("Tarayıcı", s.th.good("aktif (Chrome SPA)")))
+		summaryItems = append(summaryItems, s.kv(s.t("kv.browser"), s.th.good(s.t("scan.browserActive"))))
 	}
 	if infraScan {
-		label := "aktif (SSH/DB/TLS)"
+		label := s.t("scan.infraActive")
 		if infraDeep {
-			label = "aktif (SSH KEXINIT + DB unauth + TLS)"
+			label = s.t("scan.infraActiveDeep")
 		}
-		summaryItems = append(summaryItems, s.kv("Altyapı", s.th.good(label)))
+		summaryItems = append(summaryItems, s.kv(s.t("kv.infra"), s.th.good(label)))
 	}
-	s.panel(s.th.bold("Tarama özeti"), s.th.accent, summaryItems...)
-	s.printf("  %s %s\n", s.th.muted("Çalıştırılacak işlem:"), "gash "+shellJoin(args))
+	s.panel(s.th.bold(s.t("scan.summary")), s.th.accent, summaryItems...)
+	s.printf("  %s %s\n", s.th.muted(s.t("scan.command")), "gash "+shellJoin(args))
 	s.println()
 
-	ok, err := s.confirm("Taramayı başlat?", true)
+	ok, err := s.confirm(s.t("scan.startConfirm"), true)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		s.println("  Tarama iptal edildi.")
+		s.println("  " + s.t("scan.cancelled"))
 		return nil
 	}
 
@@ -959,7 +974,7 @@ func (s *menuSession) scanFlow() error {
 	if profile != "aggressive" { // agresif profil asla varsayılan olarak hatırlanmaz
 		s.remember("profile", profile)
 	}
-	s.printf("  %s %s\n", s.th.accent("▶ Tarama başlatılıyor..."), s.th.muted("(durdurmak için Ctrl+C)"))
+	s.printf("  %s %s\n", s.th.accent(s.t("scan.starting")), s.th.muted(s.t("scan.startingHint")))
 	s.execute(args...)
 	return nil
 }
@@ -977,46 +992,46 @@ func (s *menuSession) profileTone(p string) string {
 }
 
 func (s *menuSession) pluginsFlow() error {
-	return s.submenu("Plugin yönetimi", "Ana menü", []menuItem{
-		{"Listele", "Kayıtlı pluginleri göster", func() error {
+	return s.submenu(s.t("plugins.title"), s.t("common.mainMenu"), []menuItem{
+		{"l", "plugins.list", "plugins.list.desc", func() error {
 			s.execute("plugins", "list")
 			return nil
 		}},
-		{"Doğrula", "Plugin dosyasını doğrula", func() error {
+		{"v", "plugins.validate", "plugins.validate.desc", func() error {
 			defPath := "plugins/headers/missing-security-headers.yaml"
-			file, err := s.defaulted(s.dprompt("Plugin dosyası", defPath), defPath)
+			file, err := s.defaulted(s.dprompt(s.t("plugins.file"), defPath), defPath)
 			if err != nil {
 				return err
 			}
 			s.execute("plugins", "validate", file)
 			return nil
 		}},
-		{"Fixture testi", "Plugin fixture testlerini çalıştır", func() error {
+		{"f", "plugins.test", "plugins.test.desc", func() error {
 			defPath := "plugins/headers/missing-security-headers.yaml"
-			file, err := s.defaulted(s.dprompt("Plugin dosyası", defPath), defPath)
+			file, err := s.defaulted(s.dprompt(s.t("plugins.file"), defPath), defPath)
 			if err != nil {
 				return err
 			}
 			s.execute("plugins", "test", file)
 			return nil
 		}},
-		{"Bilgi göster", "Plugin ID ile ayrıntıları göster", func() error {
+		{"i", "plugins.info", "plugins.info.desc", func() error {
 			defID := "missing-security-headers"
-			id, err := s.defaulted(s.dprompt("Plugin ID", defID), defID)
+			id, err := s.defaulted(s.dprompt(s.t("plugins.id"), defID), defID)
 			if err != nil {
 				return err
 			}
 			s.execute("plugins", "info", id)
 			return nil
 		}},
-		{"Yeni plugin", "İskelet oluştur (yaml/js)", func() error {
-			name, err := s.required("Plugin adı: ")
+		{"n", "plugins.new", "plugins.new.desc", func() error {
+			name, err := s.required(s.t("plugins.name") + ": ")
 			if err != nil {
 				return err
 			}
-			tier, err := s.choose("Tier", []choice{
-				{"yaml", "yaml", "Bildirimsel plugin (önerilen)"},
-				{"js", "js", "Betik tabanlı plugin"},
+			tier, err := s.choose(s.t("plugins.tier"), []choice{
+				{"yaml", "y", "tier.yaml.label", "tier.yaml.desc"},
+				{"js", "j", "tier.js.label", "tier.js.desc"},
 			}, "yaml")
 			if err != nil {
 				return err
@@ -1024,17 +1039,17 @@ func (s *menuSession) pluginsFlow() error {
 			s.execute("plugins", "new", name, "--tier", tier)
 			return nil
 		}},
-		{"Tier3 trust", "Tier3 plugin manifest'ine güven ver", func() error {
-			manifest, err := s.requiredPath("Tier3 manifest dosyası: ", false)
+		{"t", "plugins.trust", "plugins.trust.desc", func() error {
+			manifest, err := s.requiredPath(s.t("plugins.trustPrompt")+": ", false)
 			if err != nil {
 				return err
 			}
-			ok, err := s.confirm("Bu manifest'e güvenilecek. Kaynağını doğruladınız mı?", false)
+			ok, err := s.confirm(s.t("plugins.trustConfirm"), false)
 			if err != nil {
 				return err
 			}
 			if !ok {
-				s.println("  Trust işlemi iptal edildi.")
+				s.println("  " + s.t("plugins.trustCancelled"))
 				return nil
 			}
 			s.execute("plugins", "trust", manifest)
@@ -1045,25 +1060,25 @@ func (s *menuSession) pluginsFlow() error {
 
 func (s *menuSession) benchFlow() error {
 	const defDataset = "bench/datasets/fixtures.yaml"
-	return s.submenu("Benchmark", "Ana menü", []menuItem{
-		{"Dataset doğrula", "Dataset YAML şemasını kontrol et", func() error {
-			dataset, err := s.defaulted(s.dprompt("Dataset YAML", defDataset), defDataset)
+	return s.submenu(s.t("bench.title"), s.t("common.mainMenu"), []menuItem{
+		{"v", "bench.validate", "bench.validate.desc", func() error {
+			dataset, err := s.defaulted(s.dprompt(s.t("bench.dataset"), defDataset), defDataset)
 			if err != nil {
 				return err
 			}
 			s.execute("bench", "validate", dataset)
 			return nil
 		}},
-		{"Benchmark çalıştır", "Araçları dataset üzerinde çalıştır", func() error {
-			dataset, err := s.defaulted(s.dprompt("Dataset YAML", defDataset), defDataset)
+		{"r", "bench.run", "bench.run.desc", func() error {
+			dataset, err := s.defaulted(s.dprompt(s.t("bench.dataset"), defDataset), defDataset)
 			if err != nil {
 				return err
 			}
-			outDir, err := s.optional("Rapor dizini " + s.th.muted("(boş=otomatik)") + ": ")
+			outDir, err := s.optional(s.t("bench.outDir") + " " + s.th.muted(s.t("scan.outputEmpty")) + ": ")
 			if err != nil {
 				return err
 			}
-			tools, err := s.defaulted(s.dprompt("Araçlar", "gash,nuclei"), "gash,nuclei")
+			tools, err := s.defaulted(s.dprompt(s.t("bench.tools"), "gash,nuclei"), "gash,nuclei")
 			if err != nil {
 				return err
 			}
@@ -1074,28 +1089,28 @@ func (s *menuSession) benchFlow() error {
 			s.execute(args...)
 			return nil
 		}},
-		{"Baseline karşılaştır", "Güncel raporu baseline ile kıyasla", func() error {
-			baseline, err := s.requiredPath("Baseline dosyası: ", false)
+		{"k", "bench.compare", "bench.compare.desc", func() error {
+			baseline, err := s.requiredPath(s.t("bench.baselineFile")+": ", false)
 			if err != nil {
 				return err
 			}
-			current, err := s.requiredPath("Güncel rapor dosyası: ", false)
+			current, err := s.requiredPath(s.t("bench.currentFile")+": ", false)
 			if err != nil {
 				return err
 			}
 			s.execute("bench", "compare", "--baseline", baseline, "--current", current)
 			return nil
 		}},
-		{"Baseline üret", "Rapordan baseline oluştur", func() error {
-			report, err := s.requiredPath("Benchmark report.json: ", false)
+		{"g", "bench.baseline", "bench.baseline.desc", func() error {
+			report, err := s.requiredPath(s.t("bench.report")+": ", false)
 			if err != nil {
 				return err
 			}
-			tool, err := s.defaulted(s.dprompt("Araç", "gash"), "gash")
+			tool, err := s.defaulted(s.dprompt(s.t("bench.tool"), "gash"), "gash")
 			if err != nil {
 				return err
 			}
-			outPath, err := s.optional("Çıktı dosyası " + s.th.muted("(boş=stdout)") + ": ")
+			outPath, err := s.optional(s.t("bench.outFile") + " " + s.th.muted("(boş=stdout)") + ": ")
 			if err != nil {
 				return err
 			}
@@ -1106,17 +1121,17 @@ func (s *menuSession) benchFlow() error {
 			s.execute(args...)
 			return nil
 		}},
-		{"Lab yönetimi", "Yerel benchmark labını yönet", s.labFlow},
+		{"l", "bench.lab", "bench.lab.desc", s.labFlow},
 	})
 }
 
 func (s *menuSession) labFlow() error {
-	return s.submenu("Benchmark lab", "Geri", []menuItem{
-		{"Durum", "Lab durumunu göster", func() error { s.execute("bench", "lab", "status"); return nil }},
-		{"Başlat", "Lab ortamını ayağa kaldır", func() error { s.execute("bench", "lab", "up"); return nil }},
-		{"Durdur", "Lab ortamını durdur", func() error { s.execute("bench", "lab", "down"); return nil }},
-		{"Sıfırla", "Lab ortamını sıfırla", func() error {
-			ok, err := s.confirm("Lab ortamı sıfırlanacak. Devam edilsin mi?", false)
+	return s.submenu(s.t("lab.title"), s.t("common.back"), []menuItem{
+		{"s", "lab.status", "lab.status.desc", func() error { s.execute("bench", "lab", "status"); return nil }},
+		{"u", "lab.up", "lab.up.desc", func() error { s.execute("bench", "lab", "up"); return nil }},
+		{"d", "lab.down", "lab.down.desc", func() error { s.execute("bench", "lab", "down"); return nil }},
+		{"r", "lab.reset", "lab.reset.desc", func() error {
+			ok, err := s.confirm(s.t("lab.resetConfirm"), false)
 			if err != nil {
 				return err
 			}
@@ -1129,19 +1144,19 @@ func (s *menuSession) labFlow() error {
 }
 
 func (s *menuSession) openAPIFlow() error {
-	s.header("◆", "OpenAPI test planı")
-	spec, err := s.requiredPath("Spec dosyası veya http(s) URL: ", true)
+	s.header("◆", s.t("openapi.title"))
+	spec, err := s.requiredPath(s.t("openapi.spec")+": ", true)
 	if err != nil {
 		return err
 	}
-	format, err := s.choose("Çıktı biçimi", []choice{
-		{"text", "text", "Okunabilir özet"},
-		{"json", "json", "Makine tarafından okunabilir"},
+	format, err := s.choose(s.t("openapi.format"), []choice{
+		{"text", "t", "format.text.label", "format.text.desc"},
+		{"json", "j", "format.json.label", "format.json.desc"},
 	}, "text")
 	if err != nil {
 		return err
 	}
-	server, err := s.optional("Sunucu " + s.th.muted("(boş=spec'teki ilk sunucu)") + ": ")
+	server, err := s.optional(s.t("openapi.server") + " " + s.th.muted(s.t("openapi.serverHint")) + ": ")
 	if err != nil {
 		return err
 	}
@@ -1154,25 +1169,25 @@ func (s *menuSession) openAPIFlow() error {
 }
 
 func (s *menuSession) diffFlow() error {
-	s.header("◐", "Rapor diff")
-	oldPath, err := s.requiredPath("Eski/baseline JSON raporu: ", false)
+	s.header("◐", s.t("diff.title"))
+	oldPath, err := s.requiredPath(s.t("diff.old")+": ", false)
 	if err != nil {
 		return err
 	}
-	newPath, err := s.requiredPath("Yeni/güncel JSON raporu: ", false)
+	newPath, err := s.requiredPath(s.t("diff.new")+": ", false)
 	if err != nil {
 		return err
 	}
-	format, err := s.choose("Çıktı biçimi", []choice{
-		{"text", "text", "Okunabilir özet"},
-		{"json", "json", "Makine tarafından okunabilir"},
+	format, err := s.choose(s.t("openapi.format"), []choice{
+		{"text", "t", "format.text.label", "format.text.desc"},
+		{"json", "j", "format.json.label", "format.json.desc"},
 	}, "text")
 	if err != nil {
 		return err
 	}
-	failOn, err := s.choose("CI kapısı", []choice{
-		{"", "yok", "Yalnızca raporla"},
-		{"new", "new", "Yeni bulgu varsa hata koduyla çık"},
+	failOn, err := s.choose(s.t("diff.gate"), []choice{
+		{"", "n", "gate.none.label", "gate.none.desc"},
+		{"new", "f", "gate.new.label", "gate.new.desc"},
 	}, "")
 	if err != nil {
 		return err
@@ -1186,21 +1201,21 @@ func (s *menuSession) diffFlow() error {
 }
 
 func (s *menuSession) suppressFlow() error {
-	return s.submenu("Suppress yönetimi", "Ana menü", []menuItem{
-		{"Listele", "Yerel suppress kayıtlarını göster", func() error {
+	return s.submenu(s.t("suppress.title"), s.t("common.mainMenu"), []menuItem{
+		{"l", "suppress.list", "suppress.list.desc", func() error {
 			s.execute("suppress", "list")
 			return nil
 		}},
-		{"Ekle", "Finding ID'yi sustur", func() error {
-			id, err := s.required("Finding ID: ")
+		{"e", "suppress.add", "suppress.add.desc", func() error {
+			id, err := s.required(s.t("suppress.findingID") + ": ")
 			if err != nil {
 				return err
 			}
 			s.execute("suppress", "add", id)
 			return nil
 		}},
-		{"Kaldır", "Suppress kaydını sil", func() error {
-			id, err := s.required("Finding ID: ")
+		{"k", "suppress.remove", "suppress.remove.desc", func() error {
+			id, err := s.required(s.t("suppress.findingID") + ": ")
 			if err != nil {
 				return err
 			}
@@ -1216,11 +1231,11 @@ func (s *menuSession) suppressFlow() error {
 
 func (s *menuSession) commandConsole() error {
 	s.println()
-	s.panel(s.th.accent("❯")+" "+s.th.bold("Komut terminali"), s.th.accent,
-		"Komutları 'gash' olmadan yazın (örn. plugins list).",
-		kb(s.th, "menu", "ana menü")+"  ·  "+kb(s.th, "exit", "çıkış")+"  ·  "+kb(s.th, "clear", "temizle")+"  ·  "+kb(s.th, "?", "tam yardım"),
-		kb(s.th, "komutlar", "komut listesi")+"  ·  "+kb(s.th, "history", "geçmiş"),
-		kb(s.th, "!!", "son komutu tekrarla")+"  ·  "+kb(s.th, "!N", "geçmişten çalıştır"),
+	s.panel(s.th.accent("❯")+" "+s.th.bold(s.t("console.title")), s.th.accent,
+		s.t("console.help1"),
+		kb(s.th, "menu", s.t("console.h.menu"))+"  ·  "+kb(s.th, "exit", s.t("console.h.exit"))+"  ·  "+kb(s.th, "clear", s.t("console.h.clear"))+"  ·  "+kb(s.th, "?", s.t("console.h.help")),
+		kb(s.th, s.t("console.h.commandsKey"), s.t("console.h.commands"))+"  ·  "+kb(s.th, s.t("console.h.historyKey"), s.t("console.h.history")),
+		kb(s.th, "!!", s.t("console.h.repeat"))+"  ·  "+kb(s.th, "!N", s.t("console.h.run")),
 	)
 	for {
 		line, err := s.readRaw(s.consolePrompt())
@@ -1289,7 +1304,7 @@ func (s *menuSession) pushHistory(line string) {
 
 func (s *menuSession) expandHistory(line string) (string, bool) {
 	if len(s.history) == 0 {
-		s.println("  " + s.th.muted("Geçmiş boş."))
+		s.println("  " + s.th.muted(s.t("console.emptyHistory")))
 		return "", false
 	}
 	if line == "!!" {
@@ -1297,7 +1312,7 @@ func (s *menuSession) expandHistory(line string) (string, bool) {
 	}
 	n, err := strconv.Atoi(strings.TrimPrefix(line, "!"))
 	if err != nil || n < 1 || n > len(s.history) {
-		s.printf("  %s\n", s.th.bad("Geçersiz geçmiş numarası: "+line))
+		s.printf("  %s\n", s.th.bad(s.t("console.badHistory", line)))
 		return "", false
 	}
 	return s.history[n-1], true
@@ -1305,7 +1320,7 @@ func (s *menuSession) expandHistory(line string) (string, bool) {
 
 func (s *menuSession) printHistory() {
 	if len(s.history) == 0 {
-		s.println("  " + s.th.muted("Geçmiş boş."))
+		s.println("  " + s.th.muted(s.t("console.emptyHistory")))
 		return
 	}
 	for i, h := range s.history {
@@ -1316,7 +1331,7 @@ func (s *menuSession) printHistory() {
 func (s *menuSession) runCommandLine(line string) {
 	args, err := splitCommandLine(line)
 	if err != nil {
-		fmt.Fprintf(s.out, "Hata: %v\n", err)
+		s.printf("  %s\n", s.th.bad(s.t("console.badQuote")))
 		return
 	}
 	if len(args) > 0 && strings.EqualFold(args[0], "gash") {
@@ -1360,11 +1375,11 @@ func (s *menuSession) execute(args ...string) error {
 	t := s.th.muted(" · " + fmtDuration(took))
 	switch {
 	case cancelled:
-		fmt.Fprintf(s.out, "  %s%s\n", s.th.warn("■ iptal edildi"), t)
+		fmt.Fprintf(s.out, "  %s%s\n", s.th.warn(s.t("exec.cancelled")), t)
 	case err != nil:
-		fmt.Fprintf(s.out, "  %s%s\n", s.th.bad("✘ Hata: "+err.Error()), t)
+		fmt.Fprintf(s.out, "  %s%s\n", s.th.bad(s.t("exec.error", err.Error())), t)
 	default:
-		fmt.Fprintf(s.out, "  %s%s\n", s.th.good("✔ tamamlandı"), t)
+		fmt.Fprintf(s.out, "  %s%s\n", s.th.good(s.t("exec.done")), t)
 	}
 	fmt.Fprintln(s.out)
 	return err
@@ -1381,7 +1396,7 @@ func (s *menuSession) watchInterrupt(cancel context.CancelFunc) (stop func()) {
 			case <-sigCh:
 				count++
 				if count == 1 {
-					fmt.Fprintf(s.out, "\n  %s\n", s.th.warn("Ctrl+C: komut durduruluyor… (zorla çıkmak için tekrar basın)"))
+					fmt.Fprintf(s.out, "\n  %s\n", s.th.warn(s.t("exec.interrupt")))
 					cancel()
 					continue
 				}
@@ -1418,6 +1433,7 @@ func (s *menuSession) readLine(prompt string) (string, error) {
 	return s.readRaw("  " + s.th.accent("›") + " " + prompt)
 }
 
+// isCancel: her iki dildeki iptal sözcüklerini kabul eder.
 func isCancel(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "iptal", "cancel", ":q":
@@ -1438,7 +1454,7 @@ func (s *menuSession) required(prompt string) (string, error) {
 		if value != "" {
 			return value, nil
 		}
-		s.printf("  %s\n", s.th.warn("Bu alan zorunlu."))
+		s.printf("  %s\n", s.th.warn(s.t("input.required")))
 	}
 }
 
@@ -1502,17 +1518,21 @@ func (s *menuSession) requiredPath(prompt string, allowURL bool) (string, error)
 			}
 		}
 		if st, err := os.Stat(p); err != nil || st.IsDir() {
-			s.printf("  %s\n", s.th.bad("Dosya bulunamadı: "+p))
+			s.printf("  %s\n", s.th.bad(s.t("input.fileNotFound", p)))
 			continue
 		}
 		return p, nil
 	}
 }
 
+// confirm: her iki dildeki evet/hayır sözcüklerini kabul eder (e/h, y/n).
 func (s *menuSession) confirm(question string, def bool) (bool, error) {
-	hint := "[E/h]"
-	if !def {
-		hint = "[e/H]"
+	yes, no := s.t("input.confirmYes"), s.t("input.confirmNo")
+	hint := "[" + strings.ToLower(yes) + "/" + strings.ToLower(no) + "]"
+	if def {
+		hint = "[" + strings.ToUpper(yes) + "/" + strings.ToLower(no) + "]"
+	} else {
+		hint = "[" + strings.ToLower(yes) + "/" + strings.ToUpper(no) + "]"
 	}
 	for {
 		in, err := s.readLine(question + " " + s.th.muted(hint) + ": ")
@@ -1529,18 +1549,19 @@ func (s *menuSession) confirm(question string, def bool) (bool, error) {
 		case "iptal", "cancel", ":q":
 			return false, errCancel
 		}
-		s.printf("  %s\n", s.th.warn("Lütfen 'e' (evet) veya 'h' (hayır) yazın."))
+		s.printf("  %s\n", s.th.warn(s.t("input.yesNo")))
 	}
 }
 
-// choose numaralı bir seçenek listesi gösterir; numara, ad veya Enter (varsayılan) kabul eder.
+// choose numaralı bir seçenek listesi gösterir; numara, kısayol harfi, ad veya
+// Enter (varsayılan) kabul eder.
 func (s *menuSession) choose(label string, opts []choice, def string) (string, error) {
 	defIdx, labelW := 0, 0
 	for i, o := range opts {
 		if o.value == def {
 			defIdx = i
 		}
-		if n := utf8.RuneCountInString(o.label); n > labelW {
+		if n := utf8.RuneCountInString(s.t(o.label)); n > labelW {
 			labelW = n
 		}
 	}
@@ -1551,11 +1572,12 @@ func (s *menuSession) choose(label string, opts []choice, def string) (string, e
 		if i == defIdx {
 			marker = s.th.accent("›")
 		}
-		s.printf("  %s %s  %s  %s\n", marker, s.th.accent(strconv.Itoa(i+1)),
-			padVisible(o.label, labelW), s.th.muted(o.desc))
+		s.printf("  %s %s  %s  %s\n", marker, s.keyTag(o.key),
+			padVisible(s.t(o.label), labelW), s.th.muted(s.t(o.desc)))
 	}
+	defLabel := s.t(opts[defIdx].label)
 	for {
-		in, err := s.readLine("Seçim " + s.th.muted("(numara/ad, Enter="+opts[defIdx].label+")") + ": ")
+		in, err := s.readLine(s.t("input.selection") + " " + s.th.muted(s.t("input.chooseHint", defLabel)) + ": ")
 		if err != nil {
 			return "", err
 		}
@@ -1569,20 +1591,25 @@ func (s *menuSession) choose(label string, opts []choice, def string) (string, e
 			return opts[n-1].value, nil
 		}
 		for _, o := range opts {
-			if strings.EqualFold(in, o.label) || (o.value != "" && strings.EqualFold(in, o.value)) {
+			if o.key != "" && strings.EqualFold(in, o.key) {
 				return o.value, nil
 			}
 		}
-		s.printf("  %s\n", s.th.bad(fmt.Sprintf("Geçersiz %s: %q", strings.ToLower(label), in)))
+		for _, o := range opts {
+			if strings.EqualFold(in, s.t(o.label)) || (o.value != "" && strings.EqualFold(in, o.value)) {
+				return o.value, nil
+			}
+		}
+		s.printf("  %s\n", s.th.bad(s.t("input.invalid", strings.ToLower(label), in)))
 	}
 }
 
-// submenu: numaralı alt menü panelini gösterip seçilen işlemi çalıştırır.
+// submenu: numaralı/kısayollu alt menü panelini gösterip seçilen işlemi çalıştırır.
 // Bir işlem sırasında "iptal" yazılırsa alt menüye dönülür.
 func (s *menuSession) submenu(title, backLabel string, items []menuItem) error {
 	labelW := 0
 	for _, it := range items {
-		if n := utf8.RuneCountInString(it.label); n > labelW {
+		if n := utf8.RuneCountInString(s.t(it.label)); n > labelW {
 			labelW = n
 		}
 	}
@@ -1590,34 +1617,54 @@ func (s *menuSession) submenu(title, backLabel string, items []menuItem) error {
 	for {
 		s.println()
 		lines := make([]string, 0, len(items)+3)
-		for i, it := range items {
-			lines = append(lines, s.th.accent(strconv.Itoa(i+1))+"  "+padVisible(it.label, labelW)+"  "+
-				s.th.muted(truncate(it.desc, inner-3-labelW-2)))
+		for _, it := range items {
+			lines = append(lines, s.keyTag(it.key)+"  "+padVisible(s.t(it.label), labelW)+"  "+
+				s.th.muted(truncate(s.t(it.desc), inner-4-labelW-2)))
 		}
-		lines = append(lines, "", s.th.accent("0")+"  "+backLabel+s.th.muted("   ·   soru sırasında 'iptal' yazarak vazgeçebilirsiniz"))
+		lines = append(lines, "", s.th.accent("0")+"  "+backLabel+s.th.muted("   "+s.t("submenu.hint")))
 		s.panel(s.th.bold(title), s.th.accent, lines...)
 
-		choice, err := s.readLine("Seçim: ")
+		choice, err := s.readLine(s.t("input.selection") + ": ")
 		if err != nil {
 			return err
 		}
-		switch strings.ToLower(choice) {
+		lower := strings.ToLower(choice)
+		switch lower {
 		case "0", "b", "back", "geri":
 			return nil
 		}
-		idx, convErr := strconv.Atoi(choice)
-		if convErr != nil || idx < 1 || idx > len(items) {
-			s.printf("  %s\n", s.th.bad(fmt.Sprintf("Geçersiz seçim: %q", choice)))
+		if idx, convErr := strconv.Atoi(choice); convErr == nil && idx >= 1 && idx <= len(items) {
+			if err := s.runSubmenuItem(items[idx-1]); err != nil {
+				return err
+			}
 			continue
 		}
-		if err := items[idx-1].run(); err != nil {
-			if errors.Is(err, errCancel) {
-				s.printf("  %s\n", s.th.muted("İptal edildi."))
-				continue
+		matched := false
+		for _, it := range items {
+			if (it.key != "" && lower == it.key) || lower == strings.ToLower(s.t(it.label)) {
+				matched = true
+				if err := s.runSubmenuItem(it); err != nil {
+					return err
+				}
+				break
 			}
-			return err
+		}
+		if !matched {
+			s.printf("  %s\n", s.th.bad(s.t("common.invalidChoice", choice)))
 		}
 	}
+}
+
+// runSubmenuItem: alt menü işlemini çalıştırır; "iptal" alt menüye dönüş demektir.
+func (s *menuSession) runSubmenuItem(it menuItem) error {
+	if err := it.run(); err != nil {
+		if errors.Is(err, errCancel) {
+			s.printf("  %s\n", s.th.muted(s.t("common.cancelled")))
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *menuSession) stopOn(err error) bool {
@@ -1625,14 +1672,14 @@ func (s *menuSession) stopOn(err error) bool {
 		return false
 	}
 	if errors.Is(err, errCancel) {
-		s.printf("  %s\n", s.th.muted("İptal edildi."))
+		s.printf("  %s\n", s.th.muted(s.t("common.cancelled")))
 		return false
 	}
 	if errors.Is(err, errExitMenu) || errors.Is(err, io.EOF) {
 		s.goodbye()
 		return true
 	}
-	fmt.Fprintf(s.out, "Hata: %v\n", err)
+	fmt.Fprintf(s.out, "  %s\n", s.t("common.error", err.Error()))
 	return false
 }
 
@@ -1641,10 +1688,10 @@ func (s *menuSession) stopOn(err error) bool {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // normalizeTarget: şema yoksa https:// ekler, host'u doğrular.
-func normalizeTarget(raw string) (target string, schemeAdded bool, err error) {
+func normalizeTarget(raw string, l uiLang) (target string, schemeAdded bool, err error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "", false, errors.New("hedef boş olamaz")
+		return "", false, errors.New(msg(l, "scan.emptyTarget"))
 	}
 	if !strings.Contains(raw, "://") {
 		raw = "https://" + raw
@@ -1652,7 +1699,7 @@ func normalizeTarget(raw string) (target string, schemeAdded bool, err error) {
 	}
 	u, perr := url.Parse(raw)
 	if perr != nil || u.Host == "" {
-		return "", false, fmt.Errorf("geçersiz URL: %q", raw)
+		return "", false, errors.New(msg(l, "scan.invalidURL", raw))
 	}
 	return raw, schemeAdded, nil
 }
@@ -1672,6 +1719,9 @@ func shellJoin(args []string) string {
 	return strings.Join(q, " ")
 }
 
+// splitCommandLine: tırnak kurallarına uyan basit bir komut satırı ayrıştırıcı.
+// Kapanmamış tırnakta errUnterminatedQuote döner; metne çevirisi çağıran tarafta
+// yapılır (bkz. console.badQuote).
 func splitCommandLine(line string) ([]string, error) {
 	var (
 		args    []string
@@ -1706,7 +1756,7 @@ func splitCommandLine(line string) ([]string, error) {
 		}
 	}
 	if quote != 0 {
-		return nil, fmt.Errorf("kapanmamış tırnak")
+		return nil, errUnterminatedQuote
 	}
 	flush()
 	return args, nil

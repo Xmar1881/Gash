@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -13,8 +14,17 @@ import (
 
 func runMenu(t *testing.T, input string) (string, error) {
 	t.Helper()
+	t.Setenv("GASH_LANG", "tr")
 	var out bytes.Buffer
 	err := runInteractiveMenu(strings.NewReader(input), &out)
+	return out.String(), err
+}
+
+// runMenuLang: menüyü --lang bayrağıyla belirtilen dilde çalıştırır.
+func runMenuLang(t *testing.T, langFlag, input string) (string, error) {
+	t.Helper()
+	var out bytes.Buffer
+	err := runInteractiveMenuLang(strings.NewReader(input), &out, langFlag)
 	return out.String(), err
 }
 
@@ -260,5 +270,152 @@ func TestSplitCommandLine(t *testing.T) {
 func TestSplitCommandLineUnterminatedQuote(t *testing.T) {
 	if _, err := splitCommandLine(`scan --target "https://example.test`); err == nil {
 		t.Fatal("expected unterminated quote error")
+	}
+}
+
+// TestMenuEnglishLanguage: --lang en ile tüm arayüz İngilizce olmalı.
+func TestMenuEnglishLanguage(t *testing.T) {
+	out, err := runMenuLang(t, "en", "q\n")
+	if err != nil {
+		t.Fatalf("menu en: %v", err)
+	}
+	for _, want := range []string{"Scan", "Plugins", "Console", "Legal notice", "Goodbye."} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("EN arayüzde %q yok:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Görüşürüz.") {
+		t.Fatalf("EN arayüzde TR metni kaldı:\n%s", out)
+	}
+}
+
+// TestMenuLanguageToggle: 'l' kısayolu TR ⇄ EN geçişini anında uygulamalı.
+func TestMenuLanguageToggle(t *testing.T) {
+	out, err := runMenuLang(t, "en", "l\nq\n")
+	if err != nil {
+		t.Fatalf("menu toggle: %v", err)
+	}
+	if !strings.Contains(out, "Arayüz dili: Türkçe (TR)") {
+		t.Fatalf("dil geçişi bildirilmedi:\n%s", out)
+	}
+	if !strings.Contains(out, "Görüşürüz.") {
+		t.Fatalf("geçiş sonrası TR çıkış mesajı yok:\n%s", out)
+	}
+}
+
+// TestMenuKeyShortcuts: her sekme numara yanında tek harflik kısayolla da açılmalı.
+func TestMenuKeyShortcuts(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		input  string
+		marker string
+	}{
+		{"scan", "s\niptal\nq\n", "Hedef URL"},
+		{"plugins", "p\n0\nq\n", "Plugin yönetimi"},
+		{"bench", "b\n0\nq\n", "Dataset doğrula"},
+		{"openapi", "o\niptal\nq\n", "Spec dosyası veya http(s) URL"},
+		{"diff", "d\niptal\nq\n", "Eski/baseline JSON raporu"},
+		{"suppress", "x\n0\nq\n", "Suppress yönetimi"},
+		{"console", "c\nmenu\nq\n", "Komut terminali"},
+		{"help", "h\nq\n", "Klavye kısayolları"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := runMenu(t, tc.input)
+			if err != nil {
+				t.Fatalf("kısayol %s: %v", tc.name, err)
+			}
+			if !strings.Contains(out, tc.marker) {
+				t.Fatalf("%s kısayolu akışı açmadı (%q yok):\n%s", tc.name, tc.marker, out)
+			}
+			if !strings.Contains(out, "Görüşürüz.") {
+				t.Fatalf("%s sonrası menü temiz kapanmadı:\n%s", tc.name, out)
+			}
+		})
+	}
+}
+
+// TestMenuSubmenuKeys: alt menü işlemleri tek harflik kısayolla da seçilebilmeli.
+func TestMenuSubmenuKeys(t *testing.T) {
+	out, err := runMenu(t, "x\ne\niptal\n0\nq\n")
+	if err != nil {
+		t.Fatalf("alt menü kısayolu: %v", err)
+	}
+	if !strings.Contains(out, "Finding ID") {
+		t.Fatalf("'e' kısayolu Ekle akışını açmadı:\n%s", out)
+	}
+	if !strings.Contains(out, "İptal edildi.") {
+		t.Fatalf("iptal sonrası alt menüye dönülmedi:\n%s", out)
+	}
+}
+
+// TestMenuChoiceKeyEverything: profil listesi 'e' kısayoluyla HER ŞEY profilini
+// seçmeli (numara yazmadan).
+func TestMenuChoiceKeyEverything(t *testing.T) {
+	out, err := runMenu(t, "1\nhttp://127.0.0.1\n\ne\ne\n\nh\nq\n")
+	if err != nil {
+		t.Fatalf("profil kısayolu: %v", err)
+	}
+	for _, want := range []string{"--aggressive", "--browser-crawl", "--browser-verify", "--oob-server local"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("HER ŞEY komutu %q içermeli:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "Tarama iptal edildi.") {
+		t.Fatalf("başlatma onayı 'hayır' iken tarama iptal edilmeli:\n%s", out)
+	}
+}
+
+// TestMenuMessagesComplete: katalogdaki her anahtar iki dilde de dolu olmalı.
+func TestMenuMessagesComplete(t *testing.T) {
+	for key, m := range menuMessages {
+		if strings.TrimSpace(m.tr) == "" || strings.TrimSpace(m.en) == "" {
+			t.Fatalf("eksik çeviri: %q (tr=%q en=%q)", key, m.tr, m.en)
+		}
+	}
+}
+
+// TestMenuLocaleParity: locales/tr.json ve locales/en.json aynı anahtar
+// kümesine sahip olmalı; eksik anahtar sessizce anahtar adı olarak görünür.
+func TestMenuLocaleParity(t *testing.T) {
+	load := func(l uiLang) map[string]string {
+		raw, err := locales.ReadFile("locales/" + string(l) + ".json")
+		if err != nil {
+			t.Fatalf("%s katalogu okunamadı: %v", l, err)
+		}
+		m := map[string]string{}
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatalf("%s katalogu ayrıştırılamadı: %v", l, err)
+		}
+		delete(m, "_meta")
+		return m
+	}
+	tr, en := load(uiLangTR), load(uiLangEN)
+	for k := range tr {
+		if _, ok := en[k]; !ok {
+			t.Fatalf("en.json'da eksik anahtar: %q", k)
+		}
+	}
+	for k := range en {
+		if _, ok := tr[k]; !ok {
+			t.Fatalf("tr.json'da eksik anahtar: %q", k)
+		}
+	}
+}
+
+// TestDetectLang: dil çözümleme sırası ve tanınmayan değerler doğrulanır.
+func TestDetectLang(t *testing.T) {
+	t.Setenv("GASH_LANG", "")
+	t.Setenv("LANG", "tr_TR.UTF-8")
+	t.Setenv("LC_ALL", "")
+	t.Setenv("LC_MESSAGES", "")
+	if got := detectLang(""); got != uiLangTR {
+		t.Fatalf("detectLang(LANG=tr) = %q, want tr", got)
+	}
+	if got := detectLang("en"); got != uiLangEN {
+		t.Fatalf("açık bayrak EN'i geçmeli, got %q", got)
+	}
+	t.Setenv("LANG", "")
+	if got := detectLang("auto"); got != uiLangTR {
+		t.Fatalf("tanınmayan değerde varsayılan TR olmalı, got %q", got)
 	}
 }

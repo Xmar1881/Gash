@@ -243,6 +243,10 @@ Dates are UTC.
 - The manual `lab-recall` GitHub workflow now runs the compose-lab Gash/Nuclei
   benchmark with deep browser verification and uploads the report alongside the
   raw recall scans.
+- Interactive menu is now keyboard-shortcut driven (each tab, submenu item, and
+  choice has a single-key shortcut) and localized: TR/EN catalogs live in
+  `cmd/gash/locales/{tr,en}.json` (embedded), with `--lang`, `GASH_LANG`, and a
+  live `l` toggle in the menu.
 
 ### Fixed
 
