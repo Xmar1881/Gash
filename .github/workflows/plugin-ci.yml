@@ -94,7 +94,8 @@ jobs:
       - name: Headless DOM XSS browser verification (Chrome deep-tag)
         # Deep DOM verification: runs real headless Chrome via chromedp (-tags deep).
         # Verifies that DOM source-to-sink payload executes in real Chrome and neutral control remains clean.
-        # Enforces that Chrome runs and the test is NOT skipped in CI.
+        # Enforces that Chrome runs, that no deep test is skipped, and that the
+        # key browser proofs pass in CI.
         run: |
           echo "=== Verifying Chrome binary in CI ==="
           if ! command -v google-chrome &>/dev/null && [ ! -x "/usr/bin/google-chrome" ]; then
@@ -108,16 +109,32 @@ jobs:
           export CI=true
 
           echo "=== Running Headless Deep Tests ==="
-          out=$(go test -tags deep -v -count=1 ./internal/headless/...)
+          # This step runs under bash -e: an unguarded `out=$(go test ...)` aborts
+          # the script on the first non-zero exit and swallows the test output,
+          # leaving CI with "exit code 1" and no diagnosis. Capture both the
+          # output and the exit code, print them, then decide.
+          set +e
+          out="$(go test -tags deep -v -count=1 ./internal/headless/... 2>&1)"
+          code=$?
+          set -e
           echo "$out"
-          if echo "$out" | grep -Ei "skip|no Chrome binary found"; then
-            echo "ERROR: headless test was skipped in CI!" >&2
+          if [ "$code" -ne 0 ]; then
+            echo "ERROR: deep headless suite failed (go test exit $code)" >&2
+            echo "--- failing lines ---" >&2
+            printf '%s\n' "$out" | grep -E '^(--- FAIL|FAIL|panic|ok |=== RUN)' >&2 || true
             exit 1
           fi
-          if ! echo "$out" | grep -q "PASS: TestDeepVerifiesDOMExecution"; then
-            echo "ERROR: TestDeepVerifiesDOMExecution did not pass!" >&2
+          if printf '%s\n' "$out" | grep -Eq '^[[:space:]]*--- SKIP|no Chrome binary found in CI'; then
+            echo "ERROR: a headless deep test was skipped in CI!" >&2
             exit 1
           fi
+          for want in TestDeepVerifiesDOMExecution TestDeepVerifyXSSHashRoute; do
+            if ! printf '%s\n' "$out" | grep -q -- "--- PASS: $want"; then
+              echo "ERROR: $want did not pass!" >&2
+              exit 1
+            fi
+          done
+          echo "Deep headless verification passed."
 
       - name: Race detector (core packages)
         run: go test -race -count=1 ./internal/engine/... ./internal/proto/... ./internal/oracle/ ./internal/plugin/... ./internal/probe/ ./internal/finding/ ./internal/baseline/
