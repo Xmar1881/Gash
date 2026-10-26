@@ -67,7 +67,6 @@ Entry points for LLMs, answer engines, and coding agents:
 - [llms.txt](../llms.txt) — curated project map (llms.txt v2 format)
 - [llms-full.txt](../llms-full.txt) — single-fetch full digest
 - [AGENTS.md](../AGENTS.md) — repository layout, commands, and gates for agents
-- [robots.txt](../robots.txt) — AI crawler allowlist for published mirrors
 - [CITATION.cff](../CITATION.cff) — citation metadata
 
 All documentation here is plain Markdown: no JavaScript, no login, no paywall.
