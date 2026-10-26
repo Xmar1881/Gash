@@ -219,11 +219,6 @@ func New(reg *plugin.Registry, cfg Config) *Engine {
 	return e
 }
 
-// detectorEnabled profil dedektör kapısıdır (proto recon + raporlama kullanır).
-func (e *Engine) detectorEnabled(name string) bool {
-	return e.cfg.enabledDetectors[strings.ToLower(name)]
-}
-
 // HasDualAuth iki farklı kullanıcı bağlamı tanımlı mı (BOLA matris kapısı).
 func (e *Engine) HasDualAuth() bool {
 	return e.cfg.AuthA != nil && e.cfg.AuthA.HasAuth() &&
