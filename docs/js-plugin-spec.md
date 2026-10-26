@@ -95,16 +95,39 @@ returning an array.
   carry `formValues` (the other form fields' current values, token fields
   included) and `formEnctype` so `probe.send` replays the complete form with
   only the target field replaced; `withValue` preserves both.
+- A script may attach an optional `headers` map to a point it builds or
+  forwards: `{url, method, paramName: "", paramLocation: "body", value: raw,
+  headers: {"Content-Type": "application/json"}}`. The map is merged on top of
+  the headers the executor derives (an explicit `Content-Type` overrides the
+  form default), which is what lets a plugin send a raw JSON body or an
+  unkeyed forwarding header. Header names are matched case-insensitively and
+  every request still travels through the same `PolicySession` budget, scope,
+  rate, and safe-method checks as the rest of the probe.
 
 ## Oracle API
 
 - `host.oracles.reflection(resp, canary, contexts)`: executable-context
   reflection plus clean-control comparison. Returns evidence or `null`.
-- `host.oracles.error(resp, controlResp)`: DB signature plus control
-  absence. Returns evidence or `null`.
-- `host.oracles.differential(trueResps, falseResps, controlResp)`:
-  masked true/false/control comparison over repeat sets.
+- `host.oracles.error(resp, controlResp[, opts])`: DB signature plus control
+  absence. Returns evidence or `null`. `opts.mode` selects the signature family
+  (`sqli` default, `path_traversal`, `generic_error`, `deserialization`,
+  `takeover`); when omitted, the frontmatter `oracle_params.mode` applies, so
+  the mode is declared once instead of being duplicated in code.
+- `host.oracles.differential(trueResps, falseResps, controlResp[, opts])`:
+  masked true/false/control comparison over repeat sets. `opts.confidence_ceiling`
+  caps the accepted confidence (never raises it); when omitted, the frontmatter
+  `oracle_params.confidence_ceiling` applies. Use it for hardening-gap classes
+  where a stable divergence proves the behaviour but not an exploitable flaw.
+- `host.oracles.uploadServed(uploadResp, fetchResp, canary[, opts])`: upload
+  plus serve-back workflow. Returns evidence or `null`. The upload must be
+  accepted, the fetched artifact must carry the canary, and `opts.controlUrl`
+  (a sibling name that was never uploaded) must stay clean; the served content
+  type then decides `confirmed` (active type) or `firm` (inert/unknown).
 - `host.oracles.header(resp)`: passive header verdict, never tentative.
+- `host.oracles.cors(resp[, opts])`: CORS verdict. `opts.requestOrigin` (or the
+  frontmatter `oracle_params.request_origin`) supplies the Origin the request
+  actually carried, which is what makes a reflected-origin finding provable;
+  without it only wildcard and null allowlists can be graded.
 - `host.oracles.redirect(resp, payloadHost)`: external-host redirect with
   control semantics.
 - `host.oracles.oob(correlationId, namespace)`: OOB verdict; skipped when

@@ -1,0 +1,1 @@
+{"body": "<html><body><p>&lt;img src=x onerror=alert(gash_json_body_canary)&gt;</p></body></html>", "canary": "gash_json_body_canary", "control_body": "<html><body><p>zzz</p></body></html>", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "html-encoded reflection is inert", "status": 200, "target": "http://example.com/api/preview"}

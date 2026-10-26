@@ -1,0 +1,1 @@
+{"body": "<html>redirecting</html>", "control_body": "<html>registered</html>", "control_status": 200, "expected_verdict": "reject", "headers": {"Location": "https://example.com/landing"}, "name": "fixed in-origin redirect target is not open redirect", "payload_host": "gash-json-redirect.example", "status": 302, "target": "http://example.com/api/redirect"}

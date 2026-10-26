@@ -1,0 +1,1 @@
+{"body": "<html><body>account</body></html>", "control_body": "", "expected_verdict": "reject", "headers": {"Access-Control-Allow-Origin": "https://example.com", "Content-Type": "text/html"}, "name": "allowlisted origin only - our origin is not echoed", "status": 200, "target": "http://example.com/api/account"}

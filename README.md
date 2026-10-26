@@ -57,7 +57,7 @@ permission to test (`--scope` opts into a strict allowlist; see Legal).
 
 | Area | Current state |
 |---|---|
-| Reference catalog | 283 plugins: 275 Tier 1 YAML, 7 sandboxed JavaScript, and 1 Tier 3 native PoC |
+| Reference catalog | 308 plugins: 275 Tier 1 YAML, 32 sandboxed JavaScript, and 1 Tier 3 native PoC |
 | Evidence model | Candidate -> oracle -> evidence -> finding; browser execution is required for browser-confirmed XSS |
 | Scan engine | Shared retry, redirect, scope, rate, request-budget, response-size, cancellation, and scan-deadline controls |
 | Discovery | BFS crawl, surface extraction, OpenAPI input, content discovery, passive JavaScript recon, SPA state/build scans, and optional browser crawl |
@@ -73,8 +73,8 @@ or comparison numbers.
 
 ## What's New / Highlights
 
-- **283 detectors** — verify with `go run ./cmd/gash plugins list`
-  (275 Tier 1 YAML, 7 sandboxed JS, 1 Tier 3 native PoC;
+- **308 detectors** — verify with `go run ./cmd/gash plugins list`
+  (275 Tier 1 YAML, 32 sandboxed JS, 1 Tier 3 native PoC;
   see Detector Summary below).
 - **Framework-specific detectors (GASH-069..072)** — Next.js middleware
   authorization bypass (CVE-2025-29927) via a control-vs-bypass differential,
@@ -312,33 +312,33 @@ oracle:
 
 ## Detector Summary
 
-283 detectors via `go run ./cmd/gash plugins list`
-(275 Tier 1 YAML, 7 Tier 2 sandboxed JS, 1 Tier 3 native PoC).
+308 detectors via `go run ./cmd/gash plugins list`
+(275 Tier 1 YAML, 32 Tier 2 sandboxed JS, 1 Tier 3 native PoC).
 Full oracle/plugin catalog: `docs/detector-inventory.md`.
 
 | Class | Count | Examples |
 |---|---:|---|
 | Cross-site scripting (reflected, stored, DOM) | 6 | `xss-reflected-basic`, `xss-attribute-injection`, `xss-stored-basic`, `xss-stored-two-step`, `dom-sink-basic`, `xpath-injection-error` |
 | SQL injection (error, boolean, time, stacked, auth-bypass, OOB) | 6 | `sqli-error-based`, `sqli-boolean-differential`, `sqli-time-based`, `sqli-stacked-time`, `sqli-auth-bypass`, `blind-sqli-oob` |
-| XPath injection (error) | 1 | `xpath-injection-error` |
-| NoSQL injection (error, auth-bypass differential, timing) | 3 | `nosql-injection-error`, `nosql-auth-bypass-differential`, `nosql-injection-timing` |
+| XPath injection (error) | 2 | `xpath-injection-error`, `xpath-injection-json-body` |
+| NoSQL injection (error, auth-bypass differential, timing) | 5 | `nosql-injection-error`, `nosql-auth-bypass-differential`, `nosql-injection-timing`, `nosql-injection-timing-json-body`, `nosql-injection-differential-json-body` |
 | Command injection (error, timing, **OOB**) | 3 | `command-injection-error`, `command-injection-timing`, `command-injection-oob` |
 | SSRF (blind OOB, cloud metadata, internal port scan) | 3 | `ssrf-blind-oob`, `ssrf-cloud-metadata`, `ssrf-internal-port-scan` |
 | XXE (OOB, blind OOB, reflected) | 4 | `xxe-oob`, `xxe-reflected-basic`, `xxe-blind-oob`, `xml-external-entity-blind` |
 | Template injection (SSTI: reflection, blind timing, **OOB**) | 3 | `template-injection-reflection`, `ssti-blind-timing`, `ssti-blind-oob` |
 | File / path (RFI, traversal, upload, backup, listing, source maps, **sensitive files**) | 8 | `rfi-remote-include`, `path-traversal-error`, `file-upload-unrestricted`, `backup-file-exposure`, `directory-listing`, `source-map-exposure`, `file-inclusion-rfi`, `sensitive-file-exposure` |
 | Access control and logic (IDOR, LDAP x3, HPP x2, mass assignment, verb tampering, **GraphQL auth/DOS**) | 10 | `idor-differential`, `ldap-injection-differential`, `ldap-injection-blind`, `ldap-injection-oob`, `hpp-parameter-pollution`, `hpp-duplicate-emission`, `mass-assignment-basic`, `verb-tampering-bypass`, `graphql-auth-bypass`, `graphql-dos` |
-| Misconfig and headers (security headers, cookie, CORS x2, CRLF, response splitting, CSRF, clickjacking, JWT x3, version, GraphQL x2, host header, method override, error disclosure, redirect x2, management endpoints, phpinfo, WebDAV, CVE, rate limit, **debug endpoints**) | 37 | `missing-security-headers`, `permissions-policy-missing`, `hsts-hardening`, `csp-unsafe-directives`, `cookie-flags`, `cors-misconfig`, `insecure-cors-preflight`, `server-header-disclosure`, `powered-by-disclosure` |
+| Misconfig and headers (security headers, cookie, CORS x2, CRLF, response splitting, CSRF, clickjacking, JWT x4, version, GraphQL x2, host header, method override, error disclosure, redirect x2, management endpoints, phpinfo, WebDAV, CVE, rate limit, **debug endpoints**) | 38 | `missing-security-headers`, `permissions-policy-missing`, `hsts-hardening`, `csp-unsafe-directives`, `cookie-flags`, `cors-misconfig`, `insecure-cors-preflight`, `server-header-disclosure`, `powered-by-disclosure` |
 | Modern API and deployment exposure | 10 | `openapi-spec-exposure`, `swagger-ui-exposure`, `graphql-playground-exposure`, `prometheus-metrics-exposure`, `debug-toolbar-exposure`, `actuator-index-exposure`, `security-txt-exposure`, `git-config-exposure`, `environment-file-exposure`, `docker-compose-exposure` |
 | Critical control-plane and secret exposure | 80 | `aws-credentials-exposure`, `azure-credentials-exposure`, `gcp-service-account-exposure`, `kubernetes-config-exposure`, `vault-api-exposure`, `docker-api-exposure`, `argo-cd-api-exposure`, `keycloak-admin-exposure`, `registry-catalog-exposure` |
 | Rare product and admin exposure expansion | 100 | `n8n-editor`, `mlflow-tracking`, `couchdb-admin`, `kong-admin`, `mailhog-ui`, `graylog-api`, `gitea-admin`, `rancher-api`, `openstack-horizon`, `openfga-api` |
 | Insecure deserialization (error signature) | 1 | `insecure-deserialization-error` |
 | Subdomain takeover (unclaimed-service bodies) | 1 | `subdomain-takeover-basic` |
-| Web cache poisoning | 2 | `web-cache-poisoning-basic`, `cache-poisoning-host-header` |
+| Web cache poisoning | 3 | `web-cache-poisoning-basic`, `cache-poisoning-host-header`, `web-cache-method-override` |
 | Injection (JNDI, expression language, SSI, JSONP, prototype pollution) | 5 | `log4shell-jndi`, `expression-language-injection`, `ssi-injection`, `jsonp-callback-injection`, `prototype-pollution-differential` |
 | Framework-specific (Next.js middleware bypass, image optimizer SSRF) | 2 | `nextjs-middleware-bypass`, `nextjs-image-optimizer-ssrf` |
 | Native PoC (Tier 3, explicit trust) | 1 | `poc-native-header-check` |
-| **Total** | **283** | `go run ./cmd/gash plugins list` |
+| **Total** | **308** | `go run ./cmd/gash plugins list` |
 
 Engine-recon probes ship outside the plugin set: request smuggling
 (GASH-033, `internal/smuggle`), content discovery (GASH-028,

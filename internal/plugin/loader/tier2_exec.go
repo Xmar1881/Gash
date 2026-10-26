@@ -47,6 +47,13 @@ type JSPoint struct {
 	TestID string
 	// Value is the current parameter value.
 	Value string
+	// Headers are extra request headers a script may attach to this point
+	// (e.g. an explicit Content-Type for raw JSON bodies, or an unkeyed
+	// forwarding header for cache-poisoning probes). They are merged on top
+	// of the headers the executor derives; an explicit Content-Type wins.
+	// Every header still travels through the same PolicySession and scope
+	// checks as the rest of the request.
+	Headers map[string]string
 	// FormValues, when non-nil, holds the other form fields' current values
 	// (tokens included) so the executor replays the complete form with only
 	// this field replaced by the payload. Findings MUST NOT serialize it.
@@ -157,6 +164,8 @@ func oracleRefName(ref string) string {
 		return "execution"
 	case "stored", "stored-xss", "storedexecution", "stored-execution", "stored_execution", "storedxss":
 		return "stored"
+	case "upload-served", "uploadserved", "upload":
+		return "upload-served"
 	default:
 		return strings.ToLower(strings.TrimSpace(ref))
 	}
@@ -166,6 +175,23 @@ func oracleRefName(ref string) string {
 // explicit timeout. Live scans pass a per-plugin budget from the engine config
 // (PluginTimeoutMs); this default only guards library/fixture callers.
 const DefaultJSPluginBudget = 10 * time.Second
+
+// specOracleParam reads one string parameter from the plugin-level
+// oracle_params block (Tier 2 frontmatter / Tier 3 manifest).
+// What: Default source for oracle parameters declared once per plugin.
+// Why: The fixture runner applies the same map, so fixture expectations cannot
+// drift from live-scan behaviour.
+func specOracleParam(spec *plugin.PluginSpec, name string) string {
+	if spec == nil || spec.OracleParams == nil {
+		return ""
+	}
+	if v, ok := spec.OracleParams[name]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
 
 // jsInterruptGrace bounds how long ExecuteJS waits for an interrupted VM to
 // abort before returning the timeout to the caller.
@@ -295,6 +321,18 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 		if p.FormEnctype != "" {
 			_ = obj.Set("formEnctype", p.FormEnctype)
 		}
+		if len(p.Headers) > 0 {
+			hd := vm.NewObject()
+			keys := make([]string, 0, len(p.Headers))
+			for k := range p.Headers {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				_ = hd.Set(k, p.Headers[k])
+			}
+			_ = obj.Set("headers", hd)
+		}
 		cur := p
 		_ = obj.Set("withValue", func(call goja.FunctionCall) goja.Value {
 			v := ""
@@ -332,11 +370,25 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 				formValues = nil
 			}
 		}
+		var headers map[string]string
+		if hv := obj.Get("headers"); hv != nil && !goja.IsUndefined(hv) && !goja.IsNull(hv) {
+			hvObj := hv.ToObject(vm)
+			headers = make(map[string]string)
+			for _, k := range hvObj.Keys() {
+				if val := hvObj.Get(k); val != nil && !goja.IsUndefined(val) && !goja.IsNull(val) {
+					headers[k] = val.String()
+				}
+			}
+			if len(headers) == 0 {
+				headers = nil
+			}
+		}
 		p := JSPoint{
 			URL: get("url"), Method: method,
 			ParamName: get("paramName"), ParamLocation: get("paramLocation"),
 			SourceKind: get("sourceKind"), TestID: get("testId"),
-			Value: get("value"), FormValues: formValues, FormEnctype: get("formEnctype"),
+			Value: get("value"), Headers: headers,
+			FormValues: formValues, FormEnctype: get("formEnctype"),
 		}
 		if p.SourceKind == "" {
 			p.SourceKind = sourceKindFor(p.ParamLocation)
@@ -624,14 +676,26 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 	_ = oraclesObj.Set("storedExecution", storedVerify)
 	_ = oraclesObj.Set("error", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 2 {
-			panic("error(resp, controlResp) requires 2 arguments")
+			panic("error(resp, controlResp[, opts]) requires 2 arguments")
 		}
 		resp := respFromValue(call.Arguments[0])
 		ctrl := respFromValue(call.Arguments[1])
+		// Mode selects the signature family (sqli, path_traversal,
+		// generic_error, deserialization, takeover). A script may pass it per
+		// call; otherwise the plugin-level oracle_params value applies so the
+		// fixture runner sees exactly what a live scan does.
+		mode := specOracleParam(spec, "mode")
+		if len(call.Arguments) >= 3 && !goja.IsUndefined(call.Arguments[2]) && !goja.IsNull(call.Arguments[2]) {
+			if opts, ok := call.Arguments[2].(*goja.Object); ok {
+				if v := opts.Get("mode"); v != nil && !goja.IsUndefined(v) && !goja.IsNull(v) {
+					mode = v.String()
+				}
+			}
+		}
 		cls := baseline.ClassifyStatic(resp.Status, toHTTPHeader(resp.Headers), []byte(resp.Body))
 		var o oracle.ErrorSignatureOracle
 		ev, err := o.Verify(context.Background(), cls, false, oracle.ErrorSignatureParams{
-			Body: resp.Body, ControlBody: ctrl.Body,
+			Body: resp.Body, ControlBody: ctrl.Body, Mode: mode,
 		})
 		if err != nil {
 			panic(err.Error())
@@ -640,11 +704,23 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 	})
 	_ = oraclesObj.Set("differential", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 3 {
-			panic("differential(trueResps, falseResps, controlResp) requires 3 arguments")
+			panic("differential(trueResps, falseResps, controlResp[, opts]) requires 3 arguments")
 		}
 		trueResps := respsFromArray(vm, call.Arguments[0])
 		falseResps := respsFromArray(vm, call.Arguments[1])
 		ctrl := respFromValue(call.Arguments[2])
+		// A ceiling keeps hardening-gap classes honest: divergence proves the
+		// behaviour, not always an exploitable vulnerability. Defaults to the
+		// plugin-level oracle_params value (Tier 1 declares it in
+		// oracle.params) so fixtures and live scans share one source.
+		ceiling := specOracleParam(spec, "confidence_ceiling")
+		if len(call.Arguments) >= 4 && !goja.IsUndefined(call.Arguments[3]) && !goja.IsNull(call.Arguments[3]) {
+			if opts, ok := call.Arguments[3].(*goja.Object); ok {
+				if v := opts.Get("confidence_ceiling"); v != nil && !goja.IsUndefined(v) && !goja.IsNull(v) {
+					ceiling = v.String()
+				}
+			}
+		}
 		trueBodies := make([]string, 0, len(trueResps))
 		for _, r := range trueResps {
 			trueBodies = append(trueBodies, r.Body)
@@ -658,6 +734,68 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 		ev, err := o.Verify(context.Background(), cls, false, oracle.DifferentialParams{
 			TrueBodies: trueBodies, FalseBodies: falseBodies,
 			ControlBody: ctrl.Body, Repeats: 3,
+			ConfidenceCeiling: ceiling,
+		})
+		if err != nil {
+			panic(err.Error())
+		}
+		return evToObject(vm, ev)
+	})
+	_ = oraclesObj.Set("uploadServed", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 3 {
+			panic("uploadServed(uploadResp, fetchResp, canary[, opts]) requires 3 arguments")
+		}
+		uploadResp := respFromValue(call.Arguments[0])
+		fetchResp := respFromValue(call.Arguments[1])
+		canary := call.Arguments[2].String()
+		controlBody := ""
+		controlStatus := 0
+		var activeTypes []string
+		if len(call.Arguments) >= 4 && !goja.IsUndefined(call.Arguments[3]) && !goja.IsNull(call.Arguments[3]) {
+			if opts, ok := call.Arguments[3].(*goja.Object); ok {
+				// A sibling URL that never received an upload is the clean
+				// control: it proves the served artifact is ours.
+				for _, key := range []string{"controlUrl", "control_url"} {
+					v := opts.Get(key)
+					if v == nil || goja.IsUndefined(v) || goja.IsNull(v) {
+						continue
+					}
+					cu := v.String()
+					if cu == "" || cu == fetchResp.URL {
+						continue
+					}
+					if cr, err := env.Send(JSPoint{URL: cu, Method: http.MethodGet}); err == nil {
+						controlBody = cr.Body
+						controlStatus = cr.Status
+					}
+				}
+				for _, key := range []string{"activeTypes", "active_types"} {
+					v := opts.Get(key)
+					if v == nil || goja.IsUndefined(v) || goja.IsNull(v) {
+						continue
+					}
+					arr := v.ToObject(vm)
+					if length := int(arr.Get("length").ToInteger()); length > 0 {
+						activeTypes = make([]string, 0, length)
+						for i := 0; i < length; i++ {
+							activeTypes = append(activeTypes, arr.Get(fmt.Sprintf("%d", i)).String())
+						}
+					}
+				}
+			}
+		}
+		cls := baseline.ClassifyStatic(fetchResp.Status, toHTTPHeader(fetchResp.Headers), []byte(fetchResp.Body))
+		var o oracle.UploadServedOracle
+		ev, err := o.Verify(context.Background(), cls, false, oracle.UploadServedParams{
+			Canary:        canary,
+			UploadStatus:  uploadResp.Status,
+			UploadBody:    uploadResp.Body,
+			FetchStatus:   fetchResp.Status,
+			FetchHeaders:  toHTTPHeader(fetchResp.Headers),
+			FetchBody:     fetchResp.Body,
+			ControlStatus: controlStatus,
+			ControlBody:   controlBody,
+			ActiveTypes:   activeTypes,
 		})
 		if err != nil {
 			panic(err.Error())
@@ -692,12 +830,27 @@ func executeJSOnce(spec *plugin.PluginSpec, source string, env *JSEnv, vmReady c
 	})
 	_ = oraclesObj.Set("cors", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
-			panic("cors(resp) requires 1 argument")
+			panic("cors(resp[, opts]) requires 1 argument")
 		}
 		resp := respFromValue(call.Arguments[0])
+		// The request Origin decides reflection: without it the oracle can
+		// only grade wildcard and null allowlists. Defaults to the
+		// plugin-level oracle_params value so fixtures and live scans agree.
+		origin := specOracleParam(spec, "request_origin")
+		if len(call.Arguments) >= 2 && !goja.IsUndefined(call.Arguments[1]) && !goja.IsNull(call.Arguments[1]) {
+			if opts, ok := call.Arguments[1].(*goja.Object); ok {
+				for _, key := range []string{"requestOrigin", "request_origin"} {
+					if v := opts.Get(key); v != nil && !goja.IsUndefined(v) && !goja.IsNull(v) {
+						origin = v.String()
+					}
+				}
+			}
+		}
 		cls := baseline.ClassifyStatic(resp.Status, toHTTPHeader(resp.Headers), []byte(resp.Body))
 		var o oracle.CORSOracle
-		ev, err := o.Verify(context.Background(), cls, false, oracle.CORSParams{Headers: toHTTPHeader(resp.Headers)})
+		ev, err := o.Verify(context.Background(), cls, false, oracle.CORSParams{
+			Headers: toHTTPHeader(resp.Headers), RequestOrigin: origin,
+		})
 		if err != nil {
 			panic(err.Error())
 		}

@@ -1,0 +1,1 @@
+{"body": "XML import queued", "control_body": "", "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "no callback means no finding", "oob_callback": false, "status": 200, "target": "http://example.com/api/import"}

@@ -1,0 +1,1 @@
+{"body": "<html><body><h1>Search</h1><p>No results for the given query</p></body></html>", "control_body": "<html><body><h1>Search</h1><p>No results</p></body></html>", "control_status": 200, "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "no xpath parser signature in the response", "status": 200, "target": "http://example.com/api/search"}

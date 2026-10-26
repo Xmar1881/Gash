@@ -50,6 +50,7 @@ func GenerateJSONSchema() ([]byte, error) {
 			"oob":           map[string]any{"type": "string", "enum": []string{"", "optional", "required"}},
 			"api_version":   map[string]any{"type": "string", "const": supportedAPIVer},
 			"tests":         map[string]any{"type": "string"},
+			"oracle_params": map[string]any{"type": "object"},
 			"request": map[string]any{
 				"type": "object",
 				"properties": map[string]any{

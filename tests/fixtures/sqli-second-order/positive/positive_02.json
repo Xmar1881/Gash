@@ -1,0 +1,1 @@
+{"body": "<html><body>Incorrect syntax near '1'</body></html>", "control_body": "<html><body>normal item page</body></html>", "expected_confidence": "confirmed", "expected_verdict": "accept", "headers": {"Content-Type": "text/html"}, "name": "stored payload surfaces an mssql signature on the neutral re-read", "status": 500, "target": "http://example.com/item?id=1"}

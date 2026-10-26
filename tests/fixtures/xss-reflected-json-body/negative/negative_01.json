@@ -1,0 +1,1 @@
+{"body": "<html><body><p>gash_json_body_canary</p></body></html>", "canary": "gash_json_body_canary", "control_body": "<html><body><p>zzz</p></body></html>", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "text-only reflection is not execution", "status": 200, "target": "http://example.com/api/preview"}

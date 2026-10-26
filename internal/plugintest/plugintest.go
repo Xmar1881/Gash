@@ -300,6 +300,19 @@ func Evaluate(ctx context.Context, oracleName string, f Fixture, oobEnabled bool
 			CorrelationID: corrID, Namespace: ns,
 			CallbackSeen: f.OOBCallback,
 		})
+	case "upload-served", "uploadserved", "upload_served":
+		var o oracle.UploadServedOracle
+		return o.Verify(ctx, cls, false, oracle.UploadServedParams{
+			Canary:        canary,
+			UploadStatus:  f.StoreStatus,
+			UploadBody:    f.StoreBody,
+			FetchStatus:   f.Status,
+			FetchHeaders:  toHeader(f.Headers),
+			FetchBody:     f.Body,
+			ControlStatus: f.ControlStatus,
+			ControlBody:   f.ControlBody,
+			ActiveTypes:   getStringSliceParam(oracleParams, "active_types"),
+		})
 	case "version":
 		var o oracle.VersionOracle
 		mode := getStringParam(oracleParams, "mode", "banner")

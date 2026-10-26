@@ -106,6 +106,13 @@ type PluginSpec struct {
 	OOB          OOBRequirement `json:"oob,omitempty" yaml:"oob,omitempty"`
 	APIVersion   string         `json:"api_version" yaml:"api_version" validate:"required"`
 	Tests        string         `json:"tests,omitempty" yaml:"tests,omitempty"`
+	// OracleParams declares oracle parameters for tiers whose file format has
+	// no `oracle.params` block (Tier 2 frontmatter, Tier 3 manifest). The
+	// script bindings read them as defaults, so a plugin never duplicates a
+	// value in code, and the fixture runner can apply exactly the same
+	// parameters the live scan would use. Tier 1 keeps `oracle.params` as its
+	// single source and does not accept this key.
+	OracleParams map[string]any `json:"oracle_params,omitempty" yaml:"oracle_params,omitempty"`
 
 	Tier PluginTier `json:"-" yaml:"-"`
 }

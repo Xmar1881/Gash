@@ -1,0 +1,1 @@
+{"body": "<html><body>items</body></html>", "control_body": "<html><body>items</body></html>", "control_samples": [300, 320, 340], "delay_samples": [310, 305, 330], "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "payload response time matches the baseline", "status": 200, "target": "http://example.com/api/items"}

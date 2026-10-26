@@ -1,0 +1,1 @@
+{"body": "<html><body><p>import complete</p></body></html>", "control_body": "<html><body><p>import complete</p></body></html>", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "field is opaque to the server - no signature", "status": 200, "target": "http://example.com/api/import"}

@@ -1,0 +1,1 @@
+{"body": "<html><body>{\"id\":1}</body></html>", "control_body": "<html><body>{\"id\":1}</body></html>", "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "json body is parameterised - no signature anywhere", "status": 200, "target": "http://example.com/api/items"}

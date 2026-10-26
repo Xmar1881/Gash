@@ -1,0 +1,1 @@
+{"body": "<html><body>normal item page</body></html>", "control_body": "<html><body>normal item page</body></html>", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "no signature anywhere - payload did not persist", "status": 200, "target": "http://example.com/item?id=1"}

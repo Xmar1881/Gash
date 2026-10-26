@@ -1,0 +1,1 @@
+{"body": "<html><body>ERROR: You have an error in your SQL syntax</body></html>", "control_body": "<html><body>ERROR: You have an error in your SQL syntax</body></html>", "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "signature also present in the neutral-value control", "status": 500, "target": "http://example.com/api/items"}

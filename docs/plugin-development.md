@@ -56,6 +56,12 @@ Key policy fields:
 - `requires_tech`: skips the plugin when the tech is not in the known set
   (see "Conditional Chains" below).
 - `tests`: fixture directory; empty caps findings at `tentative`.
+- `oracle_params`: oracle parameters for tiers without an `oracle.params`
+  block (Tier 2 frontmatter, Tier 3 manifest). Tier 1 keeps `oracle.params`
+  and does not accept this key. The script bindings read it as a default, so a
+  plugin declares a value once and both the live scan and the fixture runner
+  apply exactly the same parameter. Currently read: `mode` (error oracle
+  signature family) and `confidence_ceiling` (differential oracle ceiling).
 
 ## Conditional Chains (requires/provides/requires_tech)
 

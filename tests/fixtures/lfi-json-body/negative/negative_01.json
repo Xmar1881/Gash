@@ -1,0 +1,1 @@
+{"body": "<html><body><pre>root:x:0:0:root:/root:/bin/bash</pre></body></html>", "control_body": "<html><body><pre>root:x:0:0:root:/root:/bin/bash</pre></body></html>", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "signature present in the neutral-value control too", "status": 200, "target": "http://example.com/api/export"}

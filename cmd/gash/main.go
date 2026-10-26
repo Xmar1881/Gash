@@ -1214,7 +1214,7 @@ func runPluginsTest(cmd *cobra.Command, args []string) error {
 		if oracleName == "" {
 			return fmt.Errorf("test %s: no host.oracles.<name> call found", path)
 		}
-		return runFixtureSuite(cmd, ctx, spec, oracleName, path, nil)
+		return runFixtureSuite(cmd, ctx, spec, oracleName, path, spec.OracleParams)
 	case "tier3":
 		spec, manifest, err := loader.LoadTier3Manifest(path)
 		if err != nil {
@@ -1227,7 +1227,7 @@ func runPluginsTest(cmd *cobra.Command, args []string) error {
 		if oracleName == "" {
 			oracleName = "header"
 		}
-		return runFixtureSuite(cmd, ctx, spec, oracleName, path, nil)
+		return runFixtureSuite(cmd, ctx, spec, oracleName, path, spec.OracleParams)
 	default:
 		spec, file, err := loader.LoadTier1File(path)
 		if err != nil {

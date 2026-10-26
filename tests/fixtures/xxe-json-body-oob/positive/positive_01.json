@@ -1,0 +1,1 @@
+{"body": "XML import queued", "control_body": "", "expected_confidence": "confirmed", "expected_verdict": "accept", "headers": {"Content-Type": "application/json"}, "name": "external parameter entity resolved and called back", "oob_callback": true, "status": 200, "target": "http://example.com/api/import"}

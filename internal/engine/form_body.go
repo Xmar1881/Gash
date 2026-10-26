@@ -118,6 +118,18 @@ func formRequestBody(p loader.JSPoint, param, value string) (map[string]string, 
 	return nil, []byte(value)
 }
 
+// headerValue returns the first header value matching name (case-insensitive).
+// What: Lookup for script-supplied headers on a point.
+// Why: Scripts write map keys; HTTP header names are case-insensitive.
+func headerValue(headers map[string]string, name string) string {
+	for k, v := range headers {
+		if strings.EqualFold(k, name) {
+			return v
+		}
+	}
+	return ""
+}
+
 func urlencodedFormBody(values map[string]string, param, value string) (map[string]string, []byte) {
 	form := url.Values{}
 	for k, v := range values {

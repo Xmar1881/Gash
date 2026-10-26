@@ -1,0 +1,1 @@
+{"body": "<html><body>php notice: unserialize(): Error at offset 0 of 24 bytes</body></html>", "control_body": "<html><body>Nothing to do</body></html>", "expected_confidence": "firm", "expected_verdict": "accept", "headers": {"Content-Type": "text/html"}, "name": "php unserialize notice with clean control", "status": 200, "target": "http://example.com/api/import"}

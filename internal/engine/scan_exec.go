@@ -888,6 +888,9 @@ func (e *Engine) jsEnvForScan(pctx context.Context, target string, client *probe
 				reqHeaders, reqBody = formRequestBody(p, p.ParamName, value)
 			} else {
 				reqHeaders = map[string]string{"Content-Type": "application/x-www-form-urlencoded"}
+				if ct := headerValue(p.Headers, "Content-Type"); ct != "" {
+					reqHeaders["Content-Type"] = ct
+				}
 				reqBody = []byte(value)
 			}
 		case "header":
@@ -899,6 +902,17 @@ func (e *Engine) jsEnvForScan(pctx context.Context, target string, client *probe
 			return loader.JSResponse{URL: rawURL}, nil
 		default: // "query"
 			rawURL = pointQueryURL(rawURL, p, value)
+		}
+		// Script-declared headers are merged on top of the derived set; an
+		// explicit Content-Type therefore also overrides the form default.
+		// They travel through the same PolicySession and scope checks.
+		if len(p.Headers) > 0 {
+			if reqHeaders == nil {
+				reqHeaders = make(map[string]string, len(p.Headers))
+			}
+			for k, v := range p.Headers {
+				reqHeaders[k] = v
+			}
 		}
 
 		resp, err := client.Send(pctx, method, rawURL, reqHeaders, reqBody)

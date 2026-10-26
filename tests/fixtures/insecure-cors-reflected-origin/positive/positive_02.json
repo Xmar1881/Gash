@@ -1,0 +1,1 @@
+{"body": "<html><body>account</body></html>", "control_body": "", "expected_confidence": "firm", "expected_verdict": "accept", "headers": {"Access-Control-Allow-Origin": "https://gash-cors-canary.example", "Content-Type": "text/html"}, "name": "canary origin reflected without credentials", "status": 200, "target": "http://example.com/api/account"}

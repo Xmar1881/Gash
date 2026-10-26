@@ -1,0 +1,1 @@
+{"body": "<html><body><pre>[fonts]\r\n</pre></body></html>", "control_body": "<html><body><p>file not available</p></body></html>", "expected_confidence": "confirmed", "expected_verdict": "accept", "headers": {"Content-Type": "text/html"}, "name": "json field traversal returns windows ini content", "status": 200, "target": "http://example.com/api/export"}

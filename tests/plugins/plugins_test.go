@@ -139,13 +139,18 @@ func TestMetricGate(t *testing.T) {
 				t.Fatal("Tests must point at fixtures (R-06)")
 			}
 			fixtureRoot := plugintest.ResolveFixtureRoot(d.path, d.spec.Tests)
-			// Load oracle params from the plugin file
+			// Load oracle params from the plugin file. Tier 1 declares them in
+			// the `oracle.params` block; tiers without that block use the
+			// plugin-level `oracle_params` map so fixtures are evaluated with
+			// exactly the parameters a live scan would apply.
 			var oracleParams map[string]any
 			if strings.HasSuffix(strings.ToLower(d.path), ".yaml") || strings.HasSuffix(strings.ToLower(d.path), ".yml") {
 				_, f, err := loader.LoadTier1File(d.path)
 				if err == nil && f.Oracle.Params != nil {
 					oracleParams = f.Oracle.Params
 				}
+			} else {
+				oracleParams = d.spec.OracleParams
 			}
 			sum, err := plugintest.Run(context.Background(), d.spec.ID, d.oracleName, fixtureRoot, true, oracleParams)
 			if err != nil {

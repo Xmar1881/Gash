@@ -1,0 +1,1 @@
+{"body": "<html><body>item rendered</body></html>", "control_body": "<html><body>item rendered</body></html>", "control_samples": [300, 320, 340], "delay_samples": [310, 300, 330], "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "neutral re-read timing matches the baseline - no stored delay", "status": 200, "target": "http://example.com/item?id=1"}

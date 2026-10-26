@@ -1,0 +1,1 @@
+{"body": "<html><body>{\"status\":\"queued\"}</body></html>", "control_body": "", "expected_confidence": "confirmed", "expected_verdict": "accept", "headers": {"Content-Type": "application/json"}, "name": "json body field fetched server-side and called back", "oob_callback": true, "status": 200, "target": "http://example.com/api/import"}

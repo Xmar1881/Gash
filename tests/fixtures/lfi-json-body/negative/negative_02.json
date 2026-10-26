@@ -1,0 +1,1 @@
+{"body": "<html><body><p>file not available</p></body></html>", "control_body": "<html><body><p>file not available</p></body></html>", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "path is sanitised - no file content anywhere", "status": 200, "target": "http://example.com/api/export"}
