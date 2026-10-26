@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -29,8 +28,8 @@ import (
 	"github.com/Xmar1881/Gash/internal/plugin/loader"
 	"github.com/Xmar1881/Gash/internal/probe"
 	"github.com/Xmar1881/Gash/internal/proto"
+	"github.com/Xmar1881/Gash/internal/recon"
 	"github.com/Xmar1881/Gash/internal/smuggle"
-	"golang.org/x/time/rate"
 )
 
 // acquireContextSlot makes bounded worker queues cancellation-aware. Without
@@ -313,25 +312,40 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 				FormEnctype:   ip.FormEnctype,
 			})
 		}
-		// Pasif JS recon: crawl'ın topladığı same-origin JS gövdeleri +
-		// kaynak haritaları; endpoint'ler yüzeye beslenir, sırlar GASH-067.
-		jsFindings, jsPoints, jsStats := e.runJSRecon(ctx, target, client, crawlRes)
-		allFindings = append(allFindings, jsFindings...)
-		surfacePoints = append(surfacePoints, jsPoints...)
-		for k, v := range jsStats {
-			jsReconStats[k] = v
+		// Pasif JS recon (GASH-067): crawl'ın topladığı same-origin JS gövdeleri
+		// + kaynak haritaları; endpoint'ler yüzeye beslenir, sırlar masked
+		// bulgudur. Kimlik, kapsam kararı (URLAllowed), sınırlı takip crawl'ı
+		// (FollowCrawl) ve sayaç anahtarları port/kayıt üzerinden gelir
+		// (internal/recon/jsrecon.go); motor yalnızca ortamı kurar.
+		detEnv := e.detectorEnv(target, client, crawlRes)
+		if jsRun := e.runDetector(ctx, detEnv, recon.PluginIDJSRecon); jsRun.Ran {
+			allFindings = append(allFindings, jsRun.Result.Findings...)
+			for _, s := range jsRun.Result.Surface {
+				surfacePoints = append(surfacePoints, loader.JSPoint{
+					URL: s.URL, Method: s.Method, ParamName: s.ParamName,
+					ParamLocation: s.ParamLocation, Value: s.Value,
+					FormValues: s.FormValues, FormEnctype: s.FormEnctype,
+				})
+			}
+			for k, v := range jsRun.Result.Stats {
+				jsReconStats[k] = v
+			}
 		}
 		// GASH-071/072: already-fetched page + external JS bodies are scanned
-		// deterministically; no additional requests are issued.
-		stateFindings, stateStats := scanSPAState(crawlRes)
-		allFindings = append(allFindings, stateFindings...)
-		for k, v := range stateStats {
-			spaStateStats[k] = v
+		// deterministically; no additional requests are issued. Kimlik, kural
+		// eşlemesi ve sayaç anahtarları dedektörün Spec'inde yaşar
+		// (internal/recon); motor yalnızca ortamı kurar ve sonucu rapora bağlar.
+		if run := e.runDetector(ctx, detEnv, recon.PluginIDSPAState); run.Ran {
+			allFindings = append(allFindings, run.Result.Findings...)
+			for k, v := range run.Result.Stats {
+				spaStateStats[k] = v
+			}
 		}
-		devFindings, devStats := scanDevBuild(crawlRes)
-		allFindings = append(allFindings, devFindings...)
-		for k, v := range devStats {
-			devBuildStats[k] = v
+		if run := e.runDetector(ctx, detEnv, recon.PluginIDDevBuild); run.Ran {
+			allFindings = append(allFindings, run.Result.Findings...)
+			for k, v := range run.Result.Stats {
+				devBuildStats[k] = v
+			}
 		}
 		// SPA yüzeyi: seçilmiş sayfalar render edilir; DOM formları/form
 		// fuzz'ına, gözlenen endpoint'ler yüzeye eklenir. Browser yoksa tek
@@ -372,30 +386,28 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		surfacePoints = append(surfacePoints, apiPoints...)
 	}
 
-	// İçerik keşfi (wordlist): --active kapılı engine-recon (GASH-028).
-	// Tier1-YAML değil, engine-recon — gerekçe: teknoloji-koşullu wordlist
-	// seçimi + hassas path'te HEAD-only + smart-recurse (yedek uzantı,
-	// derinlik ≤2) + crawler geri-besleme tek-istekli YAML kalıbına sığmaz;
-	// kanıt motor-içidir (B3, finding.Build bypass — proto recon disiplini).
-	// Safe taramada sessizdir (profil disiplini); destructive YOK (GET/HEAD).
+	// İçerik keşfi (wordlist): --active kapılı motor-içi GASH-028 dedektörü
+	// (internal/discovery/detector.go). Gerekçe: teknoloji-koşullu wordlist
+	// seçimi + hassas path'te HEAD-only + smart-recurse (yedek uzantı, derinlik
+	// ≤2) tek-istekli YAML kalıbına sığmaz; kanıt motor-içidir (B3, finding.Build
+	// bypass — proto recon disiplini). Kimlik, bütçe ve sayaç anahtarları
+	// dedektörün Spec'inde yaşar; motor ortamı kurar, sonucu rapora bağlar ve
+	// bulunan path'leri geri-besleme crawl'ı için kullanır. Safe taramada
+	// sessizdir (profil disiplini); destructive YOK (GET/HEAD).
 	var contentRequests, contentFollowRequests, contentFindingCount int
 	if e.cfg.Active {
-		fpTech := discovery.TechFingerprint{Capabilities: map[string]bool{}}
-		for t := range e.detectedTech {
-			fpTech.Tech = append(fpTech.Tech, t)
-		}
-		cres, cerr := discovery.DiscoverContent(ctx, client, target, fpTech, nil, discovery.DefaultContentOptions())
-		if cerr == nil && cres != nil {
-			contentRequests = cres.Requests
-			contentFindingCount = len(cres.Findings)
-			allFindings = append(allFindings, cres.Findings...)
-			for _, p := range cres.DiscoveredPaths {
+		contentRun := e.runDetector(ctx, e.detectorEnv(target, client, crawlRes), discovery.PluginIDContentDiscovery)
+		if contentRun.Ran {
+			contentRequests = contentRun.Result.Stats["content_requests"]
+			contentFindingCount = contentRun.Result.Stats["content_findings"]
+			allFindings = append(allFindings, contentRun.Result.Findings...)
+			for _, p := range contentRun.Result.Paths {
 				surfacePoints = append(surfacePoints, loader.JSPoint{URL: p, Method: http.MethodGet})
 			}
 			// Crawler geri-besleme: dizin-benzeri isabetlerin altında
 			// sınırlı mini-crawl (en fazla 3 dizin × 10 sayfa, derinlik 1).
 			dirs := 0
-			for _, p := range cres.DiscoveredPaths {
+			for _, p := range contentRun.Result.Paths {
 				if dirs >= 3 {
 					break
 				}
@@ -462,67 +474,28 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		allFindings = append(allFindings, matrixFindings...)
 	}
 
-	// Request smuggling (CL.TE/TE.CL/TE.TE): --active + --aggressive kapılı
-	// engine-recon (GASH-033, CWE-444). Tier1-YAML değil, engine-recon —
-	// gerekçe: net/http chunk çerçevelemeyi denetlemez; ham-TCP dial +
-	// keep-alive çift-isabet (muğlak+takip) tek-istekli YAML kalıbına sığmaz;
-	// kanıt motor-içidir (finding.Build bypass — proto/content-discovery
-	// recon disiplini). Hedef kullanıcının verdiği host'tur (Nuclei/Burp
-	// smuggler modeli); kapsam preflight yalnızca --scope verilmişse uygulanır.
-	// Kapı dışı (safe/standard/deep dahil) sessiz değil, denetim izli
-	// skip'tir; kapsam-dışı soket AÇILMAZ (≤10 istek, 5s tavan).
+	// Request smuggling (CL.TE/TE.CL/TE.TE): motor-içi GASH-033 dedektörü
+	// (internal/smuggle/detector.go). Tier1-YAML değil, motor-içi — gerekçe:
+	// net/http chunk çerçevelemeyi denetlemez; ham-TCP dial + keep-alive
+	// çift-isabet (muğlak+takip) tek-istekli YAML kalıbına sığmaz ve JS
+	// sandbox'ında ham soket yoktur. Kapı, taksonomi, payload tablosu
+	// (cases.yaml) ve skip metni dedektörün Spec'inde yaşar; motor yalnızca
+	// ortamı (kapsam + bayraklar) kurar ve sonucu rapora bağlar. Hedef
+	// kullanıcının verdiği host'tur (Nuclei/Burp smuggler modeli); kapsam
+	// preflight yalnızca --scope verilmişse uygulanır. Kapı dışı
+	// (safe/standard/deep dahil) sessiz değil, denetim izli skip'tir;
+	// kapsam-dışı soket AÇILMAZ (≤10 istek, 5s tavan).
 	var smuggleRequests int
-	if smuggleGateOK(e) {
-		var smuggleAllow smuggle.AllowHost
-		if len(e.cfg.Scope) > 0 {
-			targetURL, perr := url.Parse(target)
-			if perr != nil {
-				// Scope verilmiş ama hedef ayrıştırılamadı: fail-closed kapı.
-				smuggleAllow = func(string) bool { return false }
-			} else {
-				// Strict mod: smuggler yalnızca hedefe dial eder; hedef
-				// kapsam-dışıysa soket AÇILMAZ (plugin hattıyla tutarlı).
-				// Hedef-host muafiyeti (protoAllow) BURADA uygulanmaz.
-				sm := NewScopeManager(e.cfg.Scope)
-				sm.SetOriginalTarget(targetURL.String())
-				scheme := targetURL.Scheme
-				port := targetURL.Port()
-				if port == "" {
-					if scheme == "https" {
-						port = "443"
-					} else {
-						port = "80"
-					}
-				}
-				smuggleAllow = func(host string) bool {
-					checkURL := &url.URL{Scheme: scheme, Host: net.JoinHostPort(host, port)}
-					return sm.CheckScope(context.Background(), checkURL) == nil
-				}
-			}
+	smuggleRun := e.runDetector(ctx, e.smugglerEnv(target, client, crawlRes), smuggle.PluginID)
+	switch {
+	case !smuggleRun.Ran:
+		if smuggleRun.Reason != "" {
+			execSkipped = append(execSkipped, plugin.SkippedPlugin{PluginID: smuggle.PluginID, Reason: smuggleRun.Reason})
 		}
-		sres, serr := smuggle.Scan(ctx, target, smuggle.Options{
-			Timeout:    5 * time.Second,
-			Allow:      smuggleAllow,
-			Active:     e.cfg.Active,
-			Aggressive: e.cfg.Profile == config.ProfileAggressive,
-		})
-		switch {
-		case serr != nil && errors.Is(serr, plugin.ErrScopeViolation):
-			execSkipped = append(execSkipped, plugin.SkippedPlugin{PluginID: smuggle.PluginID, Reason: "skipped (smuggle-probe scope violation, no socket opened)"})
-		case serr != nil:
-			// Ölçülemeyen hedef sessiz geçilir (TCP banner recon disiplini);
-			// tarama durmaz, sahte bulgu YOK.
-		case sres != nil:
-			smuggleRequests = sres.Requests
-			if sres.Finding != nil {
-				allFindings = append(allFindings, sres.Finding)
-			}
-			if sres.Skipped != "" {
-				execSkipped = append(execSkipped, plugin.SkippedPlugin{PluginID: smuggle.PluginID, Reason: sres.Skipped})
-			}
-		}
-	} else {
-		execSkipped = append(execSkipped, plugin.SkippedPlugin{PluginID: smuggle.PluginID, Reason: "skipped (smuggle-probe requires --active --aggressive)"})
+	default:
+		smuggleRequests = smuggleRun.Result.Requests
+		allFindings = append(allFindings, smuggleRun.Result.Findings...)
+		execSkipped = append(execSkipped, smuggleRun.Result.Skips...)
 	}
 
 	// Large discovered surfaces make Tier 2 plugins request-heavy. Keep only
@@ -1176,504 +1149,6 @@ func verifyTier3Candidate(pctx context.Context, client *probe.Client, target, or
 	}
 }
 
-// runProtoRecon DNS/TLS/TCP protokol kontrollerini koşar (P2.1).
-// Faz 2 sarmalayıcısıdır: TLS gözlemi dışa taşınmaz (eski imza korunur).
-func (e *Engine) runProtoRecon(ctx context.Context, target string) ([]*finding.Finding, []plugin.SkippedPlugin) {
-	findings, skipped, _ := e.runProtoReconTLS(ctx, target)
-	return findings, skipped
-}
-
-// runProtoReconTLS DNS/TLS/TCP kontrollerini koşar ve TLS el sıkışma
-// gözlemini döner (Faz 2: altyapı derin TLS denetimi aynı gözlemi yeniden
-// kullanır; ek dial açılmaz).
-// What: Profil kapılı (tls/dns safe'de; tcp yalnızca --active + açık --tcp-banner),
-// kapsam-izinli, süre-sınırlı pasif gözlem. Hata = bulgusuz (tarama durmaz).
-// Why: Protokol yüzeyi plugin HTTP hattının dışındadır (el sıkışması/DNS okuma);
-// ayrı recon adımı safe varsayılanı bozmaz (yıkıcı işlem yok).
-func (e *Engine) runProtoReconTLS(ctx context.Context, target string) ([]*finding.Finding, []plugin.SkippedPlugin, *proto.TLSResult) {
-	var out []*finding.Finding
-	var skipped []plugin.SkippedPlugin
-	var tlsObs *proto.TLSResult
-	u, err := url.Parse(target)
-	if err != nil {
-		return nil, nil, nil
-	}
-	host := strings.ToLower(u.Hostname())
-	if host == "" {
-		return nil, nil, nil
-	}
-	allow := e.protoAllow(u)
-	po := proto.Options{Timeout: 10 * time.Second, Allow: allow}
-
-	// TLS: yalnızca https hedefte, tls dedektörü açıksa.
-	if e.detectorEnabled("tls") && strings.EqualFold(u.Scheme, "https") {
-		port := u.Port()
-		if port == "" {
-			port = "443"
-		}
-		func(check context.Context) {
-			c, cancel := context.WithTimeout(check, 12*time.Second)
-			defer cancel()
-			res, err := proto.CheckTLS(c, net.JoinHostPort(host, port), po)
-			if err != nil || res == nil {
-				return
-			}
-			tlsObs = res
-			for _, pf := range proto.TLSFindings(target, res) {
-				pf := pf
-				out = append(out, pf.ToFinding())
-			}
-		}(ctx)
-	}
-	// DNS: IP literal hariç, dns dedektörü açıksa.
-	if e.detectorEnabled("dns") && net.ParseIP(host) == nil {
-		func(check context.Context) {
-			c, cancel := context.WithTimeout(check, 12*time.Second)
-			defer cancel()
-			res, err := proto.CheckDNS(c, host, po)
-			if err != nil || res == nil {
-				return
-			}
-			for _, pf := range proto.DNSFindings(target, res) {
-				pf := pf
-				out = append(out, pf.ToFinding())
-			}
-			// CAA: aynı dns dedektörü, aynı kapsam/izin; hata = sessiz (FP yok).
-			caaRes, cerr := proto.CheckCAA(c, host, po)
-			if cerr != nil || caaRes == nil {
-				return
-			}
-			for _, pf := range proto.CAAFindings(target, caaRes) {
-				pf := pf
-				out = append(out, pf.ToFinding())
-			}
-		}(ctx)
-	}
-	// TCP banner: açık bayrak + --active + tcp dedektörü (hepsi şart).
-	if len(e.cfg.TCPBanners) > 0 && e.detectorEnabled("tcp") {
-		if !e.cfg.Active {
-			// Aktivasyon yoksa her bayrak denetim iziyle skip'e düşer (sessiz drop yok).
-			for _, addr := range e.cfg.TCPBanners {
-				if strings.TrimSpace(addr) == "" {
-					continue
-				}
-				skipped = append(skipped, plugin.SkippedPlugin{
-					PluginID: "proto-tcp-banner",
-					Reason:   "skipped (tcp-banner " + strings.TrimSpace(addr) + " requires --active)",
-				})
-			}
-		} else {
-			for _, addr := range e.cfg.TCPBanners {
-				addr := strings.TrimSpace(addr)
-				if addr == "" {
-					continue
-				}
-				func(check context.Context) {
-					c, cancel := context.WithTimeout(check, 12*time.Second)
-					defer cancel()
-					res, err := proto.GrabBanner(c, addr, po)
-					if err != nil || res == nil {
-						return
-					}
-					for _, pf := range proto.BannerFindings(target, res) {
-						pf := pf
-						out = append(out, pf.ToFinding())
-					}
-				}(ctx)
-			}
-		}
-	}
-	return out, skipped, tlsObs
-}
-
-// runInfraRecon altyapı kontrollerini koşar (eski imza sarmalayıcısı).
-func (e *Engine) runInfraRecon(ctx context.Context, target string) ([]*finding.Finding, []plugin.SkippedPlugin, map[string]int) {
-	return e.runInfraReconTLS(ctx, target, nil)
-}
-
-// runInfraReconTLS altyapı kontrollerini koşar (Faz 0 MVP + Faz 1/2 derin
-// denetim). tlsObs, runProtoReconTLS'ten gelen TLS el sıkışma gözlemidir;
-// Faz 2 sertifika/zincir bulguları bu gözlemden ek dial açmadan türetilir
-// (nil ise derin TLS dalı tek bir yerel CheckTLS ile tazeler).
-// What: Profil + --active kapılı, kapsam-izinli, rate-limitli ve semaforlu
-// salt-okuma gözlem: SSH banner (GASH-052) + sürüm→bildirim eşlemesi (GASH-056),
-// DB port envanteri (GASH-053), derin TLS sürüm kabulü + sertifika/zincir
-// olguları (GASH-024), SSH KEXINIT algoritma denetimi (GASH-054) ve DB unauth
-// erişim denetimi (GASH-055). Bayraklar kapalıysa sıfır ek trafik; kapsam-dışı
-// host'ta sıfır soket (fail-closed).
-// Why: Altyapı yüzeyi plugin HTTP hattının dışındadır; her kapı denetim izli
-// skip üretir (sessiz drop yok) ve hiçbir gözlem yıkıcı işlem içermez.
-func (e *Engine) runInfraReconTLS(ctx context.Context, target string, tlsObs *proto.TLSResult) ([]*finding.Finding, []plugin.SkippedPlugin, map[string]int) {
-	stats := map[string]int{
-		"ssh_checks": 0, "ssh_handshake_checks": 0,
-		"db_ports_scanned": 0, "db_open_ports": 0, "db_unauth_checks": 0,
-		"tls_deep_checks": 0,
-	}
-	if !e.cfg.SSHAudit && !e.cfg.DBPortScan && !e.cfg.TLSAuditDeep && !e.cfg.SSHHandshakeAudit && !e.cfg.DBUnauth {
-		return nil, nil, stats
-	}
-	u, err := url.Parse(target)
-	if err != nil {
-		return nil, nil, stats
-	}
-	host := strings.ToLower(u.Hostname())
-	if host == "" {
-		return nil, nil, stats
-	}
-	allow := e.protoAllow(u)
-	timeout := e.cfg.InfraTimeout
-	if timeout <= 0 {
-		timeout = 5 * time.Second
-	}
-	po := proto.Options{Timeout: timeout, Allow: allow}
-	var out []*finding.Finding
-	var skipped []plugin.SkippedPlugin
-
-	sshOn := e.cfg.SSHAudit
-	sshHandshakeOn := e.cfg.SSHHandshakeAudit
-	dbOn := e.cfg.DBPortScan
-	dbUnauthOn := e.cfg.DBUnauth
-	tlsDeepOn := e.cfg.TLSAuditDeep
-	if sshOn {
-		switch {
-		case !e.cfg.Active:
-			skipped = append(skipped, plugin.SkippedPlugin{PluginID: "proto-ssh-banner", Reason: "skipped (requires --active)"})
-			sshOn = false
-		case !e.detectorEnabled("ssh"):
-			skipped = append(skipped, plugin.SkippedPlugin{PluginID: "proto-ssh-banner",
-				Reason: fmt.Sprintf("skipped (detector ssh disabled by profile %s)", e.EffectiveProfile().Name)})
-			sshOn = false
-		}
-	}
-	// Faz 1: SSH KEXINIT denetimi de aktif probdur (--active + ssh dedektörü).
-	if sshHandshakeOn {
-		switch {
-		case !e.cfg.Active:
-			skipped = append(skipped, plugin.SkippedPlugin{PluginID: "proto-ssh-handshake", Reason: "skipped (requires --active)"})
-			sshHandshakeOn = false
-		case !e.detectorEnabled("ssh"):
-			skipped = append(skipped, plugin.SkippedPlugin{PluginID: "proto-ssh-handshake",
-				Reason: fmt.Sprintf("skipped (detector ssh disabled by profile %s)", e.EffectiveProfile().Name)})
-			sshHandshakeOn = false
-		}
-	}
-	if dbOn {
-		switch {
-		case !e.cfg.Active:
-			skipped = append(skipped, plugin.SkippedPlugin{PluginID: "proto-db-ports", Reason: "skipped (requires --active)"})
-			dbOn = false
-		case !e.detectorEnabled("db"):
-			skipped = append(skipped, plugin.SkippedPlugin{PluginID: "proto-db-ports",
-				Reason: fmt.Sprintf("skipped (detector db disabled by profile %s)", e.EffectiveProfile().Name)})
-			dbOn = false
-		}
-	}
-	// Faz 1: DB unauth denetimi aynı kapı disiplinine tabidir.
-	if dbUnauthOn {
-		switch {
-		case !e.cfg.Active:
-			skipped = append(skipped, plugin.SkippedPlugin{PluginID: "proto-db-unauth", Reason: "skipped (requires --active)"})
-			dbUnauthOn = false
-		case !e.detectorEnabled("db"):
-			skipped = append(skipped, plugin.SkippedPlugin{PluginID: "proto-db-unauth",
-				Reason: fmt.Sprintf("skipped (detector db disabled by profile %s)", e.EffectiveProfile().Name)})
-			dbUnauthOn = false
-		}
-	}
-	if tlsDeepOn && !e.detectorEnabled("tls") {
-		skipped = append(skipped, plugin.SkippedPlugin{PluginID: "proto-tls-deep",
-			Reason: fmt.Sprintf("skipped (detector tls disabled by profile %s)", e.EffectiveProfile().Name)})
-		tlsDeepOn = false
-	}
-	if tlsDeepOn && !strings.EqualFold(u.Scheme, "https") {
-		skipped = append(skipped, plugin.SkippedPlugin{PluginID: "proto-tls-deep",
-			Reason: "skipped (tls-audit-deep requires an https target)"})
-		tlsDeepOn = false
-	}
-	if !sshOn && !sshHandshakeOn && !dbOn && !dbUnauthOn && !tlsDeepOn {
-		return nil, skipped, stats
-	}
-
-	parallelism := e.cfg.InfraParallelism
-	if parallelism <= 0 {
-		parallelism = 4
-	}
-	var limiter *rate.Limiter
-	if e.cfg.InfraRatePerSecond > 0 {
-		burst := parallelism
-		if burst < 1 {
-			burst = 1
-		}
-		limiter = rate.NewLimiter(rate.Limit(e.cfg.InfraRatePerSecond), burst)
-	}
-	wait := func() bool {
-		if limiter == nil {
-			return true
-		}
-		return limiter.Wait(ctx) == nil
-	}
-	sem := make(chan struct{}, parallelism)
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-
-	if sshOn {
-		for _, addr := range e.infraTargets(host, "22") {
-			h, p, aerr := net.SplitHostPort(addr)
-			if aerr != nil {
-				continue
-			}
-			if !allow(h) {
-				skipped = append(skipped, plugin.SkippedPlugin{PluginID: "proto-ssh-banner",
-					Reason: "skipped (infra target " + addr + " outside scope, no socket opened)"})
-				continue
-			}
-			wg.Add(1)
-			go func(h, p, addr string) {
-				defer wg.Done()
-				if !acquireContextSlot(ctx, sem) {
-					return
-				}
-				defer func() { <-sem }()
-				if !wait() {
-					return
-				}
-				c, cancel := context.WithTimeout(ctx, timeout)
-				defer cancel()
-				res, err := proto.CheckSSH(c, h, p, po)
-				mu.Lock()
-				defer mu.Unlock()
-				stats["ssh_checks"]++
-				if err != nil || res == nil {
-					return
-				}
-				fs := proto.SSHFindings(target, res)
-				// Faz 2: sürüm→bildirim eşlemesi (GASH-056) tetiklendiğinde jenerik
-				// "ssh-old-software" sinyali düşürülür; protokol 1.x bulgusu korunur.
-				vfs := proto.SSHVersionFindings(target, res.Software)
-				if len(vfs) > 0 {
-					kept := fs[:0]
-					for _, f := range fs {
-						if f.Evidence["signal"] != "ssh-old-software" {
-							kept = append(kept, f)
-						}
-					}
-					fs = kept
-				}
-				for _, pf := range fs {
-					pf := pf
-					out = append(out, pf.ToFinding())
-				}
-				for _, pf := range vfs {
-					pf := pf
-					out = append(out, pf.ToFinding())
-				}
-			}(h, p, addr)
-		}
-	}
-
-	// Faz 1: SSH KEXINIT algoritma denetimi (GASH-054). Faz 0 ile aynı hedef
-	// seçimi/kapsam/limiter/semafor; anahtar değişimi tamamlanmaz, auth yok.
-	if sshHandshakeOn {
-		for _, addr := range e.infraTargets(host, "22") {
-			h, p, aerr := net.SplitHostPort(addr)
-			if aerr != nil {
-				continue
-			}
-			if !allow(h) {
-				skipped = append(skipped, plugin.SkippedPlugin{PluginID: "proto-ssh-handshake",
-					Reason: "skipped (infra target " + addr + " outside scope, no socket opened)"})
-				continue
-			}
-			wg.Add(1)
-			go func(h, p, addr string) {
-				defer wg.Done()
-				if !acquireContextSlot(ctx, sem) {
-					return
-				}
-				defer func() { <-sem }()
-				if !wait() {
-					return
-				}
-				c, cancel := context.WithTimeout(ctx, timeout)
-				defer cancel()
-				res, err := proto.AuditSSHHandshake(c, h, p, po)
-				mu.Lock()
-				defer mu.Unlock()
-				stats["ssh_handshake_checks"]++
-				if err != nil || res == nil {
-					return
-				}
-				for _, pf := range proto.SSHHandshakeFindings(target, res) {
-					pf := pf
-					out = append(out, pf.ToFinding())
-				}
-			}(h, p, addr)
-		}
-	}
-
-	if dbOn {
-		ports := e.cfg.DBPorts
-		if len(ports) == 0 {
-			ports = proto.DefaultDBPorts()
-		}
-		maxPorts := e.cfg.MaxInfraPorts
-		if maxPorts <= 0 {
-			maxPorts = 20
-		}
-		if len(ports) > maxPorts {
-			ports = ports[:maxPorts]
-		}
-		for _, h := range e.infraHosts(host) {
-			if !allow(h) {
-				skipped = append(skipped, plugin.SkippedPlugin{PluginID: "proto-db-ports",
-					Reason: "skipped (infra target " + h + " outside scope, no socket opened)"})
-				continue
-			}
-			for _, port := range ports {
-				port := port
-				wg.Add(1)
-				go func(h string, port int) {
-					defer wg.Done()
-					if !acquireContextSlot(ctx, sem) {
-						return
-					}
-					defer func() { <-sem }()
-					if !wait() {
-						return
-					}
-					c, cancel := context.WithTimeout(ctx, timeout)
-					defer cancel()
-					results, err := proto.ScanDBPorts(c, h, []int{port}, po)
-					if err != nil || len(results) == 0 {
-						return
-					}
-					fs := proto.DBPortFindings(results)
-					mu.Lock()
-					defer mu.Unlock()
-					stats["db_ports_scanned"] += len(results)
-					for _, r := range results {
-						if r.Open {
-							stats["db_open_ports"]++
-						}
-					}
-					for _, pf := range fs {
-						pf := pf
-						out = append(out, pf.ToFinding())
-					}
-				}(h, port)
-			}
-		}
-	}
-
-	// Faz 1: DB kimlik doğrulamasız erişim denetimi (GASH-055). Port listesi
-	// DBPortScan ile aynıdır (MaxInfraPorts tavanlı); port taraması kapalı
-	// portu zaten elediyse burada aynı sınırlarla yeniden dial edilir (basit
-	// ve güvenli: tek zararsız istek, kapsam/limiter/semafor aynı).
-	if dbUnauthOn {
-		ports := e.cfg.DBPorts
-		if len(ports) == 0 {
-			ports = proto.DefaultDBPorts()
-		}
-		maxPorts := e.cfg.MaxInfraPorts
-		if maxPorts <= 0 {
-			maxPorts = 20
-		}
-		if len(ports) > maxPorts {
-			ports = ports[:maxPorts]
-		}
-		for _, h := range e.infraHosts(host) {
-			if !allow(h) {
-				skipped = append(skipped, plugin.SkippedPlugin{PluginID: "proto-db-unauth",
-					Reason: "skipped (infra target " + h + " outside scope, no socket opened)"})
-				continue
-			}
-			for _, port := range ports {
-				port := port
-				wg.Add(1)
-				go func(h string, port int) {
-					defer wg.Done()
-					if !acquireContextSlot(ctx, sem) {
-						return
-					}
-					defer func() { <-sem }()
-					if !wait() {
-						return
-					}
-					c, cancel := context.WithTimeout(ctx, timeout)
-					defer cancel()
-					res, err := proto.CheckDBUnauth(c, h, port, po)
-					mu.Lock()
-					defer mu.Unlock()
-					stats["db_unauth_checks"]++
-					if err != nil || res == nil {
-						return
-					}
-					for _, pf := range proto.DBUnauthFindings(target, *res) {
-						pf := pf
-						out = append(out, pf.ToFinding())
-					}
-				}(h, port)
-			}
-		}
-	}
-
-	if tlsDeepOn {
-		port := u.Port()
-		if port == "" {
-			port = "443"
-		}
-		addr := net.JoinHostPort(host, port)
-		if !allow(host) {
-			skipped = append(skipped, plugin.SkippedPlugin{PluginID: "proto-tls-deep",
-				Reason: "skipped (tls-audit-deep target outside scope, no socket opened)"})
-		} else {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				if !acquireContextSlot(ctx, sem) {
-					return
-				}
-				defer func() { <-sem }()
-				if !wait() {
-					return
-				}
-				c, cancel := context.WithTimeout(ctx, timeout)
-				defer cancel()
-				// Faz 2: sertifika/zincir olguları aynı el sıkışmadan türetilir;
-				// runProtoReconTLS gözlemi yoksa (hata/dedektör kapısı) tek dial.
-				obs := tlsObs
-				if obs == nil {
-					res, err := proto.CheckTLS(c, addr, po)
-					if err != nil || res == nil {
-						return
-					}
-					obs = res
-				}
-				deepFS := proto.TLSDeepFindings(target, obs)
-				probes := 0
-				var versionFS []proto.Finding
-				if audit, err := proto.CheckTLSVersionSupport(c, addr, po); err == nil && audit != nil {
-					versionFS = proto.TLSAuditFindings(target, audit)
-					probes = len(audit.Probes)
-				}
-				mu.Lock()
-				defer mu.Unlock()
-				stats["tls_deep_checks"] += probes
-				for _, pf := range versionFS {
-					pf := pf
-					out = append(out, pf.ToFinding())
-				}
-				for _, pf := range deepFS {
-					pf := pf
-					out = append(out, pf.ToFinding())
-				}
-			}()
-		}
-	}
-	wg.Wait()
-	return out, skipped, stats
-}
-
 // infraTargets explicit --infra-target girdilerini host:port olarak döndürür;
 // liste boşsa hedef host + verilen varsayılan port kullanılır.
 func (e *Engine) infraTargets(defaultHost, defaultPort string) []string {
@@ -1724,16 +1199,21 @@ func (e *Engine) infraHosts(defaultHost string) []string {
 	return []string{defaultHost}
 }
 
-// smuggleGateOK smuggle recon kapısıdır: --active + agresif profil +
-// profilde smuggle dedektörü (hepsi şart; dışı → denetim izli skip).
+// smuggleGateOK smuggle recon kapısıdır (registry Spec'inden okunur):
+// --active + agresif profil + profilde smuggle dedektörü (hepsi şart;
+// dışı → denetim izli skip). Kapı mantığı tek kaynaktan gelir
+// (internal/detector Spec.Evaluate); bu sarmalayıcı yalnızca test ve rapor
+// okunabilirliği için durur.
 func smuggleGateOK(e *Engine) bool {
-	if e == nil || !e.cfg.Active {
+	if e == nil || e.detectors == nil {
 		return false
 	}
-	if e.cfg.Profile != config.ProfileAggressive {
+	d, ok := e.detectors.Get(smuggle.PluginID)
+	if !ok {
 		return false
 	}
-	return e.detectorEnabled("smuggle")
+	allowed, _ := d.Spec().Evaluate(e.detectorPolicy())
+	return allowed
 }
 
 // protoAllow proto kontrollerinin kapsam kararıdır.

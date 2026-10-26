@@ -14,6 +14,7 @@ import (
 
 	"github.com/Xmar1881/Gash/internal/auth"
 	"github.com/Xmar1881/Gash/internal/config"
+	"github.com/Xmar1881/Gash/internal/detector"
 	"github.com/Xmar1881/Gash/internal/finding"
 	"github.com/Xmar1881/Gash/internal/headless"
 	"github.com/Xmar1881/Gash/internal/plugin"
@@ -191,6 +192,10 @@ type Engine struct {
 	detectedCaps map[string]bool
 	// sharedPolicy is an optional shared PolicySession used across multi-target bulk scans.
 	sharedPolicy *plugin.PolicySession
+	// detectors holds the engine-owned detector registry (raw sockets, byte
+	// analysis over crawler output, wordlist probing). It is the single
+	// enumerable list of scan units that cannot be YAML or JS plugins.
+	detectors *detector.Registry
 }
 
 // New motor kurar.
@@ -210,6 +215,7 @@ func New(reg *plugin.Registry, cfg Config) *Engine {
 		trustPlatform: make(map[string]string),
 	}
 	e.cfg.enabledDetectors = e.resolveEnabledDetectors()
+	e.detectors = newDetectorRegistry()
 	return e
 }
 

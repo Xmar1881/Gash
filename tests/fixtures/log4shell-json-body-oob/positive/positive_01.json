@@ -1,0 +1,1 @@
+{"body": "{\"status\":\"queued\"}", "expected_confidence": "confirmed", "expected_verdict": "accept", "headers": {"Content-Type": "application/json"}, "name": "logged JSON field triggers a JNDI lookup callback", "oob_callback": true, "oob_correlation_id": "c_l4j_01", "oob_namespace": "log4shell-json", "status": 200, "target": "http://example.com/api/log"}

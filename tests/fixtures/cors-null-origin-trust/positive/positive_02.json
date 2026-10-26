@@ -1,0 +1,1 @@
+{"body": "<html><body>account settings</body></html>", "expected_confidence": "firm", "expected_verdict": "accept", "headers": {"Access-Control-Allow-Origin": "null", "Content-Type": "text/html"}, "name": "null origin echoed without credentials", "status": 200, "target": "http://example.com/api/account"}

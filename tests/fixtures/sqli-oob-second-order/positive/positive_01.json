@@ -1,0 +1,1 @@
+{"body": "{\"status\":\"queued\"}", "expected_confidence": "confirmed", "expected_verdict": "accept", "headers": {"Content-Type": "application/json"}, "name": "stored closure fires the callback on the neutral re-read", "oob_callback": true, "oob_correlation_id": "c_second_order_01", "oob_namespace": "scan_js", "status": 200, "target": "http://example.com/api/items?id=1"}

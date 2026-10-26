@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Xmar1881 / GASH contributors
-// Modül: github.com/Xmar1881/Gash
+// Module: github.com/Xmar1881/Gash
 //
-// File: internal/engine/js_recon.go
-// What: Pasif JS recon motor hattı: endpoint besleme + GASH-067 sır bulguları.
-// Why: Crawl'ın topladığı same-origin JS gövdeleri (ve sınırlı kaynak
-// haritaları) motor-içi analizden geçer; endpoint'ler yüzeye geri beslenir
-// (parametreli → doğrudan injection point, parametresiz → 1 sayfalık sınırlı
-// takip crawl'ı), sırlar TAM DEĞER RAPORLANMADAN masked GASH-067 bulgusudur.
-// Plugin YOK (engine-recon, finding.Build bypass — content-discovery disiplini);
-// üçüncü taraf/kapsam-dışı URL'ler yalnızca kayıtta kalır, istek üretmez.
+// File: internal/recon/jsrecon.go
+// What: Passive JavaScript recon detector: endpoint harvesting (GASH-067
+// compatible surface contribution) plus hardcoded-secret findings.
+// Why: The crawler already paid for the same-origin JS bodies (and a bounded
+// number of source maps); analyzing them is engine-recon, and it was the last
+// engine-owned finding producer still written as engine control flow. The port
+// keeps the engine as carrier: it brokered the URL-level scope decision and the
+// bounded follow-up crawl, and the detector owns the analysis, dedup, telemetry
+// keys, and the masked evidence discipline.
 
-package engine
+package recon
 
 import (
 	"context"
@@ -23,11 +24,10 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/Xmar1881/Gash/internal/detector"
 	"github.com/Xmar1881/Gash/internal/discovery"
 	"github.com/Xmar1881/Gash/internal/finding"
 	"github.com/Xmar1881/Gash/internal/plugin"
-	"github.com/Xmar1881/Gash/internal/plugin/loader"
-	"github.com/Xmar1881/Gash/internal/probe"
 )
 
 const (
@@ -51,35 +51,55 @@ const (
 	jsMaxSourceMapFetch = 5
 )
 
-// runJSRecon crawl'ın topladığı JS gövdelerini pasif analiz eder.
-// What: AnalyzeJS → masked sır bulguları (GASH-067) + endpoint beslemesi;
-// sourceMappingURL haritaları same-origin/--scope kapılı çekilir (≤5) ve
-// sourcesContent sır taramasından geçer. Dönen stats rapor sayaçlarıdır:
-// js_files_fetched, js_endpoints_found, js_secrets_found, js_maps_fetched.
-// Why: JS yüzeyi GET-only pasif gözlemdir; sır tam değeri asla rapora girmez
-// (yalnızca first4…last4 + maskeli bağlam) ve üçüncü taraf host'a istek yoktur.
-func (e *Engine) runJSRecon(ctx context.Context, target string, client *probe.Client, crawlRes *discovery.CrawlResult) ([]*finding.Finding, []loader.JSPoint, map[string]int) {
+// JSRecon analyzes the crawler's JavaScript inventory.
+// What: GASH-067 detector: masked secret findings plus harvested surface.
+// Why: One detector owns both outputs because they come from the single pass
+// over the same bytes; splitting them would duplicate the analysis.
+type JSRecon struct{}
+
+// Spec describes the passive JS recon detector.
+// What: Identity, taxonomy, phase, and its request ceiling.
+// Why: The ceiling counts the two bounded fetches (source maps) and the bounded
+// follow-up crawls, so the declared budget matches what the detector may spend.
+func (JSRecon) Spec() detector.Spec {
+	return detector.Spec{
+		ID:              PluginIDJSRecon,
+		Name:            "Passive JavaScript recon",
+		Description:     "Analyzes already-fetched same-origin JavaScript bodies and a bounded set of source maps for hardcoded secrets, and harvests query, fragment and parameterless endpoints into the scan surface; third-party URLs are recorded only, never requested.",
+		RuleID:          RuleIDJSSecret,
+		CWE:             CWEJSSecret,
+		Oracle:          OracleJSSecret,
+		Severity:        plugin.SeverityHigh,
+		Phase:           plugin.PhaseDiscovery,
+		Order:           5,
+		MaxRequests:     jsMaxFollowPages + jsMaxSourceMapFetch,
+		Docs:            "docs/detector-inventory.md",
+		DetectorVersion: DetectorVersionJSRecon,
+	}
+}
+
+// Run analyzes the JS inventory and returns findings, surface, and counters.
+// What: Deterministic dedup for both outputs plus a bounded fetch budget.
+// Why: Duplicate secrets or points would inflate the report and re-probe the
+// same endpoint; the bounds keep a large bundle from turning recon into load.
+func (JSRecon) Run(ctx context.Context, env *detector.Env) (detector.Result, error) {
 	stats := map[string]int{
 		"js_files_fetched": 0, "js_endpoints_found": 0,
 		"js_hash_routes_found": 0,
 		"js_secrets_found":     0, "js_maps_fetched": 0,
 	}
-	if crawlRes == nil || client == nil {
-		return nil, nil, stats
+	res := detector.Result{Stats: stats}
+	if env == nil || env.Probe == nil {
+		return res, nil
 	}
-	stats["js_files_fetched"] = crawlRes.JSFilesFetched
-	targetParsed, err := url.Parse(strings.TrimSpace(target))
+	stats["js_files_fetched"] = env.Crawl.JSFilesFetched
+	targetParsed, err := url.Parse(strings.TrimSpace(env.Target))
 	if err != nil || targetParsed.Host == "" {
-		return nil, nil, stats
+		return res, nil
 	}
-
-	sm := NewScopeManager(e.cfg.Scope)
-	sm.SetOriginalTarget(targetParsed.String())
 
 	seenSecrets := map[string]bool{}
 	seenPoints := map[string]bool{}
-	var findings []*finding.Finding
-	var points []loader.JSPoint
 	followPages := 0
 	mapsFetched := 0
 
@@ -89,18 +109,24 @@ func (e *Engine) runJSRecon(ctx context.Context, target string, client *probe.Cl
 			return
 		}
 		seenSecrets[key] = true
-		findings = append(findings, buildJSSecretFinding(s))
+		res.Findings = append(res.Findings, buildJSSecretFinding(s))
 	}
-	addPoint := func(p loader.JSPoint) {
+	addPoint := func(p detector.Surface) {
 		key := strings.ToUpper(p.Method) + "|" + p.URL + "|" + p.ParamLocation + "|" + p.ParamName
 		if seenPoints[key] {
 			return
 		}
 		seenPoints[key] = true
-		points = append(points, p)
+		res.Surface = append(res.Surface, p)
+	}
+	allowed := func(rawURL string) bool {
+		if env.URLAllowed == nil {
+			return false
+		}
+		return env.URLAllowed(rawURL)
 	}
 
-	for _, src := range crawlRes.JSSources {
+	for _, src := range env.Crawl.JSSources {
 		if ctx.Err() != nil {
 			break
 		}
@@ -113,16 +139,12 @@ func (e *Engine) runJSRecon(ctx context.Context, target string, client *probe.Cl
 		origin := targetParsed.Scheme + "://" + targetParsed.Host
 		for _, hr := range rep.HashRoutes {
 			routeURL := origin + "/#" + hr.Path
-			u, perr := url.Parse(routeURL)
-			if perr != nil || u.Host == "" {
-				continue
-			}
-			if !jsReconURLAllowed(targetParsed, u, e.cfg.Scope, sm) {
+			if !allowed(routeURL) {
 				continue
 			}
 			stats["js_hash_routes_found"]++
 			for _, name := range hr.Params {
-				addPoint(loader.JSPoint{
+				addPoint(detector.Surface{
 					URL: routeURL, Method: http.MethodGet,
 					ParamName: name, ParamLocation: "fragment",
 				})
@@ -134,7 +156,7 @@ func (e *Engine) runJSRecon(ctx context.Context, target string, client *probe.Cl
 			if perr != nil || u.Host == "" {
 				continue
 			}
-			if !jsReconURLAllowed(targetParsed, u, e.cfg.Scope, sm) {
+			if !allowed(ep.Resolved) {
 				continue // üçüncü taraf/kapsam-dışı: yalnızca kayıt, istek YOK
 			}
 			method := strings.ToUpper(strings.TrimSpace(ep.Method))
@@ -145,7 +167,7 @@ func (e *Engine) runJSRecon(ctx context.Context, target string, client *probe.Cl
 				clean := *u
 				clean.RawQuery = ""
 				for _, pname := range ep.Params {
-					addPoint(loader.JSPoint{
+					addPoint(detector.Surface{
 						URL: clean.String(), Method: method,
 						ParamName:     pname,
 						ParamLocation: "query",
@@ -154,24 +176,19 @@ func (e *Engine) runJSRecon(ctx context.Context, target string, client *probe.Cl
 				}
 				continue
 			}
-			if followPages >= jsMaxFollowPages {
+			if followPages >= jsMaxFollowPages || env.FollowCrawl == nil {
 				continue
 			}
 			followPages++
 			// 1 sayfa, derinlik 0: endpoint'in kendisi taranır, yeni BFS YOK;
-			// JS recon tekrarlanmaz (SkipJSRecon) — çift istek/çift bulgu olmaz.
-			follow, ferr := discovery.Crawl(ctx, client, ep.Resolved, discovery.CrawlOptions{
-				MaxPages: 1, MaxDepth: 0, Scope: e.cfg.Scope,
-				ReadRobots: false, ReadSitemap: false, SkipJSRecon: true,
-			})
-			if ferr != nil || follow == nil {
+			// JS recon tekrarlanmaz — çift istek/çift bulgu olmaz. Sınır ve
+			// kapsam kararı motorun (FollowCrawl) sorumluluğundadır.
+			points, ferr := env.FollowCrawl(ctx, ep.Resolved)
+			if ferr != nil || len(points) == 0 {
 				continue
 			}
-			for _, ip := range follow.SurfacePoints {
-				addPoint(loader.JSPoint{
-					URL: ip.URL, Method: ip.Method, ParamName: ip.ParamName,
-					ParamLocation: ip.ParamLocation, Value: ip.Value,
-				})
+			for _, p := range points {
+				addPoint(p)
 			}
 		}
 
@@ -179,15 +196,11 @@ func (e *Engine) runJSRecon(ctx context.Context, target string, client *probe.Cl
 			if mapsFetched >= jsMaxSourceMapFetch || ctx.Err() != nil {
 				break
 			}
-			mu, merr := url.Parse(mapURL)
-			if merr != nil || mu.Host == "" {
-				continue
-			}
-			if !jsReconURLAllowed(targetParsed, mu, e.cfg.Scope, sm) {
+			if !allowed(mapURL) {
 				continue
 			}
 			pctx := plugin.WithPlugin(ctx, PluginIDJSRecon, true, nil)
-			resp, rerr := client.Send(pctx, http.MethodGet, mapURL, nil, nil)
+			resp, rerr := env.Probe.Send(pctx, http.MethodGet, mapURL, nil, nil)
 			if rerr != nil {
 				if errors.Is(rerr, plugin.ErrBudgetExceeded) {
 					break
@@ -204,36 +217,8 @@ func (e *Engine) runJSRecon(ctx context.Context, target string, client *probe.Cl
 			}
 		}
 	}
-	stats["js_secrets_found"] = len(findings)
-	return findings, points, stats
-}
-
-// jsReconURLAllowed JS endpoint/harita besleme kapısıdır.
-// What: Hedef origin her zaman; diğer host'lar yalnızca explicit --scope
-// içindeyse (ScopeManager: domain/CIDR/URL-prefix + rebinding).
-// Why: Open modda üçüncü taraf endpoint takibi YAPILMAZ; kapsam verilmişse
-// operatörün allowlist'i genişletir (fail-closed).
-func jsReconURLAllowed(target, u *url.URL, scope []string, sm *ScopeManager) bool {
-	scheme := strings.ToLower(u.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return false
-	}
-	if strings.EqualFold(target.Scheme, u.Scheme) && strings.EqualFold(target.Host, u.Host) {
-		return true
-	}
-	if len(scope) == 0 {
-		return false
-	}
-	return sm.CheckScope(context.Background(), u) == nil
-}
-
-// newJSReconID motor-içi bulgu kimliğidir.
-func newJSReconID() string {
-	var b [6]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "finding_js_fallback"
-	}
-	return "finding_js_" + hex.EncodeToString(b[:])
+	stats["js_secrets_found"] = len(res.Findings)
+	return res, nil
 }
 
 // buildJSSecretFinding GASH-067 bulgusunu kurar (motor-içi; fixture-spec yok).
@@ -285,4 +270,13 @@ func buildJSSecretFinding(s discovery.Secret) *finding.Finding {
 	}
 	f.Fingerprint = finding.Fingerprint(f)
 	return f
+}
+
+// newJSReconID motor-içi bulgu kimliğidir.
+func newJSReconID() string {
+	var b [6]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "finding_js_fallback"
+	}
+	return "finding_js_" + hex.EncodeToString(b[:])
 }

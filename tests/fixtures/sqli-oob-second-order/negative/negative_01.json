@@ -1,0 +1,1 @@
+{"body": "{\"status\":\"queued\"}", "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "no callback observed for the write/read pair", "oob_callback": false, "oob_correlation_id": "c_second_order_02", "oob_namespace": "scan_js", "status": 200, "target": "http://example.com/api/items?id=1"}

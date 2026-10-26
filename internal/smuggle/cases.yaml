@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: internal/smuggle/cases.yaml
+# What: Differential framing cases for the GASH-033 raw-TCP smuggling probe.
+# Why: The case matrix is data, not control flow. A new desynchronization axis
+#   (another Transfer-Encoding obfuscation, a different safe body terminator, a
+#   header-order variation) is one entry here; the parser validates the shape
+#   and the golden-byte test proves the emitted wire format did not drift.
+#   Every body stays a harmless terminator: no poisoned embedded request is
+#   ever written, so the probe cannot poison a cache or smuggle a real payload.
+
+cases:
+  - kind: CL.TE
+    name: front-end honours Content-Length while the back-end honours Transfer-Encoding
+    content_length: 4
+    transfer_encoding:
+      - chunked
+    body: "0\r\n\r\n"
+  - kind: TE.CL
+    name: front-end honours Transfer-Encoding while the back-end honours Content-Length
+    content_length: 6
+    transfer_encoding:
+      - chunked
+    body: "0\r\n\r\nX"
+  - kind: TE.TE
+    name: duplicated Transfer-Encoding header desynchronizes one of the two hops
+    content_length: 5
+    transfer_encoding:
+      - chunked
+      - chunked
+    body: "0\r\n\r\n"

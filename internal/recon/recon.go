@@ -2,16 +2,19 @@
 // Copyright (C) 2026 Xmar1881 / GASH contributors
 // Module: github.com/Xmar1881/Gash
 //
-// File: internal/engine/embedded_state.go
-// What: Engine-owned GASH-071 (SPA embedded-state secrets) and GASH-072
-// (development build artifacts) scans over already-crawled bodies.
-// Why: Both are deterministic content observations on bytes the crawler
-// already fetched; they need no extra requests, no plugin, and no validator.
-// Values are masked and evidence is bounded exactly like GASH-067.
+// File: internal/recon/recon.go
+// What: Byte-analysis recon detectors: GASH-071 (secrets in framework-embedded
+// state) and GASH-072 (development build artifacts).
+// Why: Both are deterministic content observations on bytes the crawler already
+// fetched, so they need neither a plugin fixture spec nor extra requests. They
+// used to be unexported functions inside the engine; they now implement the
+// detector port so their identity, rule mapping, gates, and stat keys are data
+// instead of engine control flow.
 
-package engine
+package recon
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -19,6 +22,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Xmar1881/Gash/internal/detector"
 	"github.com/Xmar1881/Gash/internal/discovery"
 	"github.com/Xmar1881/Gash/internal/finding"
 	"github.com/Xmar1881/Gash/internal/plugin"
@@ -51,42 +55,131 @@ const (
 	DetectorVersionDevBuild = "1.0.0"
 )
 
-// scanSPAState finds secrets in framework-embedded state on page and JS bodies.
-// What: One deterministic pass over CrawlResult pages plus external JS sources;
-// page inline sources are skipped because they are already part of page bodies.
-// Why: The crawl is the only owner of fetched bytes; this scan makes no
-// requests and reports masked evidence only.
-func scanSPAState(crawl *discovery.CrawlResult) ([]*finding.Finding, map[string]int) {
-	stats := map[string]int{"spa_state_pages": 0, "spa_state_secrets": 0}
-	if crawl == nil {
-		return nil, stats
+// SPAState finds secrets in framework-embedded state.
+// What: GASH-071 detector over already-fetched page and external JS bodies.
+// Why: Serialized state (__NEXT_DATA__, __INITIAL_STATE__) leaks credentials
+// without any injection; the observation is deterministic, so the ceiling is
+// static-execution-evidence, never confirmed.
+type SPAState struct{}
+
+// Spec describes the embedded-state detector.
+// What: Identity, taxonomy, and phase; no flag or profile gate.
+// Why: The scan runs it whenever the crawler produced bodies, exactly like
+// before the port existed.
+func (SPAState) Spec() detector.Spec {
+	return detector.Spec{
+		ID:              PluginIDSPAState,
+		Name:            "Secrets in SPA embedded state",
+		Description:     "Deterministic pass over already-fetched page and external JS bodies for framework-serialized state containing credentials or session tokens; values are masked in the report.",
+		RuleID:          RuleIDSPAState,
+		CWE:             CWESPAStateCredential,
+		Oracle:          OracleSPAState,
+		Severity:        plugin.SeverityHigh,
+		Phase:           plugin.PhaseDiscovery,
+		Order:           10,
+		Docs:            "docs/detector-inventory.md",
+		DetectorVersion: DetectorVersionSPAState,
 	}
+}
+
+// Run scans the crawler-provided bodies.
+// What: One pass, no requests.
+// Why: The crawl is the only owner of fetched bytes; a re-fetch would duplicate
+// work and could observe different content than the pages plugins were given.
+func (SPAState) Run(ctx context.Context, env *detector.Env) (detector.Result, error) {
+	findings, stats := ScanSPAState(ctx, env.PagesForScan())
+	return detector.Result{Findings: findings, Stats: stats}, nil
+}
+
+// DevBuild finds genuinely development-only build artifacts.
+// What: GASH-072 detector over already-fetched page and external JS bodies.
+// Why: Debug builds widen the attack surface (devtools hooks, unminified
+// internals); one aggregated finding per source keeps the report readable.
+type DevBuild struct{}
+
+// Spec describes the dev-build detector.
+// What: Identity, taxonomy, and phase; no flag or profile gate.
+// Why: Same "runs whenever the crawler produced bodies" contract as GASH-071.
+func (DevBuild) Spec() detector.Spec {
+	return detector.Spec{
+		ID:              PluginIDDevBuild,
+		Name:            "Development build artifacts served",
+		Description:     "Deterministic marker scan of already-fetched page and external JS bodies for development-only build artifacts (dev framework bundles, devtools hooks); env-gated markers and generic warnings are deliberately excluded.",
+		RuleID:          RuleIDDevBuild,
+		CWE:             CWEDevBuild,
+		Oracle:          OracleDevBuild,
+		Severity:        plugin.SeverityLow,
+		Phase:           plugin.PhaseDiscovery,
+		Order:           20,
+		Docs:            "docs/detector-inventory.md",
+		DetectorVersion: DetectorVersionDevBuild,
+	}
+}
+
+// Run scans the crawler-provided bodies.
+// What: One pass, no requests.
+// Why: Identical discipline to GASH-071: observe exactly the bytes the crawl
+// already paid for.
+func (DevBuild) Run(ctx context.Context, env *detector.Env) (detector.Result, error) {
+	findings, stats := ScanDevBuild(ctx, env.PagesForScan())
+	return detector.Result{Findings: findings, Stats: stats}, nil
+}
+
+// ScanSPAState finds secrets in framework-embedded state on page and JS bodies.
+// What: One deterministic pass over the given pages plus external JS sources;
+// inline sources are skipped because they are already part of page bodies.
+// Why: Exported so the engine parity test can assert the exact same findings
+// the detector produces, and so the rule's unit tests stay next to the rule.
+func ScanSPAState(ctx context.Context, pages []detector.Page) ([]*finding.Finding, map[string]int) {
+	stats := map[string]int{"spa_state_pages": 0, "spa_state_secrets": 0}
 	var out []*finding.Finding
-	seenSources := make(map[string]bool)
-	scan := func(url string, body []byte, countPage bool) {
-		if url == "" || len(body) == 0 || seenSources[url] {
-			return
-		}
-		seenSources[url] = true
-		rep := discovery.AnalyzeSPAState(body, url)
+	scanPages(ctx, pages, func(p detector.Page, countPage bool) {
+		rep := discovery.AnalyzeSPAState(p.Body, p.URL)
 		if countPage && len(rep.Containers) > 0 {
 			stats["spa_state_pages"]++
 		}
 		for _, s := range rep.Secrets {
 			out = append(out, buildSPAStateFinding(s))
 		}
-	}
-	for _, page := range crawl.Pages {
-		scan(page.URL, page.Body, true)
-	}
-	for _, src := range crawl.JSSources {
-		if src.Inline {
-			continue
-		}
-		scan(src.URL, src.Body, false)
-	}
+	})
 	stats["spa_state_secrets"] = len(out)
 	return out, stats
+}
+
+// ScanDevBuild finds genuinely development-only build artifacts.
+// What: One aggregated finding per fetched page/asset, with all marker names.
+// Why: Numeric marker count in stats reflects distinct marker hits, while a
+// single finding per source keeps the report readable.
+func ScanDevBuild(ctx context.Context, pages []detector.Page) ([]*finding.Finding, map[string]int) {
+	stats := map[string]int{"devbuild_markers": 0}
+	var out []*finding.Finding
+	scanPages(ctx, pages, func(p detector.Page, _ bool) {
+		markers := discovery.DetectDevBuildMarkers(p.Body)
+		if len(markers) == 0 {
+			return
+		}
+		stats["devbuild_markers"] += len(markers)
+		out = append(out, buildDevBuildFinding(p.URL, markers))
+	})
+	return out, stats
+}
+
+// scanPages visits every scannable page once, in order.
+// What: Shared URL-dedup plus cancellation check.
+// Why: Both detectors must agree on what "one source" means, and neither may
+// keep working after the scan context is cancelled.
+func scanPages(ctx context.Context, pages []detector.Page, fn func(p detector.Page, countPage bool)) {
+	seen := make(map[string]bool, len(pages))
+	for _, p := range pages {
+		if ctx != nil && ctx.Err() != nil {
+			return
+		}
+		if p.URL == "" || len(p.Body) == 0 || p.Inline || seen[p.URL] {
+			continue
+		}
+		seen[p.URL] = true
+		fn(p, !p.JS)
+	}
 }
 
 // buildSPAStateFinding builds one masked GASH-071 finding.
@@ -140,41 +233,6 @@ func buildSPAStateFinding(s discovery.SPAStateSecret) *finding.Finding {
 	}
 	f.Fingerprint = finding.Fingerprint(f)
 	return f
-}
-
-// scanDevBuild finds genuinely development-only build artifacts.
-// What: One aggregated finding per fetched page/asset, with all marker names.
-// Why: Numeric marker count in stats reflects distinct marker hits, while a
-// single finding per source keeps the report readable.
-func scanDevBuild(crawl *discovery.CrawlResult) ([]*finding.Finding, map[string]int) {
-	stats := map[string]int{"devbuild_markers": 0}
-	if crawl == nil {
-		return nil, stats
-	}
-	var out []*finding.Finding
-	seenSources := make(map[string]bool)
-	scan := func(url string, body []byte) {
-		if url == "" || len(body) == 0 || seenSources[url] {
-			return
-		}
-		seenSources[url] = true
-		markers := discovery.DetectDevBuildMarkers(body)
-		if len(markers) == 0 {
-			return
-		}
-		stats["devbuild_markers"] += len(markers)
-		out = append(out, buildDevBuildFinding(url, markers))
-	}
-	for _, page := range crawl.Pages {
-		scan(page.URL, page.Body)
-	}
-	for _, src := range crawl.JSSources {
-		if src.Inline {
-			continue
-		}
-		scan(src.URL, src.Body)
-	}
-	return out, stats
 }
 
 // buildDevBuildFinding aggregates markers for one source into one finding.
@@ -242,6 +300,9 @@ func buildDevBuildFinding(url string, markers []discovery.DevBuildMarker) *findi
 }
 
 // newContentFindingID generates a deterministic-prefix random finding ID.
+// What: Per-finding identity for engine-recon output.
+// Why: Findings must be individually addressable in SARIF/JSON without
+// re-deriving identity from the evidence map.
 func newContentFindingID(prefix string) string {
 	var b [6]byte
 	if _, err := rand.Read(b[:]); err != nil {

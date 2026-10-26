@@ -1,0 +1,1 @@
+{"body": "{\"items\":[]}", "control_body": "{\"items\":[]}", "control_samples": [120, 130, 125], "delay_samples": [124, 131, 119], "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "uniform latency across payload and baseline", "status": 200, "target": "http://example.com/api/convert"}

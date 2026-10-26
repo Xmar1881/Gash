@@ -1,0 +1,1 @@
+{"body": "<html><body><a href=\"#gash_a1b2c3d4\">click</a></body></html>", "canary": "gash_a1b2c3d4", "control_body": "<html><body><a href=\"#\">click</a></body></html>", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "canary in a fragment-only sink with no scheme", "status": 200, "target": "http://example.com/go?next=gash_a1b2c3d4"}

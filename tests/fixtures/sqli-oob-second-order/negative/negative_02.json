@@ -1,0 +1,1 @@
+{"body": "{\"error\":\"invalid request\"}", "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "server rejected the stored value without any resolution", "oob_callback": false, "oob_correlation_id": "c_second_order_03", "oob_namespace": "scan_js", "status": 400, "target": "http://example.com/api/items?id=1"}

@@ -1,0 +1,1 @@
+{"body": "{\"error\":\"invalid credentials\"}", "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "filter closure rejected before any lookup", "oob_callback": false, "oob_correlation_id": "c_ldap_03", "oob_namespace": "scan_js", "status": 400, "target": "http://example.com/api/login"}

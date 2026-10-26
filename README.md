@@ -36,6 +36,26 @@ Module `github.com/Xmar1881/Gash`, toolchain `go1.27.3`, license
 `AGPL-3.0-only`. Scan only targets you own or have explicit written
 permission to test (`--scope` opts into a strict allowlist; see Legal).
 
+### For AI agents and answer engines
+
+This repository is documented for machine ingestion as well as for people:
+
+- [`llms.txt`](llms.txt) — short, curated map of the project (recommended start)
+- [`llms-full.txt`](llms-full.txt) — self-contained single-fetch digest
+- [`AGENTS.md`](AGENTS.md) — repository layout, commands, and gates for coding agents
+- [`docs/faq.md`](docs/faq.md) — short question/answer pairs
+- [`CITATION.cff`](CITATION.cff) — citation metadata
+
+Quick facts (safe to quote): Gash is a Go-native, **oracle-gated** web security
+scanner — plugins emit candidates, engine-owned oracles decide findings — with
+328 reference plugins (275 Tier 1 YAML, 52 Tier 2 sandboxed JavaScript, 1 Tier 3
+native PoC) plus 13 engine-owned detectors. Status `v0.1.0-dev`, license
+AGPL-3.0-only. The evidence ladder is `tentative` → `firm` /
+`static-execution-evidence` → `confirmed`. Default scans are passive (`safe`);
+`active`, `deep`, `aggressive`, and out-of-band checks are explicit opt-ins, and
+OOB is self-hosted only. Gash is **not** a drop-in replacement for Nuclei, OWASP
+ZAP, or Burp Suite; it competes on verification discipline, not library size.
+
 ## Why Gash
 
 - **Engine-owned oracles decide.** Every plugin compiles to the same
@@ -57,7 +77,7 @@ permission to test (`--scope` opts into a strict allowlist; see Legal).
 
 | Area | Current state |
 |---|---|
-| Reference catalog | 308 plugins: 275 Tier 1 YAML, 32 sandboxed JavaScript, and 1 Tier 3 native PoC |
+| Reference catalog | 328 plugins: 275 Tier 1 YAML, 52 sandboxed JavaScript, and 1 Tier 3 native PoC |
 | Evidence model | Candidate -> oracle -> evidence -> finding; browser execution is required for browser-confirmed XSS |
 | Scan engine | Shared retry, redirect, scope, rate, request-budget, response-size, cancellation, and scan-deadline controls |
 | Discovery | BFS crawl, surface extraction, OpenAPI input, content discovery, passive JavaScript recon, SPA state/build scans, and optional browser crawl |
@@ -73,8 +93,8 @@ or comparison numbers.
 
 ## What's New / Highlights
 
-- **308 detectors** — verify with `go run ./cmd/gash plugins list`
-  (275 Tier 1 YAML, 32 sandboxed JS, 1 Tier 3 native PoC;
+- **328 detectors** — verify with `go run ./cmd/gash plugins list`
+  (275 Tier 1 YAML, 52 sandboxed JS, 1 Tier 3 native PoC;
   see Detector Summary below).
 - **Framework-specific detectors (GASH-069..072)** — Next.js middleware
   authorization bypass (CVE-2025-29927) via a control-vs-bypass differential,
@@ -180,7 +200,7 @@ must be re-measured before being quoted as the current result; see
 
 ## How It Differs
 
-Honest comparison — Gash is experimental (`v0.1.0-dev`, 283 reference
+Honest comparison — Gash is experimental (`v0.1.0-dev`, 328 reference
 plugins) and competes on verification discipline, not on maturity or library
 size. A same-target Gash-versus-Nuclei measurement now exists on the native
 lab and fixture lab; it is small and lab-scoped, not a general parity claim.
@@ -312,8 +332,8 @@ oracle:
 
 ## Detector Summary
 
-308 detectors via `go run ./cmd/gash plugins list`
-(275 Tier 1 YAML, 32 Tier 2 sandboxed JS, 1 Tier 3 native PoC).
+328 detectors via `go run ./cmd/gash plugins list`
+(275 Tier 1 YAML, 52 Tier 2 sandboxed JS, 1 Tier 3 native PoC).
 Full oracle/plugin catalog: `docs/detector-inventory.md`.
 
 | Class | Count | Examples |
@@ -338,7 +358,7 @@ Full oracle/plugin catalog: `docs/detector-inventory.md`.
 | Injection (JNDI, expression language, SSI, JSONP, prototype pollution) | 5 | `log4shell-jndi`, `expression-language-injection`, `ssi-injection`, `jsonp-callback-injection`, `prototype-pollution-differential` |
 | Framework-specific (Next.js middleware bypass, image optimizer SSRF) | 2 | `nextjs-middleware-bypass`, `nextjs-image-optimizer-ssrf` |
 | Native PoC (Tier 3, explicit trust) | 1 | `poc-native-header-check` |
-| **Total** | **308** | `go run ./cmd/gash plugins list` |
+| **Total** | **328** | `go run ./cmd/gash plugins list` |
 
 Engine-recon probes ship outside the plugin set: request smuggling
 (GASH-033, `internal/smuggle`), content discovery (GASH-028,
@@ -381,6 +401,10 @@ match. Counts above are plugin inventory, not real-target recall.
 | [docs/metrics/README.md](docs/metrics/README.md) | Precision and recall index |
 | [templates/README.md](templates/README.md) | Copy-rename starters |
 | [plugins/README.md](plugins/README.md) | Reference plugin index |
+| [llms.txt](llms.txt) | Curated project map for LLMs and agents |
+| [llms-full.txt](llms-full.txt) | Single-fetch full digest for LLMs and agents |
+| [AGENTS.md](AGENTS.md) | Repository layout, commands, and gates for coding agents |
+| [CITATION.cff](CITATION.cff) | Citation metadata |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 
 ## Metrics

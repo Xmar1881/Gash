@@ -1,0 +1,1 @@
+{"body": "{\"error\":\"invalid credentials\"}", "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "escaped field never reaches the directory as a filter", "oob_callback": false, "oob_correlation_id": "c_ldap_02", "oob_namespace": "scan_js", "status": 200, "target": "http://example.com/api/login"}

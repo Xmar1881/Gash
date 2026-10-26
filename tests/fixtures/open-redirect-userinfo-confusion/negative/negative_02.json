@@ -1,0 +1,1 @@
+{"body": "<html>redirecting</html>", "control_body": "<html>home</html>", "control_status": 200, "expected_verdict": "reject", "headers": {"Location": "https://app.example.com/dashboard"}, "name": "allowlist redirects to its own host, never to the payload host", "payload_host": "gash-canary.example", "status": 302, "target": "http://example.com/go?next=https%3A%2F%2Fevil"}

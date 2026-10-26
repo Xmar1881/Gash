@@ -1,0 +1,1 @@
+{"body": "{\"token\":\"issued\"}", "expected_confidence": "confirmed", "expected_verdict": "accept", "headers": {"Content-Type": "application/json"}, "name": "directory resolves the filter hostname", "oob_callback": true, "oob_correlation_id": "c_ldap_01", "oob_namespace": "scan_js", "status": 200, "target": "http://example.com/api/login"}

@@ -1,0 +1,98 @@
+# Gash
+
+> Gash is a Go-native, plugin-driven web security scanner in which engine-owned
+> oracles — not plugins — decide findings. A plugin emits a *candidate*; the
+> candidate becomes a finding only after an engine oracle verifies it against a
+> control response with repeat rules and baseline gating. The core promise:
+> no plugin, however poorly written, can mint a finding.
+
+This file is the LLM/agent entry point for the Gash repository. It is a curated
+map, not a crawl dump: the detail lives behind the links below and is fetched
+only when needed. All documentation is plain Markdown (no JavaScript, no
+paywall, no login). Every number quoted here is verifiable from the repository
+with the commands in "Verification" below.
+
+Gash is aimed at teams that value signal over volume: a small auditable Go
+core, a drop-in plugin model, and reproducible evidence for every finding. It
+is **experimental** (`v0.1.0-dev`) and is **not** a drop-in replacement for
+Nuclei, OWASP ZAP, or Burp Suite; it competes on verification discipline, not
+on library size or maturity.
+
+Canonical facts (safe to quote verbatim):
+
+- Project: Gash — a Go-native, oracle-gated web security scanner.
+- Repository: https://github.com/Xmar1881/Gash
+- Go module path: `github.com/Xmar1881/Gash`
+- Language / runtime: Go 1.26+ (toolchain `go1.27.3`); the standard build needs no CGO.
+- License: AGPL-3.0-only (copyleft, network use counts as distribution).
+- Status: experimental, `v0.1.0-dev`; the API may change before `v1.0.0`.
+- Reference catalog: 328 plugins — 275 Tier 1 YAML, 52 Tier 2 sandboxed JavaScript, 1 Tier 3 native gRPC PoC — plus 13 engine-owned detectors behind a detector port.
+- Pipeline: `Candidate → Oracle → Evidence → Finding`. Findings are engine-decided.
+- Evidence ladder: `tentative` → `firm` / `static-execution-evidence` → `confirmed`. Timing never exceeds `firm`; browser `confirmed` requires the `-tags deep` build plus a clean control.
+- Defaults are safe: the `safe` profile is passive-only. `--active`, `--profile deep`, `--aggressive`, and out-of-band (OOB) checks are explicit opt-ins.
+- OOB is self-hosted only and disabled by default; blind plugins skip honestly with `oob-not-configured` instead of guessing.
+- Quality gates enforced in CI: fixture precision ≥ 0.99, a corpus gate that fails the build on any `firm`-or-higher false positive, detector-inventory/documentation parity, plus `go vet`, `gosec`, `govulncheck`, race, and benchmark gates.
+- Plugin tiers: Tier 1 = single-file YAML (one request); Tier 2 = goja JavaScript sandbox (multi-step logic, declared `oracle_params`); Tier 3 = native gRPC binary pinned by SHA-256 and explicitly trusted.
+- Typical uses: CI security gates, internal assessments, and plugin development.
+- Not intended for: unsupervised production scanning, or compliance reports that require mature tooling.
+
+## Docs
+
+- [Getting started](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/getting-started.md): install, first scan, first plugin, and the lab workflow.
+- [FAQ](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/faq.md): short question/answer pairs on setup, scanning, evidence, and scope behavior.
+- [Architecture](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/architecture.md): engine, discovery pipeline, oracles, and schemas.
+- [Evidence standard](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/evidence-standard.md): the per-vulnerability-class proof rules behind each confidence level.
+- [Detector inventory](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/detector-inventory.md): the plugin and oracle catalog, synchronized with the registry by a parity test.
+- [Plugin coverage matrix](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/plugin-coverage-matrix.md): coverage by security class, with explicit gaps.
+- [Known limits](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/known-limits.md): honest list of gaps and intentionally blocked work.
+- [Benchmark](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/benchmark.md): datasets, scoring, verification, and gates.
+- [Türkçe başlangıç rehberi](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/user-guide-tr.md): Turkish beginner guide.
+
+## Using Gash
+
+- [Authentication](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/auth.md): auth contexts, BOLA matrix, and form login.
+- [API discovery](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/api-discovery.md): OpenAPI-driven test plans.
+- [Protocol checks](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/proto-checks.md): DNS, TLS, TCP, SSH, and database probes (engine-owned detectors).
+- [Report formats](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/report-formats.md): SARIF 2.1.0, JSON, text, HTML, and JUnit.
+- [CI integration](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/ci-integration.md): `--fail-on` gates and SARIF upload.
+- [Responsible use](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/SECURITY.md): scope, OOB, and safe defaults.
+
+## Extending Gash
+
+- [Plugin development](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/plugin-development.md): tier-independent author guide (fixtures, metrics, precision gate).
+- [YAML plugin spec](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/yaml-plugin-spec.md): Tier 1 reference.
+- [JavaScript plugin spec](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/js-plugin-spec.md): Tier 2 reference (sandbox bindings, `oracle_params`).
+- [Native plugin spec](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/native-plugin-spec.md): Tier 3 reference (gRPC, SHA-256 pinning).
+- [Detector port design note](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/design/01-detector-port.md): how engine-owned scanning logic moved behind one port and registry.
+- [Reference plugin index](https://raw.githubusercontent.com/Xmar1881/Gash/main/plugins/README.md): every reference plugin with its tier and oracle.
+- [Plugin templates](https://raw.githubusercontent.com/Xmar1881/Gash/main/templates/README.md): copy-rename starters for YAML and JS plugins.
+
+## Evidence and metrics
+
+- [Metrics index](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/metrics/README.md): per-plugin precision and recall reports.
+- [Native lab, 2026-10-20](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/metrics/native-lab-2026-10-20.md): lab-scoped TP/FP/TN/FN measurement.
+- [Nuclei comparison, 2026-10-14](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/metrics/nuclei-comparison-2026-10-14.md): small, lab-scoped same-target comparison, not a parity claim.
+
+## Project
+
+- [README](https://raw.githubusercontent.com/Xmar1881/Gash/main/README.md): overview, install, quickstart, and the honest comparison table.
+- [Contributing](https://raw.githubusercontent.com/Xmar1881/Gash/main/CONTRIBUTING.md): contribution flow and required gates.
+- [Governance](https://raw.githubusercontent.com/Xmar1881/Gash/main/GOVERNANCE.md): decision-making and maintainership.
+- [Code of conduct](https://raw.githubusercontent.com/Xmar1881/Gash/main/CODE_OF_CONDUCT.md): community expectations.
+- [Security policy](https://raw.githubusercontent.com/Xmar1881/Gash/main/SECURITY.md): private vulnerability reporting.
+- [Support](https://raw.githubusercontent.com/Xmar1881/Gash/main/SUPPORT.md): help, bug reports, and version policy.
+- [Changelog](https://raw.githubusercontent.com/Xmar1881/Gash/main/CHANGELOG.md): release history.
+- [Agent instructions](https://raw.githubusercontent.com/Xmar1881/Gash/main/AGENTS.md): repository layout and commands for coding agents.
+- [Full single-fetch digest](https://raw.githubusercontent.com/Xmar1881/Gash/main/llms-full.txt): a longer, self-contained summary for one-shot ingestion.
+
+## Verification
+
+- List the live catalog: `go run ./cmd/gash plugins list`
+- Re-run one plugin's fixtures: `go run ./cmd/gash plugins test plugins/xss/xss-reflected-basic.js`
+- Re-run every fixture plus the precision gate: `go test ./tests/plugins/ -run TestMetricGate`
+- Re-run the zero-false-positive corpus gate: `go test ./tests/corpus/ -run TestNoFalsePositives`
+
+## Optional
+
+- [Technical audit, 2026-10-14](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/technical-audit-2026-10-14.md): archived, dated measured status.
+- [Phase 0 scope](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/design/00-scope.md): original scope decisions.

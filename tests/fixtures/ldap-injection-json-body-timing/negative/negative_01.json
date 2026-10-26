@@ -1,0 +1,1 @@
+{"body": "{\"error\":\"invalid credentials\"}", "control_body": "{\"error\":\"invalid credentials\"}", "control_samples": [120, 130, 125], "delay_samples": [118, 132, 127], "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "uniform latency across filter and baseline", "status": 200, "target": "http://example.com/api/login"}

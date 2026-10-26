@@ -15,6 +15,7 @@ import (
 
 	"github.com/Xmar1881/Gash/internal/plugin"
 	"github.com/Xmar1881/Gash/internal/plugin/loader"
+	"github.com/Xmar1881/Gash/internal/recon"
 )
 
 // TestScanJSReconEndToEnd kanıt zinciri (tek uçtan uca yol):
@@ -89,7 +90,7 @@ func TestScanJSReconEndToEnd(t *testing.T) {
 	// GASH-067: tam olarak 1, maskeli, static-execution-evidence.
 	var secretFindings []int
 	for i, f := range rep.Findings {
-		if f.RuleID == RuleIDJSSecret {
+		if f.RuleID == recon.RuleIDJSSecret {
 			secretFindings = append(secretFindings, i)
 		}
 	}
@@ -97,8 +98,8 @@ func TestScanJSReconEndToEnd(t *testing.T) {
 		t.Fatalf("tam 1 GASH-067 beklenir, gelen %d (findings=%d)", len(secretFindings), len(rep.Findings))
 	}
 	f := rep.Findings[secretFindings[0]]
-	if f.CWE != CWEJSSecret {
-		t.Errorf("CWE %q, beklenen %q", f.CWE, CWEJSSecret)
+	if f.CWE != recon.CWEJSSecret {
+		t.Errorf("CWE %q, beklenen %q", f.CWE, recon.CWEJSSecret)
 	}
 	if f.Confidence != plugin.ConfidenceStaticExecution {
 		t.Errorf("confidence %q, beklenen %q", f.Confidence, plugin.ConfidenceStaticExecution)

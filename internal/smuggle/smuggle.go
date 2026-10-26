@@ -91,7 +91,16 @@ const (
 )
 
 // ProbeKinds deneme sırasındaki türlerdir.
-func ProbeKinds() []string { return []string{KindCLTE, KindTECL, KindTETE} }
+// What: Table order (cases.yaml), never a hardcoded literal list.
+// Why: The probe axes are data; the code must not be able to drift from the
+// embedded table the golden-byte test validates.
+func ProbeKinds() []string {
+	kinds := make([]string, 0, len(declaredCases))
+	for _, c := range declaredCases {
+		kinds = append(kinds, c.Kind)
+	}
+	return kinds
+}
 
 // AllowHost kapsam kararıdır (host → izinli mi). Nil = --scope verilmemiş
 // (open mod, blok yok; operatör sorumluluğu).
@@ -280,30 +289,23 @@ func followup(dt dialTarget) string {
 
 // ambiguousFirst muğlak istektir (CL + chunked bir arada, gövde ZARARSIZ
 // sonlandırıcıdan ibaret; gömülü zehirli istek YOK).
+// What: Framing comes from the embedded case table (cases.yaml).
+// Why: A new desynchronization axis is a data edit; this builder keeps the
+// wire format in one place so the golden-byte test can pin it.
 func ambiguousFirst(dt dialTarget, kind string) string {
 	h := hostHeader(dt)
+	c := caseFor(kind)
 	var b strings.Builder
 	b.WriteString("POST " + dt.path + " HTTP/1.1\r\n")
 	b.WriteString("Host: " + h + "\r\n")
 	b.WriteString("Content-Type: application/x-www-form-urlencoded\r\n")
-	switch kind {
-	case KindCLTE:
-		b.WriteString("Content-Length: 4\r\nTransfer-Encoding: chunked\r\n")
-	case KindTECL:
-		b.WriteString("Content-Length: 6\r\nTransfer-Encoding: chunked\r\n")
-	case KindTETE:
-		b.WriteString("Content-Length: 5\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n")
-	default:
-		b.WriteString("Content-Length: 4\r\nTransfer-Encoding: chunked\r\n")
+	b.WriteString("Content-Length: " + strconv.Itoa(c.ContentLength) + "\r\n")
+	for _, te := range c.TransferEncoding {
+		b.WriteString("Transfer-Encoding: " + te + "\r\n")
 	}
 	b.WriteString("Connection: keep-alive\r\n")
 	b.WriteString("User-Agent: gash-smuggle-probe/1.0\r\n\r\n")
-	switch kind {
-	case KindTECL:
-		b.WriteString("0\r\n\r\nX")
-	default:
-		b.WriteString("0\r\n\r\n")
-	}
+	b.WriteString(c.Body)
 	return b.String()
 }
 

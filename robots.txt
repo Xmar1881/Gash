@@ -1,0 +1,94 @@
+# robots.txt — AI-friendly (GEO/AEO)
+#
+# Scope note: this file governs a domain that serves it. It does NOT change how
+# github.com crawls this repository, because github.com serves its own
+# robots.txt. It takes effect when the project is published at a domain you
+# control — for example GitHub Pages (https://xmar1881.github.io/Gash/), a
+# custom domain, or any static mirror of this content.
+#
+# Purpose: allow every major AI retrieval and training crawler so that answer
+# engines (ChatGPT Search, Claude, Google AI Overviews/Gemini, Perplexity, Bing
+# Copilot, Apple Intelligence, Meta AI, Mistral, DuckDuckGo) can read, quote and
+# cite Gash documentation.
+#
+# Curated, LLM-optimised entry points live at:
+#   /llms.txt        — short, curated map (recommended start)
+#   /llms-full.txt   — single-fetch full digest
+#   /AGENTS.md       — repository layout and commands for coding agents
+
+# Default rules for unnamed crawlers
+User-agent: *
+Allow: /
+
+# OpenAI
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+# Anthropic (Claude)
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-Web
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+# Google (Search, AI Overviews, Gemini)
+User-agent: Googlebot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: GoogleOther
+Allow: /
+
+# Perplexity
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+# Microsoft / Bing Copilot
+User-agent: Bingbot
+Allow: /
+
+# Apple Intelligence
+User-agent: Applebot
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+# Meta AI
+User-agent: FacebookBot
+Allow: /
+
+User-agent: Meta-ExternalAgent
+Allow: /
+
+# DuckDuckGo
+User-agent: DuckAssistBot
+Allow: /
+
+# Mistral
+User-agent: MistralAI-User
+Allow: /
+
+# Common Crawl (feeds many open LLM training datasets)
+User-agent: CCBot
+Allow: /
+
+# Uncomment and set once the project is published at a stable public domain:
+# Sitemap: https://example.com/sitemap.xml

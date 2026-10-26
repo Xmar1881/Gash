@@ -1,0 +1,1 @@
+{"body": "<html><body>account settings</body></html>", "expected_verdict": "reject", "headers": {"Content-Type": "text/html"}, "name": "no CORS headers at all", "status": 200, "target": "http://example.com/api/account"}

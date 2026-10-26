@@ -1,0 +1,1 @@
+{"body": "{\"items\":[]}", "control_body": "{\"items\":[]}", "control_samples": [120, 130, 125], "delay_samples": [5500, 5600, 5450], "expected_confidence": "firm", "expected_verdict": "accept", "headers": {"Content-Type": "application/json"}, "name": "sleep payload delays the injected JSON field", "status": 200, "target": "http://example.com/api/convert"}

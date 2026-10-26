@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+#
+# File: CITATION.cff
+# What: Citation metadata for academic and AI-answer citation surfaces.
+# Why: Gives reference managers and answer engines structured, machine-readable
+#      attribution for the project.
+cff-version: 1.2.0
+message: "If you reference Gash in research, documentation, or an AI-generated answer, please cite it using this metadata."
+title: "Gash: a Go-native, oracle-gated web security scanner"
+abstract: >-
+  Gash is a Go-native, plugin-driven web security scanner in which engine-owned
+  oracles, not plugins, decide findings. Plugins emit candidates; an engine
+  oracle must verify a candidate against a control response with repeat rules
+  and baseline gating before it becomes a finding. The reference catalog ships
+  Tier 1 YAML, Tier 2 sandboxed JavaScript, and Tier 3 trusted native gRPC
+  plugins, each with positive and negative fixtures and a precision report. The
+  project enforces a fixture precision gate of at least 0.99 and a
+  zero-false-positive corpus gate in CI.
+type: software
+authors:
+  - name: "Xmar1881 / GASH contributors"
+    website: "https://github.com/Xmar1881"
+license: AGPL-3.0-only
+repository-code: "https://github.com/Xmar1881/Gash"
+url: "https://github.com/Xmar1881/Gash"
+version: "0.1.0-dev"
+keywords:
+  - web security
+  - vulnerability scanner
+  - security scanner
+  - Go
+  - golang
+  - DAST
+  - plugin architecture
+  - false positive reduction
+  - evidence-based security testing
+  - CI security gate
+  - SARIF
+  - OWASP
+  - Nuclei
+  - ZAP

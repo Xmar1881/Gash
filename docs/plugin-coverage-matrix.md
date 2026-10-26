@@ -23,6 +23,8 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `dom-sink-basic` | JS | execution | probe | true | false | firm (confirmed with deep+browser) | none | ✓ | Complete | Static sink/source analysis; headless for confirmed |
 | `xss-reflected-json-body` | JS | reflection | probe | false | true | static-execution-evidence | none | ✓ | Complete | Per-field JSON body injection with `application/json`; executing pattern echoed into HTML |
 | `xss-stored-json-api` | JS | stored | probe | false | true | static-execution-evidence | none | ✓ | Complete | JSON write plus render flow; sibling render page is the clean control |
+| `xss-reflected-url-context` | JS | reflection | probe | false | true | static-execution-evidence | none | ✓ | Complete | `javascript:`-scheme payload into a URL sink (`href`/`src`); `contexts: [url-executable]` + clean control, lowercase and mixed-case |
+| `xss-stored-header-two-step` | JS | stored | probe | false | true | static-execution-evidence | none | ✓ | Complete | Header-borne write (`Referer`) plus re-read render; a sibling page that never saw the payload is the clean control |
 
 **Gaps:**
 - No DOM XSS plugin for fragment/hash routes without deep build (engine-owned `browserExecution` oracle exists but no Tier 1/2 plugin)
@@ -48,11 +50,12 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `sqli-json-body-error` | JS | error | probe | false | true | confirmed | none | ✓ | Complete | Per-field JSON body injection with explicit `application/json`; neutral-value control per payload |
 | `sqli-json-body-differential` | JS | differential | probe | false | true | confirmed | none | ✓ | Complete | JSON body true/false closures into the discovered field; echo guard + 3/3 stability |
 | `sqli-json-body-timing` | JS | timing | probe | false | true | firm | none | ✓ | Complete | JSON body delay payloads measured against a neutral baseline; timing ceiling stays firm |
+| `sqli-oob-second-order` | JS | oob | probe | false | true | confirmed | required | ✓ | Complete | Write plus neutral re-read at the same point with a callback-only closure (no output, no delay) |
 
 **Gaps:**
 - **PostgreSQL blind SQLi OOB**: No callback-only primitive short of `COPY ... TO PROGRAM` / `dblink` (documented in known-limits.md)
 - No time-based blind with alternative payloads (e.g., heavy queries)
-- Second-order SQLi is covered in-band (`sqli-second-order`) and blind (`sqli-second-order-timing`) only for a neutral re-read of the same point; a separate downstream render endpoint is not discovered
+- Second-order SQLi is covered in-band (`sqli-second-order`), blind with timing (`sqli-second-order-timing`) and blind with a callback (`sqli-oob-second-order`) only for a neutral re-read of the same point; a separate downstream render endpoint is not discovered
 - JSON body injection sends only the discovered field; sibling fields are not replayed, and nested JSON paths are not expanded
 - No NoSQL injection coverage beyond auth bypass (see section 5)
 
@@ -65,9 +68,12 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `command-injection-error` | YAML | error | probe | false | true | confirmed | none | ✓ | Complete | Command output reflection + differential (calculation) |
 | `command-injection-timing` | YAML | timing | probe | false | true | firm | optional | ✓ | Complete | Sleep-based timing with statistical test |
 | `command-injection-json-body-oob` | JS | oob | probe | false | true | confirmed | required | ✓ | Complete | Per-field JSON body shell payloads; unique token per variant, no timing fallback |
+| `command-injection-json-body-timing` | JS | timing | probe | false | true | firm | none | ✓ | Complete | JSON field sleep payloads (five separator variants) against a neutral baseline; timing ceiling stays firm |
+| `command-injection-json-body-error` | JS | error | probe | false | true | firm | none | ✓ | Complete | Inert shell fragments (six) provoke the interpreter's own syntax error in-band, absent for the neutral value; `mode: generic_error`, firm ceiling |
+| `log4shell-json-body-oob` | JS | oob | probe | false | true | confirmed | required | ✓ | Complete | Five JNDI lookup forms (`ldap`/`rmi`/`dns` plus `${lower:}` nesting) in a JSON field; one shared token window, honest skip without a server |
 
 **Gaps:**
-- OOB command injection exists for query points (`command-injection-oob`) and now JSON body fields (`command-injection-json-body-oob`)
+- OOB command injection exists for query points (`command-injection-oob`) and JSON body fields (`command-injection-json-body-oob`); JSON body fields on segments without egress are covered by `command-injection-json-body-timing` (delay) and `command-injection-json-body-error` (in-band interpreter error), and logged JSON fields by `log4shell-json-body-oob`
 - No command injection via template engines (covered by SSTI)
 - No Windows-specific command injection vectors (the JSON corpus uses unix separators only)
 
@@ -116,10 +122,12 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `ldap-injection-differential` | YAML | differential | probe | false | true | confirmed | none | ✓ | Complete | Boolean differential LDAP injection |
 | `ldap-injection-blind` | YAML | timing/oob | probe | false | true | firm/confirmed | optional | ✓ | Partial | Blind LDAP with timing/OOB |
 | `ldap-injection-json-body` | JS | differential | probe | false | true | confirmed | none | ✓ | Complete | Always-true filter closure vs non-matching value in a JSON field; echo guard + 3/3 stability |
+| `ldap-injection-oob-json-body` | JS | oob | probe | false | true | confirmed | required | ✓ | Complete | Filter closure carrying the operator hostname in a JSON field; callback only, no attribute read back |
+| `ldap-injection-json-body-timing` | JS | timing | probe | false | true | firm | none | ✓ | Complete | Wide filter closures in a JSON field vs a neutral baseline; `min_delay_ms: 5000`, three repeats, firm ceiling |
 
 **Gaps:**
-- **No LDAP injection with OOB exfiltration** (blind LDAP with DNS callback)
-- **No LDAP injection via filter manipulation beyond boolean**
+- LDAP injection with OOB exfiltration is covered for query points (Tier 1 `ldap-injection-oob`) and for JSON body fields (`ldap-injection-oob-json-body`); a directory that refuses outbound resolution yields a false negative
+- **No LDAP injection via filter manipulation beyond boolean and closure**
 
 ---
 
@@ -132,6 +140,7 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `xxe-blind-oob` | YAML | oob | probe | false | true | confirmed | required | ✓ | Complete | Alternative blind XXE OOB plugin |
 | `xml-external-entity-blind` | YAML | oob | probe | false | true | confirmed | required | ✓ | Partial | Duplicate of xxe-oob/xxe-blind-oob? |
 | `xxe-json-body-oob` | JS | oob | probe | false | true | confirmed | required | ✓ | Complete | XML carried in a JSON field; external parameter entity callback (single-quoted SYSTEM literal) |
+| `xxe-json-body-error` | JS | error | probe | false | true | firm | none | ✓ | Complete | XML with an unresolvable external entity carried in a JSON field; parser failure absent for the neutral document, `mode: generic_error`, firm ceiling |
 
 **Gaps:**
 - **Duplicate plugins**: `xxe-oob`, `xxe-blind-oob`, `xml-external-entity-blind` appear to overlap
@@ -147,9 +156,10 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `template-injection-reflection` | YAML | reflection | probe | false | true | confirmed | none | ✓ | Complete | Arithmetic proof (1337*1337=1787569) via reflection |
 | `expression-language-injection` | YAML | reflection | probe | false | true | firm | none | ✓ | Complete | EL injection with arithmetic canary |
 | `ssti-blind-timing` | YAML | timing | probe | false | true | firm | optional | ✓ | Partial | Blind SSTI with sleep timing |
+| `ssti-json-body-oob` | JS | oob | probe | false | true | confirmed | required | ✓ | Complete | Engine-specific payloads carried in a JSON field; callback only |
 
 **Gaps:**
-- **No blind SSTI with OOB exfiltration** (template function DNS callback)
+- Blind SSTI with OOB exfiltration is covered for query points (Tier 1 `ssti-blind-oob`) and for JSON body fields (`ssti-json-body-oob`)
 - **No SSTI via specific template engines** (Jinja2, Twig, Freemarker, Velocity, Thymeleaf specific payloads)
 - **No SSTI in non-HTML contexts** (email templates, PDF generation, etc.)
 
@@ -179,6 +189,7 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `open-redirect-param` | YAML | redirect | probe | true | false | confirmed | none | ✓ | Complete | Location parse + host compare + DNS double-check |
 | `oauth-open-redirect` | YAML | redirect | probe | true | false | confirmed | none | ✓ | Complete | OAuth authorize paths with redirect_uri params |
 | `open-redirect-json-body` | JS | redirect | probe | false | true | confirmed | none | ✓ | Complete | Per-field JSON body injection; neutral-value control gate before the oracle |
+| `open-redirect-userinfo-confusion` | JS | redirect | probe | false | true | confirmed | none | ✓ | Complete | Four parser-confusion variants per point (protocol-relative, userinfo, suffix, fragment); per-run canary payload host |
 
 **Gaps:**
 - **No open redirect via JavaScript** (DOM-based `location.href`, `window.open`)
@@ -194,9 +205,10 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `cors-misconfig` | YAML | cors | probe | true | false | confirmed | none | ✓ | Complete | ACAO wildcard/reflection + credentials |
 | `insecure-cors-preflight` | YAML | cors | probe | true | false | confirmed | none | ✓ | Complete | Preflight-specific CORS checks |
 | `insecure-cors-reflected-origin` | JS | cors | probe | false | true | confirmed | none | ✓ | Complete | Sends a canary `Origin` header; echo plus credentials confirms, echo without credentials firms |
+| `cors-null-origin-trust` | JS | cors | probe | false | true | confirmed | none | ✓ | Complete | Sends the literal `null` Origin; echo plus credentials confirms, echo without credentials firms |
 
 **Gaps:**
-- **No CORS with null origin** exploitation
+- The null origin is covered by `cors-null-origin-trust` (a sandboxed iframe or `data:` origin)
 - Origin reflection is covered by `insecure-cors-reflected-origin`; arbitrary subdomain enumeration is not
 - **No CORS with preflight cache poisoning**
 
@@ -225,6 +237,8 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 |-----------|------|--------|-------|------|--------|-------------------|-----|----------|--------|-------|
 | `idor-differential` | YAML | differential | probe | true | true | confirmed | none | ✓ | Complete | IDOR via differential response analysis (3/3) |
 | `mass-assignment-basic` | YAML | differential | probe | false | true | firm | none | ✓ | Complete | Extra-field binding, non-escalating values |
+| `mass-assignment-nested-json` | JS | differential | probe | false | true | firm | none | ✓ | Complete | Privileged nested object vs a non-binding role in a JSON field; ceiling stays firm |
+| `idor-sequential-id-matrix` | JS | differential | probe | false | true | confirmed | none | ✓ | Complete | Own/neighbour/missing identifier matrix over three repeats; authenticated session required |
 | `jwt-token-exposure` | YAML | header | probe | true | false | confirmed | none | ✓ | Complete | JWT in headers/cookies |
 | `jwt-alg-confusion` | YAML | header | probe | true | false | confirmed | none | ✓ | Complete | JWT algorithm confusion (none, HS256/RS256 switch) |
 | `jwt-none-alg-confusion` | YAML | header | probe | true | false | confirmed | none | ✓ | Partial | Duplicate of jwt-alg-confusion? |
@@ -232,7 +246,7 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `nextjs-middleware-bypass` | YAML | middleware-bypass | probe | false | true | firm | none | ✓ | Complete | CVE-2025-29927 middleware bypass |
 
 **Gaps:**
-- **BOLA (Broken Object Level Authorization)** beyond IDOR: No role-based access control testing, no horizontal/vertical privilege escalation flows
+- **BOLA (Broken Object Level Authorization)** beyond IDOR: `idor-sequential-id-matrix` probes the horizontal, sequential-identifier case with an authenticated session; role-based (vertical) escalation and API authorization matrices remain uncovered
 - **No API authorization matrix testing** (different roles accessing different endpoints)
 - **No broken function level authorization** (admin endpoints accessible to users)
 - **No authentication bypass via password reset / 2FA / OAuth flows**; JWT `alg:none` acceptance now has an active proof (`jwt-none-alg-bypass`)
@@ -249,6 +263,7 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `xpath-injection-json-body` | JS | error | probe | false | true | firm | none | ✓ | Complete | Per-field JSON body syntax probes with `mode: xpath` from `oracle_params`; parser signatures, firm ceiling |
 | `ssi-injection` | YAML | error | probe | false | true | firm | none | ✓ | Complete | SSI printenv two-marker pair |
 | `prototype-pollution-differential` | YAML | differential | probe | false | true | confirmed | none | ✓ | Complete | Prototype pollution via differential |
+| `prototype-pollution-json-body` | JS | differential | probe | false | true | confirmed | none | ✓ | Complete | Nested `__proto__` member sent as a JSON field value vs a plain object over three repeats; echo guard + 3/3 stability |
 | `jsonp-callback-injection` | YAML | reflection | probe | false | true | firm | none | ✓ | Complete | JSONP callback reflection |
 | `crlf-header-injection` | YAML | header | probe | true | false | confirmed | none | ✓ | Complete | CRLF in response/request headers |
 | `http-response-splitting` | YAML | header/reflection | probe | true | false | confirmed | none | ✓ | Complete | HTTP response splitting via CRLF |
@@ -294,12 +309,13 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 |-----------|------|--------|-------|------|--------|-------------------|-----|----------|--------|-------|
 | `file-upload-unrestricted` | YAML | error | probe | false | true | confirmed | none | ✓ | Complete | Unrestricted file upload with error disclosure |
 | `file-upload-served` | JS | upload-served | probe | false | true | confirmed | none | ✓ | Complete | Mismatched-type artifact uploaded, then fetched back; active serve-back type confirms, inert firms |
+| `file-upload-filename-traversal` | JS | upload-served | probe | false | true | confirmed | none | ✓ | Complete | Traversal filename (`../../<canary>.html`) uploaded, artifact located outside the upload directory and fetched back |
+| `file-upload-sniffing-mismatch` | JS | upload-served | probe | false | true | confirmed | none | ✓ | Complete | Inert `.txt` name and `application/octet-stream` declaration with active bytes; served content type confirms (active) or firms (inert), sibling name is the control |
 
 **Gaps:**
-- File upload validation bypass is covered by `file-upload-served` (serve-back content type only)
+- File upload validation bypass is covered by `file-upload-served` (serve-back content type only); filename traversal is covered by `file-upload-filename-traversal`
 - **No file upload via archive (zip slip)**
 - **No file upload RCE via polyglot files**
-- **No file upload path traversal in filename**
 
 ---
 
@@ -351,11 +367,12 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `graphql-endpoint-discovery` | YAML | version | discovery | true | false | confirmed | none | ✓ | Complete | GraphQL endpoint detection |
 | `graphql-introspection-enabled` | YAML | version | probe | false | true | firm | none | ✓ | Complete | Introspection query without errors envelope |
 | `graphql-batch-abuse` | JS | differential | probe | false | true | firm | none | ✓ | Complete | Batched operation array accepted in one request; `confidence_ceiling: firm` from `oracle_params` |
+| `graphql-alias-amplification` | JS | differential | probe | false | true | firm | none | ✓ | Complete | One operation with 25 aliases vs the single-field document; `confidence_ceiling: firm` from `oracle_params` |
 
 **Gaps:**
 - **No GraphQL query depth/complexity DoS**
 - **No GraphQL field suggestion / introspection abuse**
-- Batch abuse is covered by `graphql-batch-abuse` (acceptance only; amplification impact is not measured)
+- Batch abuse is covered by `graphql-batch-abuse` and alias amplification by `graphql-alias-amplification` (acceptance only; amplification impact is not measured)
 - **No GraphQL authorization bypass** (field-level permissions)
 
 ---
@@ -368,10 +385,11 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `cache-poisoning-host-header` | YAML | differential | probe | false | true | confirmed | none | ✓ | Complete | Host header cache poisoning |
 | `web-cache-unkeyed-header` | JS | differential | probe | false | true | confirmed | none | ✓ | Complete | Clean/prime/clean sequence; canary must outlive the priming request |
 | `web-cache-method-override` | JS | differential | probe | false | true | confirmed | none | ✓ | Complete | Clean/prime/clean over the unkeyed method-override header family (`X-HTTP-Method-Override`, `X-Method-Override`, `X-HTTP-Method`); GET-only |
+| `web-cache-unkeyed-cookie` | JS | differential | probe | false | true | confirmed | none | ✓ | Complete | Clean/prime/clean with an unkeyed canary cookie; the canary must outlive the priming request |
 
 **Gaps:**
 - **No cache poisoning via Vary header manipulation**
-- Unkeyed headers beyond the forwarded-host and method-override families (`X-Forwarded-Scheme`, `X-Original-URL`) are not primed yet
+- Unkeyed headers beyond the forwarded-host and method-override families (`X-Forwarded-Scheme`, `X-Original-URL`) are not primed yet; unkeyed cookies are covered by `web-cache-unkeyed-cookie`
 
 ---
 
@@ -383,6 +401,7 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `hpp-duplicate-emission` | JS | differential | probe | false | true | confirmed | none | ✓ | Complete | Native duplicate-key emission (`id=1&id=2`) |
 | `hpp-json-duplicate-keys` | JS | differential | probe | false | true | confirmed | none | ✓ | Complete | Duplicate JSON key emission with explicit `application/json`; both branches must be 2xx |
 | `hpp-multipart-duplicate-keys` | JS | differential | probe | false | true | confirmed | none | ✓ | Complete | Self-built multipart body with a duplicated field part; both branches must be 2xx |
+| `hpp-query-array-notation` | JS | differential | probe | false | true | confirmed | none | ✓ | Complete | Bracket-array notation (`id[]=`) with one vs two elements in a rebuilt query, sibling parameters preserved; control is a plain scalar |
 
 **Gaps:**
 - HPP in JSON body is covered by `hpp-json-duplicate-keys` (duplicated key, not duplicate-key rejection)
@@ -391,6 +410,15 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 ---
 
 ## 23. Infrastructure / Recon (Engine-Owned, No Plugin File)
+
+These capabilities are engine-owned on purpose: their transport or input cannot
+be expressed in YAML or the JS sandbox. Every finding producer among them
+(`engine-smuggle-recon`, `engine-content-discovery`, `engine-spa-state`,
+`engine-devbuild`, `engine-js-recon`, and the `proto-*` protocol units) runs
+behind the detector port with a declared `Spec` (rule, CWE, oracle, phase, gate,
+budget) registered in `internal/engine`, so their identity and gates are data
+instead of control flow — see `docs/design/01-detector-port.md` and the registry
+section of `docs/detector-inventory.md`.
 
 | Capability | Oracle | Phase | Notes |
 |------------|--------|-------|-------|
@@ -424,32 +452,32 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 
 | Security Class | Plugins | Complete | Partial | Gaps Identified |
 |----------------|---------|----------|---------|-----------------|
-| XSS | 7 | 6 | 1 | DOM fragment/hash, mXSS, postMessage, WebSocket |
-| SQL Injection | 9 | 8 | 1 | PostgreSQL blind OOB, time-based variants |
-| Command Injection | 3 | 3 | 0 | Windows vectors |
+| XSS | 9 | 8 | 1 | DOM fragment/hash, mXSS, postMessage, WebSocket |
+| SQL Injection | 10 | 9 | 1 | PostgreSQL blind OOB, time-based variants |
+| Command Injection | 6 | 6 | 0 | Windows vectors |
 | SSRF | 5 | 4 | 1 | PDF generation, DNS rebinding, GCP/DO metadata, redirect chains |
 | NoSQL Injection | 4 | 3 | 1 | Blind OOB, query-string bypass |
-| LDAP Injection | 3 | 2 | 1 | OOB exfiltration |
-| XXE | 5 | 4 | 1 | Duplicate plugins, SOAP/SAML |
-| SSTI | 3 | 2 | 1 | Blind OOB, engine-specific, non-HTML contexts |
+| LDAP Injection | 5 | 4 | 1 | OOB exfiltration (JSON body covered), filter manipulation |
+| XXE | 6 | 5 | 1 | Duplicate plugins, SOAP/SAML |
+| SSTI | 4 | 3 | 1 | Engine-specific, non-HTML contexts (JSON body OOB covered) |
 | Path Traversal | 4 | 4 | 0 | Blind (undetectable), archive upload, encoding bypasses |
-| Open Redirect | 3 | 3 | 0 | JS-based, header-based |
-| CORS | 3 | 3 | 0 | Null origin, preflight cache poisoning |
+| Open Redirect | 4 | 4 | 0 | JS-based, header-based |
+| CORS | 4 | 4 | 0 | Preflight cache poisoning, subdomain enumeration |
 | Cookie/Session | 3 | 3 | 0 | Cookie prefixes, session fixation, timeout, CSRF Lax bypass |
-| Auth/Authorization | 7 | 5 | 2 | BOLA/role-based, function-level, auth bypass flows, session mgmt, duplicates |
-| Other Injection | 11 | 11 | 0 | Request smuggling plugin, WebSocket |
+| Auth/Authorization | 9 | 7 | 2 | Role-based/vertical escalation, function-level, auth bypass flows, session mgmt, duplicates |
+| Other Injection | 12 | 12 | 0 | Request smuggling plugin, WebSocket |
 | Info Disclosure | 11 | 11 | 0 | Debug endpoints, sensitive files, API docs, cloud creds |
-| File Upload | 2 | 2 | 0 | zip slip, polyglot, filename traversal |
+| File Upload | 4 | 4 | 0 | zip slip, polyglot |
 | Deserialization | 2 | 1 | 1 | OOB gadget chains, .NET, Java ysoserial, PHP |
 | Subdomain Takeover | 1 | 1 | 0 | DNS CNAME verification, cloud-specific |
 | Rate Limiting | 1 | 1 | 0 | Bypass testing, API enumeration, DoS |
-| GraphQL | 3 | 3 | 0 | Depth/complexity DoS, field suggestions, auth bypass |
-| Cache Poisoning | 4 | 4 | 0 | Vary header, further unkeyed headers |
-| HPP | 4 | 4 | 0 | — |
+| GraphQL | 4 | 4 | 0 | Depth/complexity DoS, field suggestions, auth bypass |
+| Cache Poisoning | 5 | 5 | 0 | Vary header, further unkeyed headers |
+| HPP | 5 | 5 | 0 | — |
 | Infrastructure | N/A | N/A | N/A | Engine-owned, no plugins needed |
 
-**Total Plugins**: ~75 (excluding engine-owned recon)
-**Complete**: ~60
+**Total Plugins**: ~95 (excluding engine-owned recon)
+**Complete**: ~80
 **Partial**: ~10
 **Significant Gaps**: 15+ classes with missing coverage
 
@@ -462,9 +490,9 @@ Based on the architecture support (oracles, engine capabilities) and real-world 
 ### High Priority (Architecture Supports, High Impact)
 1. **OOB Command Injection** - Uses existing `oob` + `timing` oracles; blind RCE is critical
 2. **Blind NoSQL Injection (OOB)** - Uses the existing `oob` oracle; timing (`nosql-injection-timing-json-body`) and operator differential (`nosql-injection-differential-json-body`) now ship
-3. **Blind LDAP Injection (OOB)** - Uses existing `oob` oracle
-4. **Blind SSTI (OOB)** - Uses existing `oob` oracle; template DNS exfiltration
-5. **BOLA / Role-Based Authorization Testing** - Uses existing `differential` oracle with auth context
+3. **Blind LDAP Injection (OOB)** - Uses existing `oob` oracle; now ships for JSON body fields (`ldap-injection-oob-json-body`), query points stay with Tier 1
+4. **Blind SSTI (OOB)** - Uses existing `oob` oracle; now ships for JSON body fields (`ssti-json-body-oob`), query points stay with Tier 1
+5. **BOLA / Role-Based Authorization Testing** - Uses existing `differential` oracle with auth context; sequential-identifier matrix (`idor-sequential-id-matrix`) now ships, role-based matrices remain
 6. **Debug Endpoint Enumeration** - Uses existing `error`/`version` oracles; passive/active
 7. **Sensitive File Exposure (Extended)** - Uses existing `error` oracle; expanded path list
 

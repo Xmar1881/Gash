@@ -21,9 +21,9 @@ The engine discovers this tree automatically; no `--load-plugin` flag exists.
 | Tier | Count | Auto-discovered | Trust Required |
 |------|------:|:---------------:|:--------------:|
 | Tier 1 (YAML) | 275 | ✅ | ❌ |
-| Tier 2 (JS) | 7 | ✅ | ❌ |
+| Tier 2 (JS) | 52 | ✅ | ❌ |
 | Tier 3 (Native) | 1 | ❌ | ✅ `gash plugins trust` |
-| **Total** | **283** | | |
+| **Total** | **328** | | |
 
 ---
 
@@ -31,18 +31,18 @@ The engine discovers this tree automatically; no `--load-plugin` flag exists.
 
 | Category | Plugins | Tier | Key Oracle | Good First PR? |
 |----------|---------|------|------------|----------------|
-| **Cross-site Scripting** | 6 | 1/2 | `reflection`, `stored`, `execution` | ✅ `xss-attribute-injection` |
+| **Cross-site Scripting** | 8 | 1/2 | `reflection`, `stored`, `execution` | ✅ `xss-attribute-injection` |
 | **SQL Injection** | 6 | 1/2 | `error`, `differential`, `timing`, `oob` | ✅ `sqli-auth-bypass` |
-| **Command Injection** | 3 | 1 | `error`, `timing`, `oob` | ✅ `command-injection-timing` |
-| **Path Traversal / File** | 8 | 1 | `error` | ✅ `backup-file-exposure` |
-| **SSRF / Open Redirect** | 6 | 1 | `redirect`, `oob`, `reflection` | ✅ `open-redirect-param` |
-| **NoSQL / LDAP / SSTI** | 8 | 1 | `timing`, `differential`, `oob` | — |
+| **Command Injection** | 5 | 1/2 | `error`, `timing`, `oob` | ✅ `command-injection-timing` |
+| **Path Traversal / File** | 9 | 1/2 | `error`, `upload-served` | ✅ `backup-file-exposure` |
+| **SSRF / Open Redirect** | 7 | 1/2 | `redirect`, `oob`, `reflection` | ✅ `open-redirect-param` |
+| **NoSQL / LDAP / SSTI** | 9 | 1/2 | `timing`, `differential`, `oob` | — |
 | **GraphQL** | 5 | 1 | `version`, `differential` | — |
-| **Auth / IDOR / Logic** | 10 | 1 | `differential`, `error` | ✅ `idor-differential` |
+| **Auth / IDOR / Logic** | 11 | 1/2 | `differential`, `error` | ✅ `idor-differential` |
 | **Misconfig / Headers** | 27 | 1 | `header`, `cookie`, `cors`, `header` modes | ✅ `cookie-flags` |
-| **Deserialization / XXE** | 5 | 1 | `error` (deserialization, takeover, xpath, backup) | — |
+| **Deserialization / XXE** | 6 | 1/2 | `error` (deserialization, takeover, xpath, backup) | — |
 | **Framework-specific** | 2 | 1 | `middleware-bypass`, `oob` | — |
-| **Injection (JNDI, EL, SSI, JSONP, PP)** | 5 | 1 | `oob`, `reflection`, `error`, `differential` | — |
+| **Injection (JNDI, EL, SSI, JSONP, PP)** | 6 | 1/2 | `oob`, `reflection`, `error`, `differential` | — |
 | **Info Disclosure** | 8 | 1 | `error`, `header`, `version` | ✅ `phpinfo-exposure` |
 | **Cache / Takeover / Rate Limit** | 4 | 1 | `differential`, `error`, `header` | — |
 | **Modern Headers / API Exposure** | 20 | 1 | `header`, `version`, `error` | ✅ `permissions-policy-missing` |
@@ -77,6 +77,8 @@ corpus and has an individual report under `docs/metrics/`. Examples include
 | `xss-attribute-injection` | Tier 1 | `reflection` | `xss/xss-attribute-injection.yaml` | ⭐ **Yes** |
 | `xss-stored-basic` | Tier 1 | `reflection` | `xss/xss-stored-basic.yaml` | |
 | `xss-stored-two-step` | Tier 2 | `stored` | `xss/xss-stored-two-step.js` | |
+| `xss-stored-header-two-step` | Tier 2 | `stored` | `xss/xss-stored-header-two-step.js` | |
+| `xss-reflected-url-context` | Tier 2 | `reflection` (url-executable) | `xss/xss-reflected-url-context.js` | |
 | `dom-sink-basic` | Tier 2 | `execution` (firm max) | `xss/dom-sink-basic.js` | |
 | `xpath-injection-error` | Tier 1 | `error` (xpath) | `xpath/xpath-injection-error.yaml` | |
 
@@ -90,6 +92,7 @@ corpus and has an individual report under `docs/metrics/`. Examples include
 | `sqli-stacked-time` | Tier 1 | `timing` | `sqli/sqli-stacked-time.yaml` | |
 | `sqli-auth-bypass` | Tier 1 | `error` | `sqli/sqli-auth-bypass.yaml` | ⭐ **Yes** |
 | `blind-sqli-oob` | Tier 1 | `oob` (required) | `blind-sqli-oob/blind-sqli-oob.yaml` | |
+| `sqli-oob-second-order` | Tier 2 | `oob` (required) | `sqli/sqli-oob-second-order.js` | |
 
 ### Command Injection
 
@@ -98,6 +101,9 @@ corpus and has an individual report under `docs/metrics/`. Examples include
 | `command-injection-error` | Tier 1 | `error` | `command-injection/command-injection-error.yaml` | |
 | `command-injection-timing` | Tier 1 | `timing` | `command-injection/command-injection-timing.yaml` | ⭐ **Yes** |
 | `command-injection-oob` | Tier 1 | `oob` (required) | `command-injection/command-injection-oob.yaml` | |
+| `command-injection-json-body-timing` | Tier 2 | `timing` | `command-injection/command-injection-json-body-timing.js` | |
+| `command-injection-json-body-error` | Tier 2 | `error` (generic_error) | `command-injection/command-injection-json-body-error.js` | |
+| `log4shell-json-body-oob` | Tier 2 | `oob` (required) | `command-injection/log4shell-json-body-oob.js` | |
 
 ### Path Traversal & File Access
 
@@ -111,6 +117,8 @@ corpus and has an individual report under `docs/metrics/`. Examples include
 | `file-inclusion-rfi` | Tier 1 | `reflection` | `rfi/rfi-remote-include.yaml` | |
 | `sensitive-file-exposure` | Tier 1 | `error` (backup_file) | `sensitive-file-exposure/sensitive-file-exposure.yaml` | |
 | `rfi-remote-include` | Tier 1 | `reflection` | `rfi/rfi-remote-include.yaml` | |
+| `file-upload-filename-traversal` | Tier 2 | `upload-served` | `file-upload/file-upload-filename-traversal.js` | |
+| `file-upload-sniffing-mismatch` | Tier 2 | `upload-served` | `file-upload/file-upload-sniffing-mismatch.js` | |
 
 ### SSRF & Open Redirect
 
@@ -118,6 +126,7 @@ corpus and has an individual report under `docs/metrics/`. Examples include
 |--------|------|--------|------|---------------|
 | `open-redirect-param` | Tier 1 | `redirect` | `redirect/open-redirect-param.yaml` | ⭐ **Yes** |
 | `oauth-open-redirect` | Tier 1 | `redirect` | `oauth-open-redirect/oauth-open-redirect.yaml` | |
+| `open-redirect-userinfo-confusion` | Tier 2 | `redirect` | `redirect/open-redirect-userinfo-confusion.js` | |
 | `ssrf-blind-oob` | Tier 2 | `oob` (required) | `ssrf/ssrf-blind-oob.js` | |
 | `ssrf-cloud-metadata` | Tier 1 | `reflection` | `ssrf/ssrf-cloud-metadata.yaml` | |
 | `ssrf-internal-port-scan` | Tier 1 | `reflection` | `ssrf-internal/ssrf-internal-port-scan.yaml` | |
@@ -136,6 +145,9 @@ corpus and has an individual report under `docs/metrics/`. Examples include
 | `ssti-blind-oob` | Tier 1 | `oob` (required) | `ssti/ssti-blind-oob.yaml` |
 | `template-injection-reflection` | Tier 1 | `reflection` | `template-injection/template-injection-reflection.yaml` |
 | `ssti-blind-timing` | Tier 1 | `timing` | `ssti/ssti-blind-timing.yaml` |
+| `ssti-json-body-oob` | Tier 2 | `oob` (required) | `ssti/ssti-json-body-oob.js` |
+| `ldap-injection-oob-json-body` | Tier 2 | `oob` (required) | `ldap/ldap-injection-oob-json-body.js` |
+| `ldap-injection-json-body-timing` | Tier 2 | `timing` (firm) | `ldap/ldap-injection-json-body-timing.js` |
 
 ### GraphQL
 
@@ -145,6 +157,7 @@ corpus and has an individual report under `docs/metrics/`. Examples include
 | `graphql-introspection-enabled` | Tier 1 | `version` (graphql_introspection) | `graphql-introspection/graphql-introspection-enabled.yaml` |
 | `graphql-auth-bypass` | Tier 1 | `differential` (firm, requires auth) | `graphql-auth-bypass/graphql-auth-bypass.yaml` |
 | `graphql-dos` | Tier 1 | `differential` (firm) | `graphql-dos/graphql-dos.yaml` |
+| `graphql-alias-amplification` | Tier 2 | `differential` (firm) | `graphql/graphql-alias-amplification.js` |
 | `jsonp-callback-injection` | Tier 1 | `reflection` | `jsonp-callback-injection/jsonp-callback-injection.yaml` |
 
 ### Auth / IDOR / Logic
@@ -153,8 +166,11 @@ corpus and has an individual report under `docs/metrics/`. Examples include
 |--------|------|--------|------|---------------|
 | `idor-differential` | Tier 1 | `differential` | `idor/idor-differential.yaml` | ⭐ **Yes** |
 | `mass-assignment-basic` | Tier 1 | `differential` (firm) | `mass-assignment/mass-assignment-basic.yaml` | |
+| `mass-assignment-nested-json` | Tier 2 | `differential` (firm) | `mass-assignment/mass-assignment-nested-json.js` | |
+| `idor-sequential-id-matrix` | Tier 2 | `differential` | `idor/idor-sequential-id-matrix.js` | |
 | `hpp-parameter-pollution` | Tier 1 | `differential` | `hpp/hpp-parameter-pollution.yaml` | |
 | `hpp-duplicate-emission` | Tier 2 | `differential` | `hpp/hpp-duplicate-emission.js` | |
+| `hpp-query-array-notation` | Tier 2 | `differential` | `hpp/hpp-query-array-notation.js` | |
 | `verb-tampering-bypass` | Tier 1 | `verb-tamper` | `verb-tampering/verb-tampering-bypass.yaml` | |
 | `ldap-injection-differential` | Tier 1 | `differential` | `ldap-injection/ldap-injection-differential.yaml` | |
 | `nosql-auth-bypass-differential` | Tier 1 | `differential` (firm) | `nosql/nosql-auth-bypass-differential.yaml` | |
@@ -169,6 +185,7 @@ corpus and has an individual report under `docs/metrics/`. Examples include
 | `cookie-flags` | Tier 1 | `cookie` | `cookies/cookie-flags.yaml` | ⭐ **Yes** |
 | `cors-misconfig` | Tier 1 | `cors` | `cors/cors-misconfig.yaml` | |
 | `insecure-cors-preflight` | Tier 1 | `cors` | `insecure-cors/insecure-cors-preflight.yaml` | |
+| `cors-null-origin-trust` | Tier 2 | `cors` | `cors/cors-null-origin-trust.js` | |
 | `crlf-header-injection` | Tier 1 | `header` (crlf) | `crlf/crlf-header-injection.yaml` | |
 | `http-response-splitting` | Tier 1 | `header` | `http-response-splitting/http-response-splitting.yaml` | |
 | `csrf-token-absence` | Tier 1 | `header` (csrf) | `csrf/csrf-token-absence.yaml` | |
@@ -199,6 +216,7 @@ corpus and has an individual report under `docs/metrics/`. Examples include
 | `xxe-reflected-basic` | Tier 1 | `reflection` | `xxe/xxe-reflected-basic.yaml` |
 | `xxe-blind-oob` | Tier 1 | `oob` (required) | `xxe-blind/xxe-blind-oob.yaml` |
 | `xml-external-entity-blind` | Tier 1 | `error` | `xxe-blind-oob/xml-external-entity-blind.yaml` |
+| `xxe-json-body-error` | Tier 2 | `error` (generic_error) | `xxe/xxe-json-body-error.js` |
 | `ssi-injection` | Tier 1 | `error` (ssi) | `ssi-injection/ssi-injection.yaml` |
 
 ### Framework-specific
@@ -216,6 +234,7 @@ corpus and has an individual report under `docs/metrics/`. Examples include
 | `expression-language-injection` | Tier 1 | `reflection` | `expression-language-injection/expression-language-injection.yaml` |
 | `jsonp-callback-injection` | Tier 1 | `reflection` | `jsonp-callback-injection/jsonp-callback-injection.yaml` |
 | `prototype-pollution-differential` | Tier 1 | `differential` | `prototype-pollution/prototype-pollution-differential.yaml` |
+| `prototype-pollution-json-body` | Tier 2 | `differential` | `prototype-pollution/prototype-pollution-json-body.js` |
 | `ssi-injection` | Tier 1 | `error` (ssi) | `ssi-injection/ssi-injection.yaml` |
 
 ### Info Disclosure
@@ -237,6 +256,7 @@ corpus and has an individual report under `docs/metrics/`. Examples include
 |--------|------|--------|------|
 | `subdomain-takeover-basic` | Tier 1 | `error` (takeover) | `takeover/subdomain-takeover-basic.yaml` |
 | `web-cache-poisoning-basic` | Tier 1 | `differential` | `web-cache/web-cache-poisoning-basic.yaml` |
+| `web-cache-unkeyed-cookie` | Tier 2 | `differential` | `cache-poisoning/web-cache-unkeyed-cookie.js` |
 | `cache-poisoning-host-header` | Tier 1 | `differential` | `cache-poisoning/cache-poisoning-host-header.yaml` |
 | `missing-rate-limit` | Tier 1 | `header` (ratelimit) | `rate-limit/missing-rate-limit.yaml` |
 
@@ -387,15 +407,28 @@ Each fixture JSON:
 
 ## Engine-recon (No Plugin File)
 
-These ship as engine-internal detectors, not Tier 1 plugins:
+These ship as engine-owned detectors behind the detector port
+(`internal/detector`), not as plugin files: their transport (raw TCP), input
+(either already-fetched crawler bytes or a technology-pinned wordlist), or
+capability need cannot be expressed in YAML or the JS sandbox. The port gives
+them the same treatment plugins get — declared identity, rule mapping, gates,
+audit-trailed skips, telemetry keys — and one registry enumerates them. See
+`docs/design/01-detector-port.md` and `docs/detector-inventory.md`.
 
-| Detector | Package | GASH-ID | Test Command |
-|----------|---------|---------|--------------|
-| Content Discovery | `internal/discovery` | GASH-028 | `go test ./internal/discovery/ -run 'TestContentDiscovery\|TestWordlist' -v` |
-| SPA State Secrets | `internal/discovery/spa_state.go` | GASH-071 | `go test ./internal/discovery/ -run TestSPAState -v` |
-| Dev Build Markers | `internal/discovery/devbuild.go` | GASH-072 | `go test ./internal/discovery/ -run TestDevBuild -v` |
-| Request Smuggling | `internal/smuggle` | GASH-033 | `go test ./internal/smuggle/ -v` |
+| Detector ID | Rule | Package | Gate | Test Command |
+|-------------|------|---------|------|--------------|
+| `engine-js-recon` | GASH-067 | `internal/recon` (+ `internal/discovery` analysis) | none | `go test ./internal/engine/ -run TestScanJSReconEndToEnd -v` |
+| `engine-content-discovery` | GASH-028 | `internal/discovery` | `--active` | `go test ./internal/discovery/ -run TestContentDiscovery -v` |
+| `engine-spa-state` | GASH-071 | `internal/recon` (+ `internal/discovery` analysis) | none | `go test ./internal/recon/ -run TestScanSPAState -v` |
+| `engine-devbuild` | GASH-072 | `internal/recon` (+ `internal/discovery` analysis) | none | `go test ./internal/recon/ -run TestScanDevBuild -v` |
+| `engine-smuggle-recon` | GASH-033 | `internal/smuggle` | `--active --aggressive` + profile `smuggle` | `go test ./internal/smuggle/ -v` |
+| `proto-tls-cert` / `proto-tls-deep` | GASH-024 | `internal/proto` | profile `tls` (+ `--tls-audit-deep` for the deep unit) | `go test ./internal/engine/ -run TestProtoRecon -v` |
+| `proto-dns-records` | GASH-025 | `internal/proto` | profile `dns` | `go test ./internal/engine/ -run TestProtoRecon -v` |
+| `proto-tcp-banner` | GASH-026 | `internal/proto` | `--active` + `--tcp-banner <addr>` | `go test ./internal/engine/ -run TestProtoReconTCPActiveGate -v` |
+| `proto-ssh-banner` / `proto-ssh-handshake` | GASH-052 / GASH-054 | `internal/proto` | `--active` + profile `ssh` | `go test ./internal/engine/ -run TestInfraReconSSH -v` |
+| `proto-db-ports` / `proto-db-unauth` | GASH-053 / GASH-055 | `internal/proto` | `--active` + profile `db` | `go test ./internal/engine/ -run TestInfraReconDB -v` |
 
+Registry, gate, and scope contract: `go test ./internal/engine/ -run TestDetector -v`.
 Reports: `docs/metrics/content-discovery-2026-10-16.md`, `docs/metrics/smuggle-differential.md`.
 
 ---

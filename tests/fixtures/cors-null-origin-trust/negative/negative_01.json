@@ -1,0 +1,1 @@
+{"body": "<html><body>account settings</body></html>", "expected_verdict": "reject", "headers": {"Access-Control-Allow-Origin": "https://app.example.com", "Content-Type": "text/html"}, "name": "allowlist returns a specific origin, null is not echoed", "status": 200, "target": "http://example.com/api/account"}

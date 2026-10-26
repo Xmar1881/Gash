@@ -392,48 +392,58 @@ func TestB1Tier1DropIn(t *testing.T) {
 
 // TestB1Tier2DropIn proves single-file Tier 2 drop-in with mocked transport.
 // What: Execute a discovered JS plugin through the real goja bindings.
-// Why: B1 covers both drop-in tiers; mocks keep the proof hermetic.
+// Why: B1 covers both drop-in tiers; mocks keep the proof hermetic. The
+//
+//	catalog grows in both directions, so the proof walks the discovered
+//	non-OOB Tier 2 plugins until one runs against the generic mock instead of
+//	depending on which plugin happens to sort first.
 func TestB1Tier2DropIn(t *testing.T) {
 	specs, _ := discoverAll(t)
-	var target *discoveredSpec
+	const canary = "gash_e2e_canary"
+	attempted := 0
+	lastDetail := "none"
 	for i := range specs {
-		if specs[i].spec.Tier == plugin.TierJS && specs[i].oracleName != "oob" {
-			target = &specs[i]
-			break
+		target := &specs[i]
+		if target.spec.Tier != plugin.TierJS || target.oracleName == "oob" {
+			continue
 		}
+		attempted++
+		source, err := os.ReadFile(target.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		env := &loader.JSEnv{
+			Points: []loader.JSPoint{{URL: "http://example.com/search", Method: "GET", ParamName: "q", ParamLocation: "query"}},
+			Canary: canary,
+			Send: func(p loader.JSPoint) (loader.JSResponse, error) {
+				return jsMockResponse(p, canary), nil
+			},
+			OOBEnabled:   true,
+			OOBNamespace: "scan_e2e",
+			OOBCallbackSeen: func(string) bool {
+				return true
+			},
+		}
+		cands, err := loader.ExecuteJS(context.Background(), &target.spec, string(source), env, 10*time.Second)
+		if err != nil {
+			lastDetail = target.spec.ID + ": js execute: " + err.Error()
+			continue
+		}
+		if len(cands) == 0 {
+			lastDetail = target.spec.ID + ": no candidate on the generic mock"
+			continue
+		}
+		for _, c := range cands {
+			if c.Evidence == nil || c.Evidence.Verdict != oracle.VerdictAccept {
+				t.Fatalf("%s: candidate without accepted evidence: %+v", target.spec.ID, c)
+			}
+		}
+		return
 	}
-	if target == nil {
+	if attempted == 0 {
 		t.Skip("no non-OOB Tier 2 reference plugin")
 	}
-	source, err := os.ReadFile(target.path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	const canary = "gash_e2e_canary"
-	env := &loader.JSEnv{
-		Points: []loader.JSPoint{{URL: "http://example.com/search", Method: "GET", ParamName: "q", ParamLocation: "query"}},
-		Canary: canary,
-		Send: func(p loader.JSPoint) (loader.JSResponse, error) {
-			return jsMockResponse(p, canary), nil
-		},
-		OOBEnabled:   true,
-		OOBNamespace: "scan_e2e",
-		OOBCallbackSeen: func(string) bool {
-			return true
-		},
-	}
-	cands, err := loader.ExecuteJS(context.Background(), &target.spec, string(source), env, 10*time.Second)
-	if err != nil {
-		t.Fatalf("js execute: %v", err)
-	}
-	if len(cands) == 0 {
-		t.Fatal("drop-in Tier 2 must produce at least one candidate")
-	}
-	for _, c := range cands {
-		if c.Evidence == nil || c.Evidence.Verdict != oracle.VerdictAccept {
-			t.Fatalf("candidate without accepted evidence: %+v", c)
-		}
-	}
+	t.Fatalf("drop-in Tier 2 must produce at least one candidate (%d attempted; last: %s)", attempted, lastDetail)
 }
 
 // jsMockResponse answers script probes for every oracle through one switch.

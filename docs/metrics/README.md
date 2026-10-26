@@ -103,6 +103,26 @@ The gate is enforced by `TestMetricGate` in `tests/plugins`, not by review conve
 | expression-language-injection | [expression-language-injection.md](expression-language-injection.md) |
 | jsonp-callback-injection | [jsonp-callback-injection.md](jsonp-callback-injection.md) |
 | oauth-open-redirect | [oauth-open-redirect.md](oauth-open-redirect.md) |
+| sqli-oob-second-order | [sqli-oob-second-order.md](sqli-oob-second-order.md) |
+| ssti-json-body-oob | [ssti-json-body-oob.md](ssti-json-body-oob.md) |
+| ldap-injection-oob-json-body | [ldap-injection-oob-json-body.md](ldap-injection-oob-json-body.md) |
+| idor-sequential-id-matrix | [idor-sequential-id-matrix.md](idor-sequential-id-matrix.md) |
+| mass-assignment-nested-json | [mass-assignment-nested-json.md](mass-assignment-nested-json.md) |
+| graphql-alias-amplification | [graphql-alias-amplification.md](graphql-alias-amplification.md) |
+| web-cache-unkeyed-cookie | [web-cache-unkeyed-cookie.md](web-cache-unkeyed-cookie.md) |
+| command-injection-json-body-timing | [command-injection-json-body-timing.md](command-injection-json-body-timing.md) |
+| file-upload-filename-traversal | [file-upload-filename-traversal.md](file-upload-filename-traversal.md) |
+| cors-null-origin-trust | [cors-null-origin-trust.md](cors-null-origin-trust.md) |
+| xss-reflected-url-context | [xss-reflected-url-context.md](xss-reflected-url-context.md) |
+| xss-stored-header-two-step | [xss-stored-header-two-step.md](xss-stored-header-two-step.md) |
+| open-redirect-userinfo-confusion | [open-redirect-userinfo-confusion.md](open-redirect-userinfo-confusion.md) |
+| prototype-pollution-json-body | [prototype-pollution-json-body.md](prototype-pollution-json-body.md) |
+| hpp-query-array-notation | [hpp-query-array-notation.md](hpp-query-array-notation.md) |
+| ldap-injection-json-body-timing | [ldap-injection-json-body-timing.md](ldap-injection-json-body-timing.md) |
+| xxe-json-body-error | [xxe-json-body-error.md](xxe-json-body-error.md) |
+| command-injection-json-body-error | [command-injection-json-body-error.md](command-injection-json-body-error.md) |
+| log4shell-json-body-oob | [log4shell-json-body-oob.md](log4shell-json-body-oob.md) |
+| file-upload-sniffing-mismatch | [file-upload-sniffing-mismatch.md](file-upload-sniffing-mismatch.md) |
 
 ### Critical Control-Plane / Secret Exposure
 

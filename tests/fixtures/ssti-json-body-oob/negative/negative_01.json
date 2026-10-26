@@ -1,0 +1,1 @@
+{"body": "{\"status\":\"rendered\"}", "expected_verdict": "reject", "headers": {"Content-Type": "application/json"}, "name": "field is treated as a plain string, no callback", "oob_callback": false, "oob_correlation_id": "c_ssti_02", "oob_namespace": "scan_js", "status": 200, "target": "http://example.com/api/reports"}

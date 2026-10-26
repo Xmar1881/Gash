@@ -2,6 +2,35 @@
 
 This document catalogs all detectors (oracles + plugins) in GASH, their test coverage, and confidence characteristics.
 
+## Engine-Owned Detectors (Detector Port)
+
+Engine-owned units live behind the detector port (`internal/detector`) and are
+enumerated by one registry instead of engine if-chains; the decision record is
+`docs/design/01-detector-port.md`. `Spec` carries the identity, taxonomy, and
+gates; the engine only builds the brokered environment and wires the result into
+the report.
+
+| Detector ID | Rule | CWE | Oracle | Phase | Gate | Runtime requirement | Report stats | Docs |
+|---|---|---|---|---|---|---|---|---|
+| `engine-js-recon` | GASH-067 | CWE-798 | `secret-exposure` | discovery | none | none (crawler bytes; ≤5 source maps, ≤25 bounded follow crawls) | `js_files_fetched`, `js_endpoints_found`, `js_hash_routes_found`, `js_secrets_found`, `js_maps_fetched` | this page |
+| `engine-spa-state` | GASH-071 | CWE-798 / CWE-200 | `embedded-state-secret` | discovery | none | none (crawler bytes only) | `spa_state_pages`, `spa_state_secrets` | this page |
+| `engine-devbuild` | GASH-072 | CWE-489 | `dev-build-marker` | discovery | none | none (crawler bytes only) | `devbuild_markers` | this page |
+| `engine-content-discovery` | GASH-028 | CWE-200 | `differential` | discovery | none | `--active` | `content_requests`, `content_findings` | `docs/metrics/content-discovery-2026-10-16.md` |
+| `engine-smuggle-recon` | GASH-033 | CWE-444 | `smuggling-differential` | probe | `smuggle` | `--active --aggressive` + profile `smuggle` | `smuggle_requests` | `docs/metrics/smuggle-differential.md` |
+| `proto-tls-cert` | GASH-024 | CWE-295 | `tls` | recon | `tls` | https target | — | this page |
+| `proto-dns-records` | GASH-025 | CWE-693 | `dns` | recon | `dns` | non-IP target | — | this page |
+| `proto-tcp-banner` | GASH-026 | CWE-200 | `tcp` | recon | `tcp` | `--active` + `--tcp-banner <addr>` | — | this page |
+| `proto-ssh-banner` | GASH-052 | CWE-200 | `ssh` | recon | `ssh` | `--active` + `--ssh-audit` | `ssh_checks` | this page |
+| `proto-ssh-handshake` | GASH-054 | CWE-327 | `ssh` | recon | `ssh` | `--active` + `--ssh-handshake-audit` | `ssh_handshake_checks` | this page |
+| `proto-db-ports` | GASH-053 | CWE-200 | `db` | recon | `db` | `--active` + `--db-port-scan` | `db_ports_scanned`, `db_open_ports` | this page |
+| `proto-db-unauth` | GASH-055 | CWE-306 | `db` | recon | `db` | `--active` + `--db-unauth` | `db_unauth_checks` | this page |
+| `proto-tls-deep` | GASH-024 | CWE-295 | `tls` | recon | `tls` | `--tls-audit-deep` + https target | `tls_deep_checks` | this page |
+
+`TestDetectorInventoryParity` (`tests/contract`) fails the build when this table
+and the registry `Specs()` drift apart. Every engine-owned finding producer in
+the scan pipeline is now registry-driven; the ADR
+`docs/design/01-detector-port.md` records the migration and its slices.
+
 ## Oracles (Engine-Owned)
 
 `reflection` now enforces the requested context set. It distinguishes HTML
@@ -28,7 +57,7 @@ for a controlled headless browser result.
 | `error` | SQLi plugins, `path-traversal-error`, `error-message-disclosure`, `command-injection-error`, `insecure-deserialization-error`, `subdomain-takeover-basic`, `xpath-injection-error`, `xpath-injection-json-body`, `backup-file-exposure`, `phpinfo-exposure`, `management-endpoint-exposure`, `directory-listing`, `source-map-exposure`, `ssi-injection` | 1/2 | firm → confirmed (deserialization/takeover/xpath/backup/phpinfo/management_endpoint/directory_listing/source_map/ssi modes: firm ceiling) | Yes | Yes (payload) | No | GASH-004: DB signature library + control absence; GASH-017: path_traversal content signatures; P1.4: generic_error mode; lab-batch: deserialization (GASH-029 Java/Python/PHP, firm, gadget YOK) + takeover (GASH-030 unclaimed-service bodies, DNS-dependent firm, out-of-scope fetch YOK); lab-batch: xpath (GASH-034 parser error signatures, firm) + backup_file (GASH-037 fixed 12-path marker set with soft-404 control, firm); lab-batch 2: content modes phpinfo (GASH-057) + management_endpoint (GASH-058) + directory_listing (GASH-059) + source_map (GASH-066) + ssi (GASH-064, two-marker pair), all firm with soft-404 control absence; Tier 2 `xpath-injection-json-body` injects the syntax probe into a JSON field with `mode: xpath` from `oracle_params`, firm ceiling |
 | `differential` | Boolean/blind SQLi, `idor-differential`, `ldap-injection-differential`, `hpp-parameter-pollution`, `hpp-duplicate-emission`, `mass-assignment-basic`, `nosql-auth-bypass-differential`, `nosql-injection-differential-json-body`, `jwt-none-alg-bypass`, `web-cache-method-override` | 1/2 | confirmed only (N=3); declared `confidence_ceiling` may downgrade (mass-assignment: firm; nosql-auth-bypass: firm) | Yes | Yes (true/false) | No | GASH-005: 3/3 masked stability + divergence; P1.4: IDOR/LDAP modes; deep-research: HPP polluted-vs-single divergence; Tier 2 HPP native duplicate-key (`id=1&id=2`) emission; content-exposure modu (GASH-028: baseline-negatif + içerik sinyali, N=1 deterministik, yeni oracle YOK); lab-batch: mass-assignment (GASH-031 extra-field binding, non-escalating values, firm ceiling, never upgrades); lab-batch: nosql-auth-bypass (GASH-039 operator-injected JSON body vs invalid-credential control, `false_body` support, 3 repeats, session never reused, firm ceiling); Tier 2 `nosql-injection-differential-json-body` (`$ne`/`$gt` operator object vs literal in a JSON field), `jwt-none-alg-bypass` (forged `alg:none` vs invalid vs anonymous; the endpoint must issue a JWT and use `Authorization: Bearer`, otherwise no candidate), and `web-cache-method-override` (clean/prime/clean over the unkeyed method-override header family, GET-only) |
 | `timing` | Time-based SQLi, `sqli-time-based`, `command-injection-timing`, `nosql-injection-timing-json-body` | 1/2 | firm max (no confirmed) | Yes | Yes (delay payloads) | No | GASH-006/010: statistical Mann-Whitney U + baseline stddev; P1.4: timing mode; Tier 2 `host.oracles.timing` (rttMs); deep-research: blind OS-command timing with harmless sleep canary (firm ceiling, confirmed YOK); Tier 2 `nosql-injection-timing-json-body` measures a `$where` sleep/busy-loop against a neutral `$where` baseline, firm ceiling |
-| `smuggling-differential` | (engine smuggle recon: `engine-smuggle-recon`, no plugin file) | recon | firm max (dual-channel only, no confirmed) | Yes (paired control) | Yes (raw-TCP CL.TE/TE.CL/TE.TE, `--active` + `--aggressive` only) | No | GASH-033 (CWE-444): ambiguous CL+TE + identical harmless follow-up on one keep-alive conn; follow-up divergence AND delay/timeout required; single-channel rejects; user-supplied target dialed, scope preflight only with `--scope` (out-of-scope target = zero sockets), <=10 requests, 5 s cap |
+| `smuggling-differential` | (engine detector port: `engine-smuggle-recon`, no plugin file) | recon | firm max (dual-channel only, no confirmed) | Yes (paired control) | Yes (raw-TCP CL.TE/TE.CL/TE.TE, `--active` + `--aggressive` only) | No | GASH-033 (CWE-444): ambiguous CL+TE + identical harmless follow-up on one keep-alive conn; follow-up divergence AND delay/timeout required; single-channel rejects; user-supplied target dialed, scope preflight only with `--scope` (out-of-scope target = zero sockets), <=10 requests, 5 s cap; differential axes are data (`internal/smuggle/cases.yaml`, golden-byte pinned) |
 | `verb-tamper` | `verb-tampering-bypass` | 1 | firm max (no confirmed) | Yes (401/403 baseline) | Yes (HEAD/OPTIONS + method-override headers) | No | GASH-036 (CWE-650): protected baseline required; variant must be 2xx with >=24-byte body differing from masked baseline; empty/identical bodies reject; only idempotent read variants are sent (no PUT/DELETE/PATCH) |
 | `middleware-bypass` | `nextjs-middleware-bypass` | 1 | firm max (no confirmed) | Yes (401/403 or login redirect) | Yes (GET + 4 bounded header values) | No | GASH-069 (CWE-288, CVE-2025-29927): control must be access-denied; bypass must return 2xx with >=32-byte body differing from masked control; WAF pages, identical bodies, header echo without status change, and public 200-to-200 routes reject; first accepted header per path stops the loop |
 | `execution` | DOM XSS `dom-sink-basic` | 2 | tentative → firm; `confirmed` with deep build + `--browser-verify` and clean control | No | Probe on query/form/header points; browser-only for fragment/hash points | No | GASH-003 static sink/source via `host.oracles.execution`; fragment/hash points use `host.oracles.browserExecution`; standard build keeps the firm ceiling |
