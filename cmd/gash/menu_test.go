@@ -171,6 +171,32 @@ func TestMenuFlowEntrypoints(t *testing.T) {
 	}
 }
 
+// TestMenuScanEverythingPreset: "HER ŞEY" seçimi tek adımda tüm aktif
+// denetimleri (tarayıcı + altyapı derin + OOB) komuta eklemeli.
+// What: Profil listesinden 5'i seçip özet komutunu doğrular.
+// Why: Kullanıcı uzun bayrak listesi yazmak zorunda kalmamalı.
+func TestMenuScanEverythingPreset(t *testing.T) {
+	out, err := runMenu(t, "1\nhttp://127.0.0.1\n\n5\ne\n\nh\nq\n")
+	if err != nil {
+		t.Fatalf("menu scan everything: %v", err)
+	}
+	if !strings.Contains(out, "Çalıştırılacak işlem:") {
+		t.Fatalf("özet komutu basılmadı:\n%s", out)
+	}
+	for _, want := range []string{
+		"--aggressive", "--browser-crawl", "--browser-verify",
+		"--ssh-audit", "--db-port-scan", "--tls-audit-deep",
+		"--ssh-handshake-audit", "--db-unauth", "--oob-server local",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("HER ŞEY komutu %q içermeli:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Tarama başlatılıyor") {
+		t.Fatalf("onay 'hayır' iken tarama başlamamalı:\n%s", out)
+	}
+}
+
 func TestSplitCommandLine(t *testing.T) {
 	tests := []struct {
 		name string

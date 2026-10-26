@@ -223,7 +223,8 @@ func (s *menuSession) initTabs() {
 			description: "Hedef URL tarama ve profil seçimi",
 			handler:     func(ms *menuSession) error { return ms.scanFlow() },
 			details: []string{
-				"Profiller: safe · standard · deep · aggressive",
+				"Profiller: safe · standard · deep · aggressive · HER ŞEY",
+				"HER ŞEY: agresif + tarayıcı + altyapı + OOB tek seçimde",
 				"Kapsam sınırı (CIDR/domain) ve rapor dosyası",
 				"Başlatmadan önce özet, onay ve eşdeğer komut",
 			},
@@ -782,9 +783,16 @@ func (s *menuSession) scanFlow() error {
 		{"standard", "standard", "Dengeli varsayılan profil"},
 		{"deep", "deep", "Daha kapsamlı, daha yavaş"},
 		{"aggressive", "aggressive", "Ofansif — yazılı izin gerekir"},
+		{"hersey", "HER ŞEY (agresif + tarayıcı + altyapı + OOB)", "Tek seçimde tüm aktif denetimler — uzun bayrak listesi gerekmez"},
 	}, defProfile)
 	if err != nil {
 		return err
+	}
+	// "HER ŞEY" agresif profile eşittir ve ek olarak headless tarayıcı, altyapı
+	// (derin SSH/DB dahil) ve yerel OOB denetimlerini tek adımda açar.
+	everything := profile == "hersey"
+	if everything {
+		profile = "aggressive"
 	}
 
 	if profile == "aggressive" {
@@ -806,12 +814,23 @@ func (s *menuSession) scanFlow() error {
 	var oobServer string
 	var browserCrawl bool
 	var infraScan bool
+	var infraDeep bool
 	var customTimeout string
-	advanced, err := s.confirm("Gelişmiş ayarları yapılandır (OOB, headless tarayıcı, altyapı)?", false)
-	if err != nil {
-		return err
+	// "HER ŞEY" seçildiyse gelişmiş sorular atlanır: hepsi zaten açık.
+	advanced := everything
+	if !everything {
+		var aerr error
+		advanced, aerr = s.confirm("Gelişmiş ayarları yapılandır (OOB, headless tarayıcı, altyapı)?", false)
+		if aerr != nil {
+			return aerr
+		}
 	}
-	if advanced {
+	if everything {
+		oobServer = "local"
+		browserCrawl = true
+		infraScan = true
+		infraDeep = true
+	} else if advanced {
 		oobChoice, err := s.choose("OOB Etkileşim Sunucusu", []choice{
 			{"local", "local", "Dahili yerel dinleyici — sunucu gerekmez"},
 			{"custom", "custom", "Özel URL gir (interactsh vb.)"},
@@ -844,6 +863,13 @@ func (s *menuSession) scanFlow() error {
 			return err
 		}
 		infraScan = infra
+		if infra {
+			deep, err := s.confirm("Derin altyapı: SSH KEXINIT denetimi + veritabanı kimlik-doğrulamasız prob?", true)
+			if err != nil {
+				return err
+			}
+			infraDeep = deep
+		}
 
 		to, err := s.optional("Zaman aşımı / timeout " + s.th.muted("(boş=varsayılan, örn: 60s, 120s, 180s)") + ": ")
 		if err != nil {
@@ -874,6 +900,9 @@ func (s *menuSession) scanFlow() error {
 	}
 	if infraScan {
 		args = append(args, "--ssh-audit", "--db-port-scan", "--tls-audit-deep", "--active")
+	}
+	if infraDeep {
+		args = append(args, "--ssh-handshake-audit", "--db-unauth")
 	}
 	if output != "" {
 		args = append(args, "--output", output)
@@ -907,7 +936,11 @@ func (s *menuSession) scanFlow() error {
 		summaryItems = append(summaryItems, s.kv("Tarayıcı", s.th.good("aktif (Chrome SPA)")))
 	}
 	if infraScan {
-		summaryItems = append(summaryItems, s.kv("Altyapı", s.th.good("aktif (SSH/DB/TLS)")))
+		label := "aktif (SSH/DB/TLS)"
+		if infraDeep {
+			label = "aktif (SSH KEXINIT + DB unauth + TLS)"
+		}
+		summaryItems = append(summaryItems, s.kv("Altyapı", s.th.good(label)))
 	}
 	s.panel(s.th.bold("Tarama özeti"), s.th.accent, summaryItems...)
 	s.printf("  %s %s\n", s.th.muted("Çalıştırılacak işlem:"), "gash "+shellJoin(args))
