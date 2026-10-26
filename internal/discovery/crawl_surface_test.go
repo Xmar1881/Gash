@@ -8,8 +8,64 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 )
+
+// TestCrawlReportsPageProgress OnPage geri çağrısının her sayfa denemesinde
+// artan sayaç ve sayfa bütçesiyle tetiklendiğini doğrular.
+// What: 3 sayfalık bir sitede sayaç 1,2,3 ve bütçe 10 olmalı.
+// Why: "Sayfa & Yüzey Keşfi" fazı canlı ilerleme göstergesini bu veriyle
+// besler; sayaç akmazsa uzun crawl donmuş görünür.
+func TestCrawlReportsPageProgress(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body><a href="/a">a</a><a href="/b">b</a></body></html>`))
+	})
+	mux.HandleFunc("/a", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<html><body>a</body></html>`))
+	})
+	mux.HandleFunc("/b", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<html><body>b</body></html>`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	var (
+		mu     sync.Mutex
+		counts []int
+		totals []int
+		urls   []string
+	)
+	_, err := Crawl(context.Background(), testClient(t, srv.URL), srv.URL+"/", CrawlOptions{
+		MaxPages: 10, MaxDepth: 2, ReadRobots: false, ReadSitemap: false,
+		OnPage: func(done, total int, pageURL string) {
+			mu.Lock()
+			defer mu.Unlock()
+			counts = append(counts, done)
+			totals = append(totals, total)
+			urls = append(urls, pageURL)
+		},
+	})
+	if err != nil {
+		t.Fatalf("crawl: %v", err)
+	}
+	if len(counts) != 3 {
+		t.Fatalf("3 sayfa denemesi bekleniyordu, %d alındı: %v", len(counts), urls)
+	}
+	for i, c := range counts {
+		if c != i+1 {
+			t.Fatalf("sayaç artan olmalı, alınan: %v", counts)
+		}
+		if totals[i] != 10 {
+			t.Fatalf("sayfa bütçesi 10 bildirilmeli, alınan: %v", totals)
+		}
+		if urls[i] == "" {
+			t.Fatal("ilerleme URL'i boş olmamalı")
+		}
+	}
+}
 
 // TestCrawlUsesOnlyObservedSurfacePoints proves the crawler does not invent
 // CommonCandidateParams for every page without parameters. Per-page fallback

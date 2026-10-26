@@ -10,12 +10,17 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Xmar1881/Gash/internal/plugin"
 	"github.com/Xmar1881/Gash/internal/plugin/loader"
 )
+
+// crawlProgressRe: "37/500 sayfa · host/path" biçimindeki canlı ilerleme satırı.
+var crawlProgressRe = regexp.MustCompile(`^\d+/\d+ sayfa · `)
 
 // e2eHeaderPlugin is a minimal Tier 1 header check for live scan tests.
 // What: Passive header fixture used only by scan e2e tests.
@@ -112,6 +117,62 @@ oracle:
   params:
     expect_external_host: true
 `
+
+// TestScanReportsCrawlProgress: "Sayfa & Yüzey Keşfi" fazı canlı sayfa sayacı
+// yayınlamalı.
+// What: 3 sayfalık yerel sitede OnProgress "N/M sayfa · host/path" görmeli.
+// Why: Sayaç olmadan uzun crawl (aggressive'te 500 sayfaya kadar) donmuş görünür.
+func TestScanReportsCrawlProgress(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body><a href="/a">a</a><a href="/b">b</a></body></html>`))
+	})
+	mux.HandleFunc("/a", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<html><body>a</body></html>`))
+	})
+	mux.HandleFunc("/b", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<html><body>b</body></html>`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	dir := writeE2EPlugin(t)
+	reg := plugin.NewRegistry()
+	if _, err := loader.Discover([]string{dir}, reg); err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+
+	var (
+		mu      sync.Mutex
+		details []string
+	)
+	cfg := DefaultConfig()
+	cfg.OnProgress = func(phase, detail string) {
+		if phase != "Sayfa & Yüzey Keşfi" {
+			return
+		}
+		mu.Lock()
+		details = append(details, detail)
+		mu.Unlock()
+	}
+	e := New(reg, cfg)
+	if _, err := e.Run(context.Background(), srv.URL); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	observed := 0
+	for _, d := range details {
+		if crawlProgressRe.MatchString(d) {
+			observed++
+		}
+	}
+	if observed < 2 {
+		t.Fatalf("crawl ilerleme satırı yayınlanmadı (>=2 bekleniyordu): %v", details)
+	}
+}
 
 // TestScanE2EMultipleDiscoveryHits proves the Tier 1 discovery fallback keeps
 // testing distinct endpoints after the first hit instead of hiding later ones.

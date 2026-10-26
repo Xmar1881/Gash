@@ -247,6 +247,9 @@ Dates are UTC.
   choice has a single-key shortcut) and localized: TR/EN catalogs live in
   `cmd/gash/locales/{tr,en}.json` (embedded), with `--lang`, `GASH_LANG`, and a
   live `l` toggle in the menu.
+- Live crawl progress: the `Sayfa & Yüzey Keşfi` phase now reports
+  `done/total sayfa · host/path` for every crawl attempt, so a long crawl
+  (aggressive profile allows up to 500 pages) no longer looks frozen.
 
 ### Fixed
 

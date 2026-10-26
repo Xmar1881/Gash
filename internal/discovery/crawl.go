@@ -42,6 +42,10 @@ type CrawlOptions struct {
 	// (JS recon'u besler); mini/geri-besleme crawl'ları true kullanır (çift
 	// analiz ve istek tekrarı olmaz).
 	SkipJSRecon bool
+	// OnPage her sayfa denemesinden sonra çağrılır: denenen sayfa sayısı, sayfa
+	// bütçesi ve denenen URL. Canlı ilerleme göstergesi içindir; nil olabilir.
+	// Why: Uzun crawl'larda çağıran taraf bekleyişin ilerlediğini gösterebilmeli.
+	OnPage func(done, total int, pageURL string)
 }
 
 // DefaultCrawlOptions returns recommended default crawl parameters.
@@ -197,6 +201,7 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 	scriptQueue := make([]string, 0, 16)
 	seenScripts := make(map[string]bool)
 	inlineBudget := jsMaxInlineTotal
+	fetched := 0
 	for len(queue) > 0 && len(result.Pages) < opts.MaxPages {
 		if ctx.Err() != nil {
 			break
@@ -207,6 +212,10 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 
 		reqCtx := plugin.WithPlugin(ctx, "crawler", true, nil)
 		resp, err := client.Send(reqCtx, http.MethodGet, item.rawURL, nil, nil)
+		fetched++
+		if opts.OnPage != nil {
+			opts.OnPage(fetched, opts.MaxPages, item.rawURL)
+		}
 		if err != nil {
 			if errors.Is(err, plugin.ErrBudgetExceeded) {
 				// Budget exhausted: break immediately and return what was collected

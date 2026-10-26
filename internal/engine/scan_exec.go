@@ -294,6 +294,11 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		"spa_endpoints": 0, "spa_skipped": 0,
 	}
 	e.notifyProgress("Sayfa & Yüzey Keşfi", "Web sayfaları ve linkler taranıyor...")
+	// Canlı ilerleme: crawl uzun sürebilir (aggressive profilde 500 sayfaya kadar);
+	// sayaç olmadan bu faz donmuş gibi görünür.
+	crawlOpts.OnPage = func(done, total int, pageURL string) {
+		e.notifyProgress("Sayfa & Yüzey Keşfi", crawlProgress(done, total, pageURL))
+	}
 	crawlRes, err := discovery.Crawl(ctx, client, target, crawlOpts)
 	var surfacePoints []loader.JSPoint
 	if err == nil && crawlRes != nil {
@@ -635,6 +640,22 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		rep.Skipped = []plugin.SkippedPlugin{}
 	}
 	return rep, nil
+}
+
+// crawlProgress crawl fazının tek satırlık canlı ilerleme metnini üretir.
+// What: "37/500 sayfa · example.com/admin/users"
+// Why: Faz göstergesi sayfa sayısı göstermezse uzun crawl donmuş görünür.
+func crawlProgress(done, total int, pageURL string) string {
+	label := fmt.Sprintf("%d/%d sayfa", done, total)
+	u, err := url.Parse(pageURL)
+	if err != nil || u.Host == "" {
+		return label + " · " + pageURL
+	}
+	path := u.Path
+	if path == "" {
+		path = "/"
+	}
+	return fmt.Sprintf("%s · %s%s", label, u.Host, path)
 }
 
 // executeOne runs a single plugin with fault isolation.
