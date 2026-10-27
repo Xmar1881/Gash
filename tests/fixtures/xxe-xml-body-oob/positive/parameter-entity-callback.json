@@ -1,0 +1,10 @@
+{
+  "name": "external parameter entity resolved and called back",
+  "target": "http://example.com/soap/import",
+  "status": 200,
+  "headers": {"Content-Type": "application/xml"},
+  "body": "<response><status>accepted</status></response>",
+  "oob_callback": true,
+  "expected_verdict": "accept",
+  "expected_confidence": "confirmed"
+}

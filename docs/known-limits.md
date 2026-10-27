@@ -13,12 +13,15 @@ Why: Unimplemented paths stay documented with reasons instead of silent gaps.
 This file records what Gash deliberately does not do, with the technical
 reason for each. Nothing here is implied as covered elsewhere.
 
-## Out-of-band (OOB) blind detectors: self-hosted only, shared bounded window
+## Out-of-band (OOB) blind detectors: opt-in providers, shared bounded window
 
 OOB plugins (`ssrf-blind-oob`, `blind-sqli-oob`, `xxe-oob`,
-`nextjs-image-optimizer-ssrf`) run only with a self-hosted `--oob-server` (no
-public interactsh default) and require `--active`; without a server the
-scheduler skips them honestly (`oob-not-configured`). Callback proof discipline:
+`nextjs-image-optimizer-ssrf`) run only with an explicitly selected
+`--oob-server` and require `--active`; without a server the scheduler skips
+them honestly (`oob-not-configured`). Providers: `local` (built-in listener),
+a self-hosted API URL, a self-hosted interactsh server
+(`interactsh://host`), or the public interactsh fleet (`interactsh`, an
+explicit third-party opt-in; never the default). Callback proof discipline:
 every payload variant carries its own single-use correlation token, so an
 incoming callback can only confirm the exact request that caused it. Token verification is
 deferred: Tier 1 sends the whole corpus first and then verifies all tokens
@@ -167,7 +170,10 @@ the surface: endpoints with query parameters become direct injection points
 one-page, depth-0 follow crawl (at most 25 per scan). Relative URLs are
 resolved against the asset URL and `${...}` template expressions are
 normalized to `1`. WebSocket (`ws(s)://`) endpoints, asset extensions, and
-CDN hosts are ignored.
+CDN hosts are ignored. The follow crawl and source-map fetches share a 90s
+budget; when it expires the detector stops and reports
+`js_recon_budget_exhausted`, so a slow proxy pool cannot consume the scan
+deadline. Phase timings are reported as `js_recon_ms` and `total_ms`.
 
 Hardcoded-secret findings (GASH-067, CWE-798) are static-content matches
 (AWS/GitHub/GitLab/Slack/Google/Stripe/SendGrid/Twilio/PEM/JWT plus a
@@ -181,14 +187,56 @@ design). `sourceMappingURL` maps are fetched only same-origin/in-scope (at
 most 5 per scan) and only their `sourcesContent` is scanned for secrets —
 endpoints are not extracted from maps.
 
+## Content discovery: bounded parallel probing
+Wordlist discovery probes at most 80 paths per scan with 8 concurrent
+requests; the shared policy session still enforces scope, rate, and request
+budgets. The wordlist phase has a 90s time cap (`content_budget_exhausted`)
+and the follow-up mini-crawl of discovered directories has a 60s cap
+(`content_follow_budget_exhausted`). Wordlists remain technology-pinned
+(`common` plus at most one framework list), not a giant brute-force corpus.
+The live spinner reports `N/80` progress and the report carries
+`content_discovery_ms`. The preceding BFS crawl has a `--crawl-timeout` budget
+(5m default; menu everything 10m); when it expires, partial crawl results are
+kept and the report sets `crawl_budget_exhausted` / `crawl_incomplete`. A crawl
+that returns no result for any other reason sets `crawl_failed`, and plugins
+then only see the root page. The crawler stores at most 64 MiB of page/JS
+bodies (`crawl_stored_bytes`; excess is counted in `crawl_bodies_dropped`), and
+its frontier is capped at `max(1000, 20 × MaxPages)` discovered URLs
+(`crawl_urls_dropped`); parsing still uses the full fetched body, so these are
+retention bounds, not detection bounds. Phase timings are reported per stage
+(`crawl_ms`, `js_recon_ms`, `spa_crawl_ms`, `content_discovery_ms`, `fuzz_ms`,
+`form_fuzz_ms`, `flow_ms`, `matrix_ms`, `smuggle_ms`, `browser_verify_ms`,
+`plugins_ms`, `total_ms`).
+
 ## WAF bypass success rate: unmeasured outside controlled tests
 
 The scanner records WAF observation separately from bypass verification.
-Aggressive mode is opt-in, scope-checked, and bounded to five mutations. A
-non-block status alone is never a bypass: the same mutation must produce two
-stable application responses and must not look like authentication rejection,
-soft-404, challenge, error, or dynamic noise. The repository has hermetic
-regression tests for these cases, but no real-WAF success rate is claimed.
+Aggressive mode is opt-in, scope-checked, and bounded to twenty-four mutations:
+header-only, HPP including benign-first/last-wins differentials, double
+encoding, mixed case, class-aware SQLi/XSS/shell/path/URL semantic variants
+(for example `/**/` and versioned MySQL comments, symbolic `||`/`&&`,
+`0x31`/`CHAR(49)`/`CHR(49)`, percent/GBK quote and
+`%0b`/`%0c`/`%0d`/`%a0` whitespace differentials, modern SVG/MathML/Media XSS
+tags, backtick/computed `alert` calls plus entity/Unicode forms that preserve
+the canary, `${IFS}` shell separators, and encoded traversal families),
+content-type switching (JSON under `text/plain`/vendor types, form under
+multipart, and a body with no `Content-Type`), parser differentials (JSON
+duplicate keys, `\uXXXX` value escapes and escaped key names, malformed
+multipart field names, multipart duplicate fields), 8 KiB inspection-window
+padding, path-normalization confusion (`//`, `/./`, `..;/`, `;`),
+decimal/hex/octal/IPv6 IP spellings, and IP-spoofing header families. A
+non-block status
+alone is never a bypass: the same mutation must produce two stable application
+responses and must not look like authentication rejection, soft-404, challenge,
+error, or dynamic noise. Modern challenge pages (Cloudflare, Akamai, Imperva,
+DataDome, PerimeterX, AWS WAF, Sucuri, F5, Kasada) are detected as untrusted
+and counted as `waf_challenges`; they do not trigger a host-wide plugin skip.
+Headless Chrome checks challenge markers before and after the canary probe and
+returns `blocked` (`payload_waf_challenge` / `control_waf_challenge`) instead
+of treating a challenge DOM as target evidence. The repository has hermetic
+regression tests
+for these cases, but no real-WAF success rate is claimed; anti-bot stealth is
+out of scope.
 
 ## Lab-batch detectors (GASH-034..039): honest boundaries
 

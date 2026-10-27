@@ -1,0 +1,12 @@
+{
+  "name": "operator object treated as a literal - both branches match",
+  "target": "http://example.com/api/users",
+  "status": 200,
+  "headers": {"Content-Type": "application/json"},
+  "body": "{\"error\":\"not found\"}",
+  "control_body": "{\"error\":\"not found\"}",
+  "control_status": 200,
+  "true_bodies": ["{\"error\":\"not found\"}", "{\"error\":\"not found\"}", "{\"error\":\"not found\"}"],
+  "false_bodies": ["{\"error\":\"not found\"}", "{\"error\":\"not found\"}", "{\"error\":\"not found\"}"],
+  "expected_verdict": "reject"
+}

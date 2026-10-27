@@ -8,6 +8,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -62,17 +64,17 @@ func TestMenuEOFExitsCleanly(t *testing.T) {
 }
 
 func TestMenuInvalidChoice(t *testing.T) {
-	out, err := runMenu(t, "9\nq\n")
+	out, err := runMenu(t, "10\nq\n")
 	if err != nil {
 		t.Fatalf("menu invalid choice: %v", err)
 	}
-	if !strings.Contains(out, `Geçersiz seçim: "9"`) {
+	if !strings.Contains(out, `Geçersiz seçim: "10"`) {
 		t.Fatalf("invalid choice not reported:\n%s", out)
 	}
 }
 
 func TestMenuCommandConsole(t *testing.T) {
-	out, err := runMenu(t, "7\nplugins --help\nmenu\nq\n")
+	out, err := runMenu(t, "4\nplugins --help\nmenu\nq\n")
 	if err != nil {
 		t.Fatalf("menu command console: %v", err)
 	}
@@ -88,7 +90,7 @@ func TestMenuCommandConsole(t *testing.T) {
 }
 
 func TestMenuCommandConsoleAcceptsGashPrefix(t *testing.T) {
-	out, err := runMenu(t, "7\ngash --help\nmenu\nq\n")
+	out, err := runMenu(t, "4\ngash --help\nmenu\nq\n")
 	if err != nil {
 		t.Fatalf("menu command console: %v", err)
 	}
@@ -134,12 +136,10 @@ func TestMenuAllTabsReachable(t *testing.T) {
 	}{
 		{"1 tarama", "1\niptal\nq\n", "Hedef URL"},
 		{"2 pluginler", "2\n0\nq\n", "Plugin yönetimi"},
-		{"3 benchmark", "3\n0\nq\n", "Dataset doğrula"},
-		{"4 openapi", "4\niptal\nq\n", "Spec dosyası veya http(s) URL"},
-		{"5 diff", "5\niptal\nq\n", "Eski/baseline JSON raporu"},
-		{"6 suppress", "6\n0\nq\n", "Suppress yönetimi"},
-		{"7 konsol", "7\nmenu\nq\n", "Komut terminali"},
-		{"8 yardım", "8\nq\n", "Klavye kısayolları"},
+		{"3 araçlar", "3\n0\nq\n", "Dataset doğrula"},
+		{"4 konsol", "4\nmenu\nq\n", "Komut terminali"},
+		{"5 durum", "5\n0\nq\n", "Sistem durumu"},
+		{"6 yardım", "6\nq\n", "Klavye kısayolları"},
 	} {
 		t.Run(tc.tab, func(t *testing.T) {
 			out, err := runMenu(t, tc.input)
@@ -204,6 +204,44 @@ func TestMenuScanEverythingPreset(t *testing.T) {
 	}
 	if strings.Contains(out, "Tarama başlatılıyor") {
 		t.Fatalf("onay 'hayır' iken tarama başlamamalı:\n%s", out)
+	}
+}
+
+// TestMenuScanUsesAutoProxy: proxy bayrağı verilmese de yerel liste otomatik
+// kullanılmalı ve özet komutunda görünmeli.
+func TestMenuScanUsesAutoProxy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "alive.txt")
+	if err := os.WriteFile(path, []byte("http://127.0.0.1:8080\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GASH_PROXY_FILE", path)
+	out, err := runMenu(t, "1\nhttp://127.0.0.1\n\n3\n\n\nh\nq\n")
+	if err != nil {
+		t.Fatalf("menu auto proxy: %v", err)
+	}
+	for _, want := range []string{"--proxy-file", path, "Proxy"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("otomatik proxy komutu %q içermeli:\n%s", want, out)
+		}
+	}
+}
+
+// TestMenuEverythingUsesPerRequestProxy: HER ŞEY modunda proxy her istekte
+// dönmeli (IP engeline karşı) ve daha uzun cooldown taşımalı.
+func TestMenuEverythingUsesPerRequestProxy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "alive.txt")
+	if err := os.WriteFile(path, []byte("http://127.0.0.1:8080\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GASH_PROXY_FILE", path)
+	out, err := runMenu(t, "1\nhttp://127.0.0.1\n\n5\ne\n\nh\nq\n")
+	if err != nil {
+		t.Fatalf("menu everything proxy: %v", err)
+	}
+	for _, want := range []string{"--proxy-file", path, "--proxy-rotate per-request", "--proxy-cooldown 45s"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("HER ŞEY proxy komutu %q içermeli:\n%s", want, out)
+		}
 	}
 }
 
@@ -275,11 +313,14 @@ func TestSplitCommandLineUnterminatedQuote(t *testing.T) {
 
 // TestMenuEnglishLanguage: --lang en ile tüm arayüz İngilizce olmalı.
 func TestMenuEnglishLanguage(t *testing.T) {
-	out, err := runMenuLang(t, "en", "q\n")
+	out, err := runMenuLang(t, "en", "6\nq\n")
 	if err != nil {
 		t.Fatalf("menu en: %v", err)
 	}
-	for _, want := range []string{"Scan", "Plugins", "Console", "Legal notice", "Goodbye."} {
+	for _, want := range []string{
+		"Scan", "Plugins", "Console", "Legal notice", "Goodbye.",
+		"Scan a target", "Plugin management", "Interactive menu",
+	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("EN arayüzde %q yok:\n%s", want, out)
 		}
@@ -312,6 +353,7 @@ func TestMenuKeyShortcuts(t *testing.T) {
 	}{
 		{"scan", "s\niptal\nq\n", "Hedef URL"},
 		{"plugins", "p\n0\nq\n", "Plugin yönetimi"},
+		{"tools", "t\n0\nq\n", "Dataset doğrula"},
 		{"bench", "b\n0\nq\n", "Dataset doğrula"},
 		{"openapi", "o\niptal\nq\n", "Spec dosyası veya http(s) URL"},
 		{"diff", "d\niptal\nq\n", "Eski/baseline JSON raporu"},
@@ -365,7 +407,67 @@ func TestMenuChoiceKeyEverything(t *testing.T) {
 	}
 }
 
-// TestMenuMessagesComplete: katalogdaki her anahtar iki dilde de dolu olmalı.
+// TestMenuScanAutoReport: rapor dosyası boş bırakılırsa ("boş=otomatik")
+// tarama yine diske rapor yazmalı.
+// What: deep profil + boş rapor alanı → komuta --output-dir/--format eklenir.
+// Why: Etiket "otomatik" diyordu ama hiç dosya üretilmiyordu.
+func TestMenuScanAutoReport(t *testing.T) {
+	out, err := runMenu(t, "1\nhttp://127.0.0.1\n\n3\n\n\nh\nq\n")
+	if err != nil {
+		t.Fatalf("menu scan auto report: %v", err)
+	}
+	for _, want := range []string{"--output-dir reports", "--format json", "--format text", "--report-stamp", "otomatik (reports/ · json + text · zaman damgalı)"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("otomatik rapor komutu %q içermeli:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "--output ") {
+		t.Fatalf("boş rapor alanında --output kullanılmamalı:\n%s", out)
+	}
+}
+
+// TestMenuScanOutputFormat: a typed report path selects the matching writer
+// instead of writing the default text body into report.json.
+func TestMenuScanOutputFormat(t *testing.T) {
+	out, err := runMenu(t, "1\nhttp://127.0.0.1\n\nt\nreport.json\nn\nh\nq\n")
+	if err != nil {
+		t.Fatalf("menu scan output format: %v", err)
+	}
+	if !strings.Contains(out, "--output report.json --format json") {
+		t.Fatalf("json output must select --format json:\n%s", out)
+	}
+}
+
+// TestMenuStatusViewerRefusesNonText ensures the "view latest" action never
+// dumps raw JSON/HTML into the terminal; it names the file instead.
+func TestMenuStatusViewerRefusesNonText(t *testing.T) {
+	dir := t.TempDir()
+	jsonPath := filepath.Join(dir, "report.json")
+	if err := os.WriteFile(jsonPath, []byte(`{"findings":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	s := newMenuSession(strings.NewReader(""), &out, uiLangTR)
+	s.showLatestReport([]string{jsonPath})
+	if !strings.Contains(out.String(), "text raporu yok") || !strings.Contains(out.String(), "report.json") {
+		t.Fatalf("non-text report must not be dumped: %q", out.String())
+	}
+}
+
+// TestMenuSuppressRemoveNeedsConfirmation protects the destructive action.
+func TestMenuSuppressRemoveNeedsConfirmation(t *testing.T) {
+	out, err := runMenu(t, "x\nk\nF-123\nn\n0\nq\n")
+	if err != nil {
+		t.Fatalf("suppress remove confirmation: %v", err)
+	}
+	if !strings.Contains(out, "Bu suppress kaydı kaldırılsın mı?") {
+		t.Fatalf("remove confirmation missing:\n%s", out)
+	}
+	if !strings.Contains(out, "İptal edildi.") {
+		t.Fatalf("declined removal must report the cancellation:\n%s", out)
+	}
+}
+
 func TestMenuMessagesComplete(t *testing.T) {
 	for key, m := range menuMessages {
 		if strings.TrimSpace(m.tr) == "" || strings.TrimSpace(m.en) == "" {
@@ -417,5 +519,76 @@ func TestDetectLang(t *testing.T) {
 	t.Setenv("LANG", "")
 	if got := detectLang("auto"); got != uiLangTR {
 		t.Fatalf("tanınmayan değerde varsayılan TR olmalı, got %q", got)
+	}
+}
+
+// TestMenuScanBulkTargetFile: a file path is detected as a bulk target list.
+func TestMenuScanBulkTargetFile(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "targets.txt")
+	if err := os.WriteFile(file, []byte("http://127.0.0.1\nhttp://127.0.0.2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runMenu(t, "1\n"+file+"\n2\n\n\n\nh\nq\n")
+	if err != nil {
+		t.Fatalf("menu bulk scan: %v", err)
+	}
+	for _, want := range []string{"--target-file", file, "Hedef dosya", "--output-dir reports"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("bulk scan command %q içermeli:\n%s", want, out)
+		}
+	}
+}
+
+// TestMenuScanAuthHeader: advanced auth header is passed to the scan.
+func TestMenuScanAuthHeader(t *testing.T) {
+	out, err := runMenu(t, "1\nhttp://127.0.0.1\n\n2\n\ne\n\n\nh\nAuthorization: Bearer tok\n\nn\n\n\nh\nq\n")
+	if err != nil {
+		t.Fatalf("menu auth scan: %v", err)
+	}
+	if !strings.Contains(out, "--auth-header") || !strings.Contains(out, "[redacted]") {
+		t.Fatalf("auth header command missing or not redacted:\n%s", out)
+	}
+	if strings.Contains(out, "Bearer tok") {
+		t.Fatalf("auth secret leaked into the displayed command:\n%s", out)
+	}
+}
+
+// TestMenuScanProxyOff: advanced proxy off uses --no-proxy.
+func TestMenuScanProxyOff(t *testing.T) {
+	out, err := runMenu(t, "1\nhttp://127.0.0.1\n\n2\n\ne\n\no\n\n\nn\n\n\nh\nq\n")
+	if err != nil {
+		t.Fatalf("menu proxy off: %v", err)
+	}
+	if !strings.Contains(out, "--no-proxy") {
+		t.Fatalf("proxy off did not add --no-proxy:\n%s", out)
+	}
+}
+
+// TestMenuScanAllowExternal: advanced external toggle adds --allow-external.
+func TestMenuScanAllowExternal(t *testing.T) {
+	out, err := runMenu(t, "1\nhttp://127.0.0.1\n\n2\n\ne\n\n\n\ne\nn\n\n\nh\nq\n")
+	if err != nil {
+		t.Fatalf("menu external scan: %v", err)
+	}
+	if !strings.Contains(out, "--allow-external") {
+		t.Fatalf("external toggle missing:\n%s", out)
+	}
+}
+
+// TestRedactCommandArgs proves credentials never appear in displayed commands.
+func TestRedactCommandArgs(t *testing.T) {
+	got := strings.Join(redactCommandArgs([]string{
+		"scan", "--proxy", "http://user:secretpass@proxy.example:8080",
+		"--cookie", "session-secret", "--auth-header=Bearer token123",
+		"--oob-token", "oob-secret",
+	}), " ")
+	for _, secret := range []string{"secretpass", "session-secret", "token123", "oob-secret"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("secret %q leaked: %s", secret, got)
+		}
+	}
+	if !strings.Contains(got, "***@proxy.example:8080") {
+		t.Fatalf("proxy host should stay visible: %s", got)
 	}
 }

@@ -1,0 +1,9 @@
+{
+  "name": "path is not reflected at all",
+  "target": "http://example.com/files/gash_a1b2c3d4",
+  "status": 200,
+  "headers": {"Content-Type": "text/html"},
+  "body": "<html><body><p>not found</p></body></html>",
+  "control_body": "<html><body><p>not found</p></body></html>",
+  "expected_verdict": "reject"
+}

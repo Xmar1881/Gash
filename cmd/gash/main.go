@@ -152,7 +152,16 @@ func newScanCmd() *cobra.Command {
 		targetFile        string
 		resume            bool
 		outputDir         string
+		reportStamp       bool
 		proxy             string
+		proxyFile         string
+		proxyRotate       string
+		proxyCooldown     string
+		proxyTimeout      string
+		noProxy           bool
+		allowExternal     bool
+		scanTimeout       string
+		crawlTimeout      string
 		safe              bool
 		deep              bool
 		active            bool
@@ -162,6 +171,7 @@ func newScanCmd() *cobra.Command {
 		maxTotal          int64
 		pluginTimeout     string
 		oobServer         string
+		oobToken          string
 		oobWait           string
 		browserVerify     bool
 		browserCrawl      bool
@@ -213,7 +223,7 @@ func newScanCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "scan",
 		Short: "Hedefi tara (Candidate→Verify→Finding hattı)",
-		Long:  "Target scanner with live Tier1/Tier2/Tier3 execution and oracle verification.\n\nLegal: authorized testing only; operator responsibility. Scan only targets you own or have\nwritten permission to test; unauthorized scanning may be illegal.\nWithout --scope no host is blocked: redirects and crawl links (any host, any http/https\nscheme) are followed and DNS decides. Pass --scope <cidr/domain,...> to lock a strict\nallowlist (redirect re-validation, upgrade-only, downgrade never, DNS-rebinding pinning).\nKeep --safe unless you understand active payloads.\nInfra recon is read-only: --ssh-audit (banner) and --db-port-scan (port/salutation) require\n--active; --tls-audit-deep observes legacy TLS 1.0/1.1 acceptance on https targets.\nDeeper infra recon: --ssh-handshake-audit observes the SSH KEXINIT algorithm lists\n(version exchange only; no key exchange, no auth) and --db-unauth probes each supported\ndatabase once with a fixed dummy user (no password, no data read); both require --active.\nScope and rate limits apply to all infra dials.",
+		Long:  "Target scanner with live Tier1/Tier2/Tier3 execution and oracle verification.\n\nLegal: authorized testing only; operator responsibility. Scan only targets you own or have\nwritten permission to test; unauthorized scanning may be illegal.\nBy default the crawl and redirects are locked to the target's registrable domain (eTLD+1),\nso external links are not followed. --allow-external restores open mode; --scope pins an\nexplicit allowlist (CIDR/domain) instead.\nKeep --safe unless you understand active payloads.\nInfra recon is read-only: --ssh-audit (banner) and --db-port-scan (port/salutation) require\n--active; --tls-audit-deep observes legacy TLS 1.0/1.1 acceptance on https targets.\nDeeper infra recon: --ssh-handshake-audit observes the SSH KEXINIT algorithm lists\n(version exchange only; no key exchange, no auth) and --db-unauth probes each supported\ndatabase once with a fixed dummy user (no password, no data read); both require --active.\nScope and rate limits apply to all infra dials.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			if aggressive {
@@ -320,6 +330,18 @@ func newScanCmd() *cobra.Command {
 			reqDur, err := time.ParseDuration(strings.TrimSpace(requestTimeout))
 			if err != nil {
 				return fmt.Errorf("scan: --request-timeout geçersiz %q: %w", requestTimeout, err)
+			}
+			scanDur, err := time.ParseDuration(strings.TrimSpace(scanTimeout))
+			if err != nil || scanDur <= 0 {
+				return fmt.Errorf("scan: --scan-timeout geçersiz %q (pozitif süre olmalı)", scanTimeout)
+			}
+			proxyDur, err := time.ParseDuration(strings.TrimSpace(proxyTimeout))
+			if err != nil || proxyDur < 0 {
+				return fmt.Errorf("scan: --proxy-timeout geçersiz %q (0 veya pozitif süre)", proxyTimeout)
+			}
+			crawlDur, err := time.ParseDuration(strings.TrimSpace(crawlTimeout))
+			if err != nil || crawlDur <= 0 {
+				return fmt.Errorf("scan: --crawl-timeout geçersiz %q (pozitif süre olmalı)", crawlTimeout)
 			}
 			dbPortsList, err := parseDBPorts(dbPorts)
 			if err != nil {
@@ -455,6 +477,14 @@ func newScanCmd() *cobra.Command {
 				}
 				fmt.Fprintf(cmd.ErrOrStderr(), "login: url=%s verify=%s user=[redacted] pass=[redacted]\n", loginOpts.LoginURL, verifyNote)
 			}
+			// Default to the target's registrable domain so the crawler stays
+			// on-site instead of following external links until the deadline.
+			if len(scope) == 0 && !allowExternal && strings.TrimSpace(target) != "" {
+				if d := sameSiteDomain(normalized); d != "" {
+					scope = []string{d}
+					fmt.Fprintf(cmd.ErrOrStderr(), "notice: same-site scope %q (use --allow-external to leave the domain)\n", d)
+				}
+			}
 			if strings.TrimSpace(target) != "" {
 				if len(scope) > 0 {
 					if err := enforceScanScope(ctx, normalized, scope); err != nil {
@@ -489,6 +519,21 @@ func newScanCmd() *cobra.Command {
 				}
 			}
 			cfg := engine.DefaultConfig()
+			// Bulk scans derive a union of the targets' registrable domains so
+			// one target cannot drag the crawl to external hosts.
+			if len(scope) == 0 && !allowExternal && strings.TrimSpace(targetFile) != "" {
+				if targets, terr := readTargetFile(targetFile); terr == nil {
+					for _, t := range targets {
+						if d := sameSiteDomain(t); d != "" {
+							scope = append(scope, d)
+						}
+					}
+					scope = uniqueStrings(scope)
+					if len(scope) > 0 {
+						fmt.Fprintf(cmd.ErrOrStderr(), "notice: same-site scope %s (use --allow-external to leave the domains)\n", strings.Join(scope, ", "))
+					}
+				}
+			}
 			cfg.Safe = safe
 			cfg.Deep = deep
 			cfg.Active = active
@@ -503,9 +548,19 @@ func newScanCmd() *cobra.Command {
 			cfg.MaxRequestsPerTarget = maxPerTarget
 			cfg.MaxRequestsTotal = maxTotal
 			cfg.PluginTimeoutMs = pluginDur.Milliseconds()
+			cfg.ScanTimeout = scanDur
+			cfg.CrawlTimeout = crawlDur
+			cfg.ProxyAttemptTimeout = proxyDur
 			cfg.RatePerSecond = rateLimit
 			cfg.Parallelism = parallelism
 			cfg.OOBServer = strings.TrimSpace(oobServer)
+			cfg.OOBToken = strings.TrimSpace(oobToken)
+			if cfg.OOBToken == "" {
+				cfg.OOBToken = strings.TrimSpace(os.Getenv("GASH_OOB_TOKEN"))
+			}
+			if strings.EqualFold(cfg.OOBServer, "interactsh") {
+				fmt.Fprintln(cmd.ErrOrStderr(), "warn: public interactsh (third-party OOB) selected; use interactsh://your-server or a self-hosted server for sensitive targets")
+			}
 			cfg.BrowserVerify = browserVerify
 			cfg.BrowserCrawl = browserCrawl
 			cfg.BrowserCrawlPages = browserCrawlPages
@@ -532,13 +587,16 @@ func newScanCmd() *cobra.Command {
 			cfg.InfraTimeout = infraDur
 			cfg.InfraRatePerSecond = infraRateLimit
 			cfg.InfraParallelism = infraParallelism
-			if strings.TrimSpace(proxy) != "" {
-				pu, err := url.Parse(strings.TrimSpace(proxy))
-				if err != nil || pu.Host == "" || (pu.Scheme != "http" && pu.Scheme != "https") {
-					return fmt.Errorf("scan: --proxy geçersiz (http veya https URL olmalı, got %q)", proxy)
-				}
-				cfg.ProxyURL = strings.TrimSpace(proxy)
+			proxyCfg, err := resolveProxySettings(proxy, proxyFile, proxyRotate, proxyCooldown, !noProxy)
+			if err != nil {
+				return fmt.Errorf("scan: %w", err)
 			}
+			if proxyCfg.AutoFile != "" {
+				fmt.Fprintf(cmd.ErrOrStderr(), "otomatik proxy listesi: %s (%d proxy)\n", proxyCfg.AutoFile, len(proxyCfg.URLs))
+			}
+			cfg.ProxyURLs = proxyCfg.URLs
+			cfg.ProxyRotate = string(proxyCfg.Rotate)
+			cfg.ProxyCooldown = proxyCfg.Cooldown
 
 			// P1.2: Apply scan profile
 			profileName := config.ProfileName(strings.ToLower(strings.TrimSpace(profile)))
@@ -582,9 +640,6 @@ func newScanCmd() *cobra.Command {
 					}
 				}
 			}
-			if cfg.PluginTimeoutMs > 0 {
-				cfg.ScanTimeout = 10 * time.Duration(cfg.PluginTimeoutMs) * time.Millisecond
-			}
 			if strings.TrimSpace(targetFile) != "" {
 				bulkFormats := formats
 				if !cmd.Flags().Changed("format") {
@@ -622,19 +677,29 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().StringVar(&targetFile, "target-file", "", "hedef listesi dosyası (bir satır bir hedef, # yorum)")
 	cmd.Flags().BoolVar(&resume, "resume", false, "önceki taramada raporu olan hedefleri atla")
 	cmd.Flags().StringVar(&outputDir, "output-dir", "reports", "toplu tarama rapor çıktı dizini")
-	cmd.Flags().StringVar(&proxy, "proxy", "", "upstream HTTP proxy URL (örn. http://127.0.0.1:8080)")
+	cmd.Flags().BoolVar(&reportStamp, "report-stamp", false, "rapor dosya adına zaman damgası ekle (aynı hedefin tekrarlı taramaları birbirini ezmez)")
+	cmd.Flags().StringVar(&proxy, "proxy", "", "upstream HTTP proxy URL (örn. http://127.0.0.1:8080); --proxy-file ile birlikte havuz oluşturur")
+	cmd.Flags().StringVar(&proxyFile, "proxy-file", "", "proxy listesi dosyası (satır başına URL, # yorum; çoklu proxy'de timeout/blokta rotasyon; verilmezse .gash/proxies/alive.txt otomatik)")
+	cmd.Flags().StringVar(&proxyRotate, "proxy-rotate", "per-host", "proxy rotasyonu: per-host (oturum dostu) veya per-request")
+	cmd.Flags().StringVar(&proxyCooldown, "proxy-cooldown", "30s", "başarısız/bloklu proxy'nin atlanma süresi")
+	cmd.Flags().BoolVar(&noProxy, "no-proxy", false, "otomatik proxy listesini kapat (GASH_PROXY_FILE / .gash/proxies/alive.txt)")
+	cmd.Flags().StringVar(&proxyTimeout, "proxy-timeout", "8s", "çoklu proxy'de tek deneme timeout'u (0=request-timeout'u kullan)")
+	cmd.Flags().BoolVar(&allowExternal, "allow-external", false, "crawl/redirect ile hedef domain dışına çıkmaya izin ver (varsayılan: yalnızca hedef domain)")
+	cmd.Flags().StringVar(&scanTimeout, "scan-timeout", "30m", "tüm taramanın süre tavanı (discovery + pluginler)")
+	cmd.Flags().StringVar(&crawlTimeout, "crawl-timeout", "5m", "BFS keşif fazının süre tavanı (pluginlere süre kalsın)")
 	cmd.Flags().BoolVar(&safe, "safe", true, "varsayılan safe")
 	cmd.Flags().BoolVar(&deep, "deep", false, "deep faz + ExecutionOracle kapısı")
 	cmd.Flags().BoolVar(&active, "active", false, "state-changing/OOB payload kapısı")
 	cmd.Flags().BoolVar(&aggressive, "aggressive", false, "tam güç ofansif tarama: tüm dedektörler, genişletilmiş bütçe, yüksek rate-limit")
-	cmd.Flags().StringSliceVar(&scope, "scope", nil, "CIDR/domain allowlist (verilirse opt-in sıkı mod; verilmezse host engeli yok)")
+	cmd.Flags().StringSliceVar(&scope, "scope", nil, "CIDR/domain allowlist; verilmezse hedef domain (eTLD+1) otomatik kullanılır (--allow-external ile kapatılır)")
 	cmd.Flags().Int64Var(&maxPerTarget, "max-requests-per-target", 1000, "per-target bütçe")
 	cmd.Flags().Int64Var(&maxTotal, "max-requests-total", 10000, "global bütçe")
 	cmd.Flags().StringVar(&pluginTimeout, "plugin-timeout", "60s", "per-plugin timeout")
 	cmd.Flags().StringVar(&requestTimeout, "request-timeout", "20s", "per-HTTP-request timeout")
 	cmd.Flags().Int64Var(&maxResponseBytes, "max-response-bytes", 5*1024*1024, "max stored response body bytes")
 	cmd.Flags().StringVar(&oobWait, "oob-wait", "60s", "scan-sonu OOB penceresi")
-	cmd.Flags().StringVar(&oobServer, "oob-server", "", "self-hosted interaction sunucusu (boş=kapalı)")
+	cmd.Flags().StringVar(&oobServer, "oob-server", "", "OOB sağlayıcısı: local | interactsh (public) | interactsh://host | self-hosted API URL (boş=kapalı)")
+	cmd.Flags().StringVar(&oobToken, "oob-token", "", "self-hosted interactsh/API token'ı (tercihen GASH_OOB_TOKEN ortam değişkeni)")
 	cmd.Flags().BoolVar(&browserVerify, "browser-verify", false, "statik XSS kanıtını gerçek tarayıcı tetiklemesi + temiz kontrol ile doğrula (--active ve -tags deep build şart; stub build'de dürüstçe atlanır)")
 	cmd.Flags().BoolVar(&browserCrawl, "browser-crawl", false, "keşfedilen sayfaları gerçek tarayıcıda render edip SPA yüzeyini (DOM form/link + XHR/fetch endpoint) tarama listesine ekler; -tags deep build + Chrome şart; stub build'de dürüstçe atlanır")
 	cmd.Flags().IntVar(&browserCrawlPages, "browser-crawl-pages", 5, "SPA render edilecek en fazla sayfa sayısı (1..10)")
@@ -885,7 +950,7 @@ func writeScanReports(cmd *cobra.Command, rep *engine.Report, formats []string, 
 			return err
 		}
 		_ = f.Sync()
-		fmt.Fprintf(cmd.OutOrStdout(), "wrote %s (%s, %d findings, %d skipped)\n", output, formats[0], len(rep.Findings), len(rep.Skipped))
+		fmt.Fprintf(cmd.OutOrStdout(), "wrote %s (%s, %d findings, %d skipped, %d partial)\n", output, formats[0], len(rep.Findings), len(rep.Skipped), rep.Stats["partial_plugins"])
 		return nil
 	}
 
@@ -903,6 +968,9 @@ func writeScanReports(cmd *cobra.Command, rep *engine.Report, formats []string, 
 		if baseName == "" {
 			baseName = "report"
 		}
+		if reportStampEnabled(cmd) {
+			baseName += "-" + time.Now().Format("20060102-150405")
+		}
 		for _, name := range formats {
 			outPath := filepath.Join(outputDir, baseName+"."+name)
 			f, err := openScanOutput(outPath)
@@ -914,7 +982,7 @@ func writeScanReports(cmd *cobra.Command, rep *engine.Report, formats []string, 
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "wrote %s (%s, %d findings, %d skipped)\n", outPath, name, len(rep.Findings), len(rep.Skipped))
+			fmt.Fprintf(cmd.OutOrStdout(), "wrote %s (%s, %d findings, %d skipped, %d partial)\n", outPath, name, len(rep.Findings), len(rep.Skipped), rep.Stats["partial_plugins"])
 		}
 		// Eğer formats içinde text varsa, terminale de insan-okur özeti bas
 		for _, name := range formats {
@@ -932,6 +1000,18 @@ func writeScanReports(cmd *cobra.Command, rep *engine.Report, formats []string, 
 		}
 	}
 	return nil
+}
+
+// reportStampEnabled: --report-stamp verilmişse rapor adına zaman damgası eklenir.
+// What: Same target scanned twice no longer overwrites the previous report.
+// Why: Deterministic names stay the default for CI diffing; the interactive
+// menu opts in so ad-hoc runs accumulate instead of clobbering each other.
+func reportStampEnabled(cmd *cobra.Command) bool {
+	if cmd == nil || cmd.Flags().Lookup("report-stamp") == nil {
+		return false
+	}
+	v, err := cmd.Flags().GetBool("report-stamp")
+	return err == nil && v
 }
 
 // openScanOutput creates a report file with its parent directory.

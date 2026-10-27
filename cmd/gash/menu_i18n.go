@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -95,6 +96,20 @@ func msg(l uiLang, key string, args ...any) string {
 
 // t: oturumun diline göre metni çözer.
 func (s *menuSession) t(key string, args ...any) string { return msg(s.lang, key, args...) }
+
+// activeUILang is the process-wide language for non-session surfaces such as
+// the scan spinner. The menu updates it when the user toggles languages; CLI
+// commands fall back to --lang/GASH_LANG/OS locale via detectLang.
+var activeUILang atomic.Value
+
+func setActiveUILang(l uiLang) { activeUILang.Store(l) }
+
+func currentUILang() uiLang {
+	if v, ok := activeUILang.Load().(uiLang); ok {
+		return v
+	}
+	return detectLang("")
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Metin katalogları (gömülü JSON dil dosyaları)

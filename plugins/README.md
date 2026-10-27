@@ -21,9 +21,9 @@ The engine discovers this tree automatically; no `--load-plugin` flag exists.
 | Tier | Count | Auto-discovered | Trust Required |
 |------|------:|:---------------:|:--------------:|
 | Tier 1 (YAML) | 275 | ✅ | ❌ |
-| Tier 2 (JS) | 52 | ✅ | ❌ |
+| Tier 2 (JS) | 62 | ✅ | ❌ |
 | Tier 3 (Native) | 1 | ❌ | ✅ `gash plugins trust` |
-| **Total** | **328** | | |
+| **Total** | **338** | | |
 
 ---
 
@@ -31,16 +31,16 @@ The engine discovers this tree automatically; no `--load-plugin` flag exists.
 
 | Category | Plugins | Tier | Key Oracle | Good First PR? |
 |----------|---------|------|------------|----------------|
-| **Cross-site Scripting** | 8 | 1/2 | `reflection`, `stored`, `execution` | ✅ `xss-attribute-injection` |
-| **SQL Injection** | 6 | 1/2 | `error`, `differential`, `timing`, `oob` | ✅ `sqli-auth-bypass` |
+| **Cross-site Scripting** | 11 | 1/2 | `reflection`, `stored`, `execution` | ✅ `xss-attribute-injection` |
+| **SQL Injection** | 8 | 1/2 | `error`, `differential`, `timing`, `oob` | ✅ `sqli-auth-bypass` |
 | **Command Injection** | 5 | 1/2 | `error`, `timing`, `oob` | ✅ `command-injection-timing` |
-| **Path Traversal / File** | 9 | 1/2 | `error`, `upload-served` | ✅ `backup-file-exposure` |
-| **SSRF / Open Redirect** | 7 | 1/2 | `redirect`, `oob`, `reflection` | ✅ `open-redirect-param` |
-| **NoSQL / LDAP / SSTI** | 9 | 1/2 | `timing`, `differential`, `oob` | — |
+| **Path Traversal / File** | 10 | 1/2 | `error`, `upload-served` | ✅ `backup-file-exposure` |
+| **SSRF / Open Redirect** | 8 | 1/2 | `redirect`, `oob`, `reflection` | ✅ `open-redirect-param` |
+| **NoSQL / LDAP / SSTI** | 10 | 1/2 | `timing`, `differential`, `oob` | — |
 | **GraphQL** | 5 | 1 | `version`, `differential` | — |
 | **Auth / IDOR / Logic** | 11 | 1/2 | `differential`, `error` | ✅ `idor-differential` |
-| **Misconfig / Headers** | 27 | 1 | `header`, `cookie`, `cors`, `header` modes | ✅ `cookie-flags` |
-| **Deserialization / XXE** | 6 | 1/2 | `error` (deserialization, takeover, xpath, backup) | — |
+| **Misconfig / Headers** | 28 | 1 | `header`, `cookie`, `cors`, `header` modes | ✅ `cookie-flags` |
+| **Deserialization / XXE** | 8 | 1/2 | `error` (deserialization, takeover, xpath, backup) | — |
 | **Framework-specific** | 2 | 1 | `middleware-bypass`, `oob` | — |
 | **Injection (JNDI, EL, SSI, JSONP, PP)** | 6 | 1/2 | `oob`, `reflection`, `error`, `differential` | — |
 | **Info Disclosure** | 8 | 1 | `error`, `header`, `version` | ✅ `phpinfo-exposure` |
@@ -78,9 +78,12 @@ corpus and has an individual report under `docs/metrics/`. Examples include
 | `xss-stored-basic` | Tier 1 | `reflection` | `xss/xss-stored-basic.yaml` | |
 | `xss-stored-two-step` | Tier 2 | `stored` | `xss/xss-stored-two-step.js` | |
 | `xss-stored-header-two-step` | Tier 2 | `stored` | `xss/xss-stored-header-two-step.js` | |
+| `xss-path-segment` | Tier 2 | `reflection` | `xss/xss-path-segment.js` | |
+| `xss-reflected-header` | Tier 2 | `reflection` | `xss/xss-reflected-header.js` | |
 | `xss-reflected-url-context` | Tier 2 | `reflection` (url-executable) | `xss/xss-reflected-url-context.js` | |
 | `dom-sink-basic` | Tier 2 | `execution` (firm max) | `xss/dom-sink-basic.js` | |
 | `xpath-injection-error` | Tier 1 | `error` (xpath) | `xpath/xpath-injection-error.yaml` | |
+| `xpath-xml-body-error` | Tier 2 | `error` (xpath) | `xpath/xpath-xml-body-error.js` | |
 
 ### SQL Injection
 
@@ -93,6 +96,8 @@ corpus and has an individual report under `docs/metrics/`. Examples include
 | `sqli-auth-bypass` | Tier 1 | `error` | `sqli/sqli-auth-bypass.yaml` | ⭐ **Yes** |
 | `blind-sqli-oob` | Tier 1 | `oob` (required) | `blind-sqli-oob/blind-sqli-oob.yaml` | |
 | `sqli-oob-second-order` | Tier 2 | `oob` (required) | `sqli/sqli-oob-second-order.js` | |
+| `sqli-xml-body-error` | Tier 2 | `error` | `sqli/sqli-xml-body-error.js` | |
+| `sqli-multipart-error` | Tier 2 | `error` | `sqli/sqli-multipart-error.js` | |
 
 ### Command Injection
 
@@ -119,6 +124,7 @@ corpus and has an individual report under `docs/metrics/`. Examples include
 | `rfi-remote-include` | Tier 1 | `reflection` | `rfi/rfi-remote-include.yaml` | |
 | `file-upload-filename-traversal` | Tier 2 | `upload-served` | `file-upload/file-upload-filename-traversal.js` | |
 | `file-upload-sniffing-mismatch` | Tier 2 | `upload-served` | `file-upload/file-upload-sniffing-mismatch.js` | |
+| `path-traversal-encoding-bypass` | Tier 2 | `error` (path_traversal) | `path-traversal/path-traversal-encoding-bypass.js` | |
 
 ### SSRF & Open Redirect
 
@@ -127,6 +133,7 @@ corpus and has an individual report under `docs/metrics/`. Examples include
 | `open-redirect-param` | Tier 1 | `redirect` | `redirect/open-redirect-param.yaml` | ⭐ **Yes** |
 | `oauth-open-redirect` | Tier 1 | `redirect` | `oauth-open-redirect/oauth-open-redirect.yaml` | |
 | `open-redirect-userinfo-confusion` | Tier 2 | `redirect` | `redirect/open-redirect-userinfo-confusion.js` | |
+| `open-redirect-path-parser` | Tier 2 | `redirect` | `redirect/open-redirect-path-parser.js` | |
 | `ssrf-blind-oob` | Tier 2 | `oob` (required) | `ssrf/ssrf-blind-oob.js` | |
 | `ssrf-cloud-metadata` | Tier 1 | `reflection` | `ssrf/ssrf-cloud-metadata.yaml` | |
 | `ssrf-internal-port-scan` | Tier 1 | `reflection` | `ssrf-internal/ssrf-internal-port-scan.yaml` | |
@@ -148,6 +155,7 @@ corpus and has an individual report under `docs/metrics/`. Examples include
 | `ssti-json-body-oob` | Tier 2 | `oob` (required) | `ssti/ssti-json-body-oob.js` |
 | `ldap-injection-oob-json-body` | Tier 2 | `oob` (required) | `ldap/ldap-injection-oob-json-body.js` |
 | `ldap-injection-json-body-timing` | Tier 2 | `timing` (firm) | `ldap/ldap-injection-json-body-timing.js` |
+| `nosql-nested-json-operator` | Tier 2 | `differential` | `nosql/nosql-nested-json-operator.js` |
 
 ### GraphQL
 
@@ -217,6 +225,8 @@ corpus and has an individual report under `docs/metrics/`. Examples include
 | `xxe-blind-oob` | Tier 1 | `oob` (required) | `xxe-blind/xxe-blind-oob.yaml` |
 | `xml-external-entity-blind` | Tier 1 | `error` | `xxe-blind-oob/xml-external-entity-blind.yaml` |
 | `xxe-json-body-error` | Tier 2 | `error` (generic_error) | `xxe/xxe-json-body-error.js` |
+| `xxe-xml-body-oob` | Tier 2 | `oob` (required) | `xxe/xxe-xml-body-oob.js` |
+| `xxe-svg-upload-oob` | Tier 2 | `oob` (required) | `xxe/xxe-svg-upload-oob.js` |
 | `ssi-injection` | Tier 1 | `error` (ssi) | `ssi-injection/ssi-injection.yaml` |
 
 ### Framework-specific

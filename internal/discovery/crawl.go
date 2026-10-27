@@ -46,7 +46,22 @@ type CrawlOptions struct {
 	// bütçesi ve denenen URL. Canlı ilerleme göstergesi içindir; nil olabilir.
 	// Why: Uzun crawl'larda çağıran taraf bekleyişin ilerlediğini gösterebilmeli.
 	OnPage func(done, total int, pageURL string)
+	// MaxDiscoveredURLs caps the BFS frontier plus the visited set. Link-heavy
+	// pages can otherwise enqueue millions of URLs even under MaxPages. Zero
+	// derives max(1000, MaxPages*20).
+	MaxDiscoveredURLs int
+	// MaxStoredBodyBytes caps the page/JS bodies retained in the result. The
+	// crawler still parses the full fetched body; only the stored copy is
+	// truncated, so detection continues on large sites without unbounded RAM.
+	// Zero uses 64 MiB.
+	MaxStoredBodyBytes int64
 }
+
+// Default crawl memory bounds.
+const (
+	defaultCrawlBodyBudget = 64 << 20
+	minDiscoveredURLs      = 1000
+)
 
 // DefaultCrawlOptions returns recommended default crawl parameters.
 func DefaultCrawlOptions() CrawlOptions {
@@ -70,6 +85,12 @@ type CrawlResult struct {
 	JSSources []JSSource
 	// JSFilesFetched çekilen harici JS dosyası sayısıdır (inline sayılmaz).
 	JSFilesFetched int
+	// StoredBodyBytes is the retained body size after the memory budget.
+	StoredBodyBytes int64
+	// BodiesDropped counts bodies truncated or dropped by that budget.
+	BodiesDropped int
+	// URLsDropped counts links rejected by MaxDiscoveredURLs.
+	URLsDropped int
 }
 
 type crawlItem struct {
@@ -97,20 +118,72 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 	if opts.MaxDepth < 0 {
 		opts.MaxDepth = 3
 	}
+	if opts.MaxDiscoveredURLs <= 0 {
+		opts.MaxDiscoveredURLs = opts.MaxPages * 20
+		if opts.MaxDiscoveredURLs < minDiscoveredURLs {
+			opts.MaxDiscoveredURLs = minDiscoveredURLs
+		}
+	}
+	if opts.MaxStoredBodyBytes <= 0 {
+		opts.MaxStoredBodyBytes = defaultCrawlBodyBudget
+	}
 
 	result := &CrawlResult{}
 	visited := make(map[string]bool)
 	seenParamSkeletons := make(map[string]bool)
 	seenPoints := make(map[string]bool)
 	seenForms := make(map[string]bool)
+	var queue []crawlItem
+
+	// addDiscovered is the single frontier gate: it dedupes, enforces the
+	// discovery cap, and optionally records a robots/sitemap seed.
+	addDiscovered := func(resolved *url.URL, depth int, seed bool) bool {
+		norm := normalizeURL(resolved)
+		skel := urlSkeleton(resolved)
+		if visited[norm] || seenParamSkeletons[skel] {
+			return false
+		}
+		if len(visited) >= opts.MaxDiscoveredURLs {
+			result.URLsDropped++
+			return false
+		}
+		visited[norm] = true
+		seenParamSkeletons[skel] = true
+		if seed {
+			result.SeedURLs = append(result.SeedURLs, norm)
+		}
+		queue = append(queue, crawlItem{rawURL: norm, depth: depth})
+		return true
+	}
+
+	// storeBody retains at most the remaining memory budget. A truncated slice
+	// is copied so the full response body can be garbage-collected; parsing
+	// always uses the original bytes, not this copy.
+	storeBody := func(body []byte) []byte {
+		if len(body) == 0 {
+			return nil
+		}
+		remaining := opts.MaxStoredBodyBytes - result.StoredBodyBytes
+		if remaining <= 0 {
+			result.BodiesDropped++
+			return nil
+		}
+		if int64(len(body)) > remaining {
+			out := make([]byte, remaining)
+			copy(out, body[:remaining])
+			result.StoredBodyBytes += remaining
+			result.BodiesDropped++
+			return out
+		}
+		result.StoredBodyBytes += int64(len(body))
+		return body
+	}
 
 	normTarget := normalizeURL(targetParsed)
 	visited[normTarget] = true
 	visited[urlSkeleton(targetParsed)] = true
 
-	queue := []crawlItem{
-		{rawURL: normTarget, depth: 0},
-	}
+	queue = append(queue, crawlItem{rawURL: normTarget, depth: 0})
 	result.SeedURLs = append(result.SeedURLs, normTarget)
 
 	policy := client.Policy()
@@ -139,14 +212,7 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 					}
 					resolved := rootParsed.ResolveReference(rel)
 					if isURLInScope(ctx, resolved, targetParsed, policy, opts.Scope) && !isSessionDestructiveURL(resolved.String()) {
-						norm := normalizeURL(resolved)
-						skel := urlSkeleton(resolved)
-						if !visited[norm] && !seenParamSkeletons[skel] {
-							visited[norm] = true
-							seenParamSkeletons[skel] = true
-							result.SeedURLs = append(result.SeedURLs, norm)
-							queue = append(queue, crawlItem{rawURL: norm, depth: 1})
-						}
+						addDiscovered(resolved, 1, true)
 					}
 				}
 			}
@@ -182,14 +248,7 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 						}
 						resolved := rootParsed.ResolveReference(lu)
 						if isURLInScope(ctx, resolved, targetParsed, policy, opts.Scope) && !isSessionDestructiveURL(resolved.String()) {
-							norm := normalizeURL(resolved)
-							skel := urlSkeleton(resolved)
-							if !visited[norm] && !seenParamSkeletons[skel] {
-								visited[norm] = true
-								seenParamSkeletons[skel] = true
-								result.SeedURLs = append(result.SeedURLs, norm)
-								queue = append(queue, crawlItem{rawURL: norm, depth: 1})
-							}
+							addDiscovered(resolved, 1, true)
 						}
 					}
 				}
@@ -236,7 +295,7 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 			URL:     item.rawURL,
 			Status:  resp.Status,
 			Headers: resp.Headers,
-			Body:    resp.Body,
+			Body:    storeBody(resp.Body),
 			Depth:   item.depth,
 		}
 		result.Pages = append(result.Pages, page)
@@ -278,7 +337,7 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 				for _, content := range inline {
 					inlineBudget -= len(content)
 					result.JSSources = append(result.JSSources, JSSource{
-						URL: item.rawURL, Body: content, Inline: true,
+						URL: item.rawURL, Body: storeBody(content), Inline: true,
 					})
 				}
 				for _, s := range srcs {
@@ -325,13 +384,7 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 				if isStateTogglingURL(resolved.String()) {
 					continue
 				}
-				norm := normalizeURL(resolved)
-				skel := urlSkeleton(resolved)
-				if !visited[norm] && !seenParamSkeletons[skel] {
-					visited[norm] = true
-					seenParamSkeletons[skel] = true
-					queue = append(queue, crawlItem{rawURL: norm, depth: item.depth + 1})
-				}
+				addDiscovered(resolved, item.depth+1, false)
 			}
 		}
 	}
@@ -356,7 +409,7 @@ func Crawl(ctx context.Context, client *probe.Client, targetURL string, opts Cra
 			if resp == nil || len(resp.Body) == 0 {
 				continue
 			}
-			result.JSSources = append(result.JSSources, JSSource{URL: su, Body: resp.Body})
+			result.JSSources = append(result.JSSources, JSSource{URL: su, Body: storeBody(resp.Body)})
 		}
 	}
 

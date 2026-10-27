@@ -1,0 +1,9 @@
+{
+  "name": "neutral documents produce no xpath signature",
+  "target": "http://example.com/api/search",
+  "status": 200,
+  "headers": {"Content-Type": "application/xml"},
+  "body": "<result><item>1</item></result>",
+  "control_body": "<result><item>1</item></result>",
+  "expected_verdict": "reject"
+}

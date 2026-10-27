@@ -256,7 +256,11 @@ func TestFullRunIncludesProtoFindings(t *testing.T) {
 	if _, err := loader.Discover([]string{dir}, reg); err != nil {
 		t.Fatalf("discover: %v", err)
 	}
-	e := New(reg, DefaultConfig())
+	e := New(reg, func() Config {
+		cfg := DefaultConfig()
+		cfg.SkipTLSFailFast = true
+		return cfg
+	}())
 	rep, err := e.Run(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("run: %v", err)

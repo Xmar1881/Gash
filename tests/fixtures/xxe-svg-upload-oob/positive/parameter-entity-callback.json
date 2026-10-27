@@ -1,0 +1,10 @@
+{
+  "name": "svg parser resolves the external parameter entity",
+  "target": "http://example.com/api/avatar",
+  "status": 200,
+  "headers": {"Content-Type": "application/json"},
+  "body": "{\"uploaded\":true}",
+  "oob_callback": true,
+  "expected_verdict": "accept",
+  "expected_confidence": "confirmed"
+}

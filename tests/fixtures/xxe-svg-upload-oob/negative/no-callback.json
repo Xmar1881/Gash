@@ -1,0 +1,9 @@
+{
+  "name": "accepted upload without a callback proves nothing",
+  "target": "http://example.com/api/avatar",
+  "status": 200,
+  "headers": {"Content-Type": "application/json"},
+  "body": "{\"uploaded\":true}",
+  "oob_callback": false,
+  "expected_verdict": "reject"
+}

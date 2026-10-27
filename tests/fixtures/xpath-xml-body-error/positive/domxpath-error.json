@@ -1,0 +1,10 @@
+{
+  "name": "domxpath compile error confirms at firm",
+  "target": "http://example.com/api/search",
+  "status": 500,
+  "headers": {"Content-Type": "application/xml"},
+  "body": "<error>Warning: DOMXPath::query(): Invalid expression in xpath</error>",
+  "control_body": "<result><item>1</item></result>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

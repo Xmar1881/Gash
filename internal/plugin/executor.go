@@ -63,8 +63,11 @@ func Execute(ctx context.Context, pluginID string, fn PluginFunc) (res PluginRes
 			case errors.Is(o.err, ErrPolicyViolation):
 				res.Status = StatusPolicyError
 			case errors.Is(o.err, ErrBudgetExceeded),
-				errors.Is(o.err, ErrRateLimited),
-				errors.Is(o.err, ErrScopeViolation):
+				errors.Is(o.err, ErrRateLimited):
+				// Bütçe/rate tavanı: plugin koştu ama bitiremedi. "skipped"
+				// demek yanıltıcıydı (kısmi sonuç olabilir).
+				res.Status = StatusPartial
+			case errors.Is(o.err, ErrScopeViolation):
 				res.Status = StatusSkipped
 			case errors.Is(o.err, context.DeadlineExceeded):
 				res.Status = StatusTimeout

@@ -22,19 +22,23 @@ contributors alike.
   with written permission. Bug-bounty targets must stay inside the program
   scope; corporate targets need engagement paperwork; CI targets must be
   ephemeral preview environments.
-- **Scope allowlist (opt-in strict mode).** Without `--scope` the engine runs
-  in open mode: nothing is blocked, cross-host redirects and crawl links are
-  followed, and the operator alone owns authorization. For every non-local
-  scan pass `--scope` with CIDR or domain entries; the engine then enforces
-  the allowlist (plus DNS-rebinding pinning) at the proxy, and out-of-scope
-  requests fail closed with `ErrScopeViolation`.
+- **Scope boundary (default same-site).** Without `--scope`, the engine stays
+  on the target's registrable domain (eTLD+1) and its subdomains; cross-host
+  redirects and crawl links are blocked, and the operator still owns
+  authorization for every payload. For every non-local scan pass `--scope`
+  with CIDR or domain entries; the engine then enforces the allowlist (plus
+  DNS-rebinding pinning) at the proxy, and out-of-scope requests fail closed
+  with `ErrScopeViolation`. `--allow-external` restores open mode and must be
+  used deliberately.
 - **OOB opt-in.** Out-of-band payloads force the target to call back over
   DNS or HTTP. OOB stays disabled unless `--oob-server` points at a
   self-hosted interaction server you control. Public interactsh endpoints
   are never the default. `--oob-server` requires `--active`.
-- **Safe default.** Default scans stay `safe` (GET/HEAD/OPTIONS only).
-  `--deep` and `--active` are explicit opt-ins because they change state or
-  exfiltrate callbacks. Do not disable `safe` in CI or against production.
+- **Safe default option.** The CLI default profile is `standard` (controlled
+  active checks); use `--profile safe` (GET/HEAD/OPTIONS only) in CI and
+  against production. `--profile deep`, `--profile aggressive`, and
+  `--active`-gated state-changing checks are explicit opt-ins. Do not enable
+  them without authorization.
 
 Misuse reports are handled as security issues; review rejects any plugin or
 change that encourages unauthorized scanning.

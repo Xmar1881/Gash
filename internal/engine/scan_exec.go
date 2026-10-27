@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -28,6 +29,7 @@ import (
 	"github.com/Xmar1881/Gash/internal/plugin/loader"
 	"github.com/Xmar1881/Gash/internal/probe"
 	"github.com/Xmar1881/Gash/internal/proto"
+	"github.com/Xmar1881/Gash/internal/proxypool"
 	"github.com/Xmar1881/Gash/internal/recon"
 	"github.com/Xmar1881/Gash/internal/smuggle"
 )
@@ -161,21 +163,16 @@ func newScanID() string {
 // kimlik bağlamı tek yerden (ExtraHeaders) gömülür ve login sonrası
 // SetExtraHeaders ile tazelenir.
 func (e *Engine) newScanClient(target string) (*plugin.PolicySession, *probe.Client, error) {
-	var parsedProxy *url.URL
-	if strings.TrimSpace(e.cfg.ProxyURL) != "" {
-		var err error
-		parsedProxy, err = url.Parse(strings.TrimSpace(e.cfg.ProxyURL))
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid proxy URL %q: %w", e.cfg.ProxyURL, err)
-		}
-	}
-
 	maxResponseBytes := e.cfg.MaxResponseBytes
 	if maxResponseBytes <= 0 {
 		maxResponseBytes = 5 * 1024 * 1024
 	}
 	policy := e.sharedPolicy
 	if policy == nil {
+		proxyURLs, rotate, cooldown, err := e.proxyConfig()
+		if err != nil {
+			return nil, nil, err
+		}
 		// Start from policy defaults so retry, redirect, request-size, and
 		// scan-deadline protections are not lost when engine flags override
 		// only the scan-specific limits.
@@ -185,7 +182,12 @@ func (e *Engine) newScanClient(target string) (*plugin.PolicySession, *probe.Cli
 		pcfg.Scope = e.cfg.Scope
 		pcfg.RatePerSecond = e.cfg.RatePerSecond
 		pcfg.MaxResponseBytes = maxResponseBytes
-		pcfg.ProxyURL = parsedProxy
+		pcfg.ProxyURLs = proxyURLs
+		pcfg.ProxyRotate = rotate
+		pcfg.ProxyCooldown = cooldown
+		if len(proxyURLs) > 1 && e.cfg.ProxyAttemptTimeout > 0 {
+			pcfg.AttemptTimeout = e.cfg.ProxyAttemptTimeout
+		}
 		pcfg.ScanTimeout = e.effectiveScanTimeout()
 		// The target rate limiter is shared by every plugin. A large host
 		// semaphore lets many plugin goroutines queue behind the same token
@@ -218,9 +220,27 @@ func (e *Engine) newScanClient(target string) (*plugin.PolicySession, *probe.Cli
 		// işaretlenir, sınırlı varyant aynı politika/kapsam içinden denenir.
 		// Varsayılan taramada stealth davranışı YOKTUR (§14).
 		EnableWAFBypass: e.cfg.Profile == config.ProfileAggressive,
-		ProxyURL:        parsedProxy,
 	})
 	return policy, client, nil
+}
+
+// proxyConfig parses the configured pool. A single --proxy is just a one-entry
+// pool, so the failover path stays dormant until a second proxy is supplied.
+func (e *Engine) proxyConfig() ([]*url.URL, proxypool.Strategy, time.Duration, error) {
+	raw := make([]string, 0, len(e.cfg.ProxyURLs)+1)
+	if strings.TrimSpace(e.cfg.ProxyURL) != "" {
+		raw = append(raw, e.cfg.ProxyURL)
+	}
+	raw = append(raw, e.cfg.ProxyURLs...)
+	urls, err := proxypool.ParseList(raw)
+	if err != nil {
+		return nil, "", 0, fmt.Errorf("invalid proxy configuration: %w", err)
+	}
+	strategy, err := proxypool.ParseStrategy(e.cfg.ProxyRotate)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	return urls, strategy, e.cfg.ProxyCooldown, nil
 }
 
 // runLive executes scheduled plugins against a validated target.
@@ -229,6 +249,22 @@ func (e *Engine) newScanClient(target string) (*plugin.PolicySession, *probe.Cli
 // policy/client Run tarafından kurulur (login aynı hattı paylaşır); login
 // sonucu istatistik ve skip izi olarak rapora girer.
 func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.PluginSpec, skipped []plugin.SkippedPlugin, policy *plugin.PolicySession, client *probe.Client, login loginOutcome) (*Report, error) {
+	runStart := time.Now()
+	var crawlMs, jsReconMs, spaCrawlMs, contentMs, fuzzMs int
+	var formFuzzMs, flowMs, matrixMs, smuggleMs, browserVerifyMs, pluginsMs int
+	// Fail closed once, not 196 times: an HTTPS target with an unverifiable
+	// certificate cannot produce trustworthy evidence. A per-plugin error for
+	// every request is noise; stop with one actionable message.
+	if !e.cfg.SkipTLSFailFast {
+		if u, uerr := url.Parse(target); uerr == nil && strings.EqualFold(u.Scheme, "https") {
+			preCtx, preCancel := context.WithTimeout(ctx, 10*time.Second)
+			_, preErr := client.Send(plugin.WithPlugin(preCtx, "target-preflight", true, nil), http.MethodGet, target, nil, nil)
+			preCancel()
+			if preErr != nil && isTLSCertError(preErr) {
+				return nil, fmt.Errorf("target TLS certificate verification failed: %w (install the issuing CA via SSL_CERT_FILE or use --no-proxy; TLS is fail-closed)", preErr)
+			}
+		}
+	}
 	timeoutMs := e.cfg.PluginTimeoutMs
 	if timeoutMs <= 0 {
 		timeoutMs = 60000
@@ -248,20 +284,41 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 	// Faz 2: TLS el sıkışma sonucu burada yakalanır ve altyapı derin TLS
 	// denetimine geçirilir; sertifika/zincir olguları ek dial açmadan aynı
 	// gözlemden türetilir.
-	e.notifyProgress("Protokol Denetimi", "TLS el sıkışması ve sertifikalar...")
+	e.notifyProgress(progressPhaseProtocol, progressDetailProtocolStart)
 	protoFindings, protoSkipped, tlsObs := e.runProtoReconTLS(ctx, target)
+	e.notifyProgress(progressPhaseProtocol, progressDetailProtocolDone,
+		len(protoFindings), len(protoSkipped))
 	allFindings := protoFindings
 	var execSkipped []plugin.SkippedPlugin
 	execSkipped = append(execSkipped, protoSkipped...)
+	if strings.TrimSpace(e.cfg.OOBServer) != "" {
+		if _, oerr := e.oobProvider(); oerr != nil {
+			execSkipped = append(execSkipped, plugin.SkippedPlugin{
+				PluginID: "oob-provider",
+				Reason:   "oob provider error: " + oerr.Error(),
+			})
+		}
+	}
 	// Faz 0/1/2 altyapı recon: SSH banner + DB port envanteri + derin TLS
 	// gözlemi. Tüm bayraklar kapalıysa sıfır ek trafik; kapsam fail-closed.
-	if e.cfg.SSHAudit || e.cfg.DBPortScan || e.cfg.TLSAuditDeep {
-		e.notifyProgress("Altyapı Keşfi", "Port ve altyapı servisleri...")
+	infraStarted := e.cfg.SSHAudit || e.cfg.DBPortScan || e.cfg.TLSAuditDeep ||
+		e.cfg.SSHHandshakeAudit || e.cfg.DBUnauth
+	if infraStarted {
+		e.notifyProgress(progressPhaseInfra, progressDetailInfraStart)
 	}
 	infraFindings, infraSkipped, infraStats := e.runInfraReconTLS(ctx, target, tlsObs)
+	if infraStarted {
+		checks := infraStats["ssh_checks"] + infraStats["ssh_handshake_checks"] +
+			infraStats["db_ports_scanned"] + infraStats["db_unauth_checks"] +
+			infraStats["tls_deep_checks"]
+		e.notifyProgress(progressPhaseInfra, progressDetailInfraDone,
+			checks, infraStats["db_open_ports"], len(infraFindings))
+	}
 	allFindings = append(allFindings, infraFindings...)
 	execSkipped = append(execSkipped, infraSkipped...)
 	errorCount := 0
+	// partialCount: koştu ama ilan ettiği istek tavanına takıldı (partial).
+	partialCount := 0
 
 	// Attack surface discovery: crawl target to extract form inputs, query params, and links across pages
 	maxPages := e.cfg.MaxPages
@@ -293,16 +350,66 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		"spa_pages_rendered": 0, "spa_forms": 0,
 		"spa_endpoints": 0, "spa_skipped": 0,
 	}
-	e.notifyProgress("Sayfa & Yüzey Keşfi", "Web sayfaları ve linkler taranıyor...")
+	e.notifyProgress(progressPhaseCrawl, progressDetailCrawlStart)
+	phaseStart := time.Now()
 	// Canlı ilerleme: crawl uzun sürebilir (aggressive profilde 500 sayfaya kadar);
 	// sayaç olmadan bu faz donmuş gibi görünür.
 	crawlOpts.OnPage = func(done, total int, pageURL string) {
-		e.notifyProgress("Sayfa & Yüzey Keşfi", crawlProgress(done, total, pageURL))
+		e.notifyProgress(progressPhaseCrawl, progressDetailCrawlPage,
+			done, total, crawlPageTarget(pageURL))
 	}
-	crawlRes, err := discovery.Crawl(ctx, client, target, crawlOpts)
+	crawlCtx := ctx
+	var crawlCancel context.CancelFunc
+	if e.cfg.CrawlTimeout > 0 {
+		crawlCtx, crawlCancel = context.WithTimeout(ctx, e.cfg.CrawlTimeout)
+		defer crawlCancel()
+	}
+	crawlRes, crawlErr := discovery.Crawl(crawlCtx, client, target, crawlOpts)
+	crawlMs = int(time.Since(phaseStart).Milliseconds())
+	phaseStart = time.Now()
+	crawlBudgetExhausted := 0
+	if errors.Is(crawlCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+		crawlBudgetExhausted = 1
+	}
+	crawlIncomplete := 0
+	if crawlErr != nil && crawlRes != nil {
+		crawlIncomplete = 1
+	}
+	// A crawl that produced no result and did not stop on its own budget is a
+	// failure, not a partial surface; plugins then fall back to the root page.
+	crawlFailed := 0
+	if crawlErr != nil && crawlRes == nil && ctx.Err() == nil && !errors.Is(crawlCtx.Err(), context.DeadlineExceeded) {
+		crawlFailed = 1
+	}
+	crawlStoredBytes, crawlURLsDropped, crawlBodiesDropped := 0, 0, 0
+	if crawlRes != nil {
+		crawlStoredBytes = int(crawlRes.StoredBodyBytes)
+		crawlURLsDropped = crawlRes.URLsDropped
+		crawlBodiesDropped = crawlRes.BodiesDropped
+	}
+	switch {
+	case crawlFailed > 0:
+		e.notifyProgress(progressPhaseCrawl, progressDetailCrawlFailed)
+	case crawlRes == nil:
+		e.notifyProgress(progressPhaseCrawl, progressDetailCrawlEmpty)
+	default:
+		detailKey := progressDetailCrawlDone
+		args := []any{len(crawlRes.Pages), len(crawlRes.SurfacePoints),
+			crawlRes.TotalRequests, crawlMs}
+		switch {
+		case crawlBudgetExhausted > 0:
+			detailKey = progressDetailCrawlTimeout
+		case crawlIncomplete > 0:
+			detailKey = progressDetailCrawlPartial
+		case crawlURLsDropped > 0:
+			detailKey = progressDetailCrawlDoneLimit
+			args = append(args, crawlURLsDropped)
+		}
+		e.notifyProgress(progressPhaseCrawl, detailKey, args...)
+	}
 	var surfacePoints []loader.JSPoint
-	if err == nil && crawlRes != nil {
-		e.notifyProgress("JS & Kaynak Analizi", "JavaScript dosyaları ve uç noktalar...")
+	if crawlRes != nil {
+		e.notifyProgress(progressPhaseJS, progressDetailJSStart)
 		for _, page := range crawlRes.Pages {
 			e.mergeSurfaceTech(page.Headers, nil, page.Body)
 		}
@@ -323,7 +430,8 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		// (FollowCrawl) ve sayaç anahtarları port/kayıt üzerinden gelir
 		// (internal/recon/jsrecon.go); motor yalnızca ortamı kurar.
 		detEnv := e.detectorEnv(target, client, crawlRes)
-		if jsRun := e.runDetector(ctx, detEnv, recon.PluginIDJSRecon); jsRun.Ran {
+		jsRun := e.runDetector(ctx, detEnv, recon.PluginIDJSRecon)
+		if jsRun.Ran {
 			allFindings = append(allFindings, jsRun.Result.Findings...)
 			for _, s := range jsRun.Result.Surface {
 				surfacePoints = append(surfacePoints, loader.JSPoint{
@@ -336,6 +444,18 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 				jsReconStats[k] = v
 			}
 		}
+		jsReconMs = int(time.Since(phaseStart).Milliseconds())
+		if jsRun.Ran {
+			e.notifyProgress(progressPhaseJS, progressDetailJSDone,
+				jsReconStats["js_files_fetched"], jsReconStats["js_endpoints_found"],
+				jsReconStats["js_secrets_found"], jsReconStats["js_maps_fetched"], jsReconMs)
+		} else if jsRun.Reason != "" {
+			e.notifyProgress(progressPhaseJS, progressDetailJSSkipped, jsRun.Reason)
+		} else {
+			e.notifyProgress(progressPhaseJS, progressDetailJSFailed)
+		}
+		phaseStart = time.Now()
+		e.notifyProgress(progressPhaseSPA, progressDetailSPAStart)
 		// GASH-071/072: already-fetched page + external JS bodies are scanned
 		// deterministically; no additional requests are issued. Kimlik, kural
 		// eşlemesi ve sayaç anahtarları dedektörün Spec'inde yaşar
@@ -352,17 +472,27 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 				devBuildStats[k] = v
 			}
 		}
+		e.notifyProgress(progressPhaseSPA, progressDetailSPADone,
+			spaStateStats["spa_state_pages"], spaStateStats["spa_state_secrets"],
+			devBuildStats["devbuild_markers"])
 		// SPA yüzeyi: seçilmiş sayfalar render edilir; DOM formları/form
 		// fuzz'ına, gözlenen endpoint'ler yüzeye eklenir. Browser yoksa tek
 		// dürüst skip kaydı; sayfa hatası taramayı durdurmaz.
 		if e.cfg.BrowserCrawl {
+			e.notifyProgress(progressPhaseBrowser, progressDetailBrowserStart)
+			browserStart := time.Now()
 			spaPoints, spaSkipped, spaRunStats := e.runSPACrawl(ctx, target, client, crawlRes, surfacePoints)
 			surfacePoints = append(surfacePoints, spaPoints...)
 			execSkipped = append(execSkipped, spaSkipped...)
 			for k, v := range spaRunStats {
 				spaStats[k] = v
 			}
+			e.notifyProgress(progressPhaseBrowser, progressDetailBrowserDone,
+				spaStats["spa_pages_rendered"], spaStats["spa_forms"], spaStats["spa_endpoints"],
+				spaStats["spa_skipped"], time.Since(browserStart).Milliseconds())
 		}
+		spaCrawlMs = int(time.Since(phaseStart).Milliseconds())
+		phaseStart = time.Now()
 	}
 	if len(surfacePoints) == 0 {
 		injected := discovery.ExtractSurface(target, nil)
@@ -389,6 +519,8 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 			return nil, aerr
 		}
 		surfacePoints = append(surfacePoints, apiPoints...)
+		e.notifyProgress(progressPhaseOpenAPI, progressDetailOpenAPIDone,
+			len(apiPoints), len(surfacePoints))
 	}
 
 	// İçerik keşfi (wordlist): --active kapılı motor-içi GASH-028 dedektörü
@@ -400,27 +532,44 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 	// bulunan path'leri geri-besleme crawl'ı için kullanır. Safe taramada
 	// sessizdir (profil disiplini); destructive YOK (GET/HEAD).
 	var contentRequests, contentFollowRequests, contentFindingCount int
+	var contentBudgetExhausted, contentFollowBudgetExhausted int
+	contentRan := false
+	contentReason := ""
 	if e.cfg.Active {
-		contentRun := e.runDetector(ctx, e.detectorEnv(target, client, crawlRes), discovery.PluginIDContentDiscovery)
+		e.notifyProgress(progressPhaseContent, progressDetailContentStart)
+		contentEnv := e.detectorEnv(target, client, crawlRes)
+		contentEnv.Progress = func(done, total int) {
+			e.notifyProgress(progressPhaseContent, progressDetailContentProgress, done, total)
+		}
+		contentRun := e.runDetector(ctx, contentEnv, discovery.PluginIDContentDiscovery)
+		contentRan = contentRun.Ran
+		contentReason = contentRun.Reason
 		if contentRun.Ran {
 			contentRequests = contentRun.Result.Stats["content_requests"]
 			contentFindingCount = contentRun.Result.Stats["content_findings"]
+			contentBudgetExhausted = contentRun.Result.Stats["content_budget_exhausted"]
 			allFindings = append(allFindings, contentRun.Result.Findings...)
 			for _, p := range contentRun.Result.Paths {
 				surfacePoints = append(surfacePoints, loader.JSPoint{URL: p, Method: http.MethodGet})
 			}
 			// Crawler geri-besleme: dizin-benzeri isabetlerin altında
 			// sınırlı mini-crawl (en fazla 3 dizin × 10 sayfa, derinlik 1).
+			e.notifyProgress(progressPhaseContent, progressDetailContentFollow)
+			followCtx, followCancel := context.WithTimeout(ctx, 60*time.Second)
 			dirs := 0
 			for _, p := range contentRun.Result.Paths {
 				if dirs >= 3 {
+					break
+				}
+				if followCtx.Err() != nil {
+					contentFollowBudgetExhausted = 1
 					break
 				}
 				if !strings.HasSuffix(p, "/") {
 					continue
 				}
 				dirs++
-				follow, ferr := discovery.Crawl(ctx, client, p, discovery.CrawlOptions{
+				follow, ferr := discovery.Crawl(followCtx, client, p, discovery.CrawlOptions{
 					MaxPages: 10, MaxDepth: 1, Scope: e.cfg.Scope,
 					ReadRobots: false, ReadSitemap: false, SkipJSRecon: true,
 				})
@@ -436,26 +585,64 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 					})
 				}
 			}
+			followCancel()
+		}
+	}
+	contentMs = int(time.Since(phaseStart).Milliseconds())
+	phaseStart = time.Now()
+	if e.cfg.Active {
+		switch {
+		case contentRan:
+			detailKey := progressDetailContentDone
+			if contentBudgetExhausted > 0 || contentFollowBudgetExhausted > 0 {
+				detailKey = progressDetailContentBudget
+			}
+			e.notifyProgress(progressPhaseContent, detailKey,
+				contentRequests+contentFollowRequests, contentFindingCount, contentMs)
+		case contentReason != "":
+			e.notifyProgress(progressPhaseContent, progressDetailContentSkipped, contentReason)
+		default:
+			e.notifyProgress(progressPhaseContent, progressDetailContentFailed)
 		}
 	}
 
 	// Görev B: atıl fuzz motoru canlı döngüde. Yalnızca --active koşar
 	// (güvenli varsayılan sessizdir); anomali → tentative Finding.
 	var fuzzRequests int64
+	fuzzFindingCount := 0
 	if e.cfg.Active {
+		e.notifyProgress(progressPhaseFuzz, progressDetailFuzzStart)
 		fuzzFindings, freq := e.runActiveFuzz(ctx, target, client, surfacePoints)
 		fuzzRequests = freq
+		fuzzFindingCount = len(fuzzFindings)
 		allFindings = append(allFindings, fuzzFindings...)
 	}
+	fuzzMs = int(time.Since(phaseStart).Milliseconds())
+	if e.cfg.Active {
+		e.notifyProgress(progressPhaseFuzz, progressDetailFuzzDone,
+			len(surfacePoints), fuzzRequests, fuzzFindingCount, fuzzMs)
+	}
+	phaseStart = time.Now()
 	// Görev B2: tam-form replay fuzz. Tek-alan gövdeleri sunucu doğrulaması
 	// ve CSRF kapısında düşer; keşfedilen formlar tüm alanlarıyla (token'lar
 	// tazelenerek) tekrarlanır. Yalnızca --active.
 	var formRequests int64
+	formFindingCount := 0
+	formCount := 0
 	if e.cfg.Active && crawlRes != nil && len(crawlRes.Forms) > 0 {
+		formCount = len(crawlRes.Forms)
+		e.notifyProgress(progressPhaseFormFuzz, progressDetailFormStart)
 		formFindings, formReq := e.runActiveFormFuzz(ctx, target, client, crawlRes.Forms)
 		formRequests = formReq
+		formFindingCount = len(formFindings)
 		allFindings = append(allFindings, formFindings...)
 	}
+	formFuzzMs = int(time.Since(phaseStart).Milliseconds())
+	if formCount > 0 {
+		e.notifyProgress(progressPhaseFormFuzz, progressDetailFormDone,
+			formCount, formRequests, formFindingCount, formFuzzMs)
+	}
+	phaseStart = time.Now()
 	// Çok-adımlı akış replay (--flow-seed): keşif + taze token'lı replay +
 	// alt-adım değerlendirmesi + oturumsuz doğrudan erişim ekranı.
 	// Yalnızca --active + açık seed ile; kapsam-dışı seed'e istek gitmez.
@@ -465,19 +652,36 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 		"flow_findings": 0, "flow_bypass_checked": 0, "flow_requests": 0,
 	}
 	if e.cfg.Active && strings.TrimSpace(e.cfg.FlowSeed) != "" {
+		e.notifyProgress(progressPhaseFlow, progressDetailFlowStart)
 		var flowSkipped []plugin.SkippedPlugin
 		flowFindings, flowSkipped, flowStats = e.runFlowFuzz(ctx, target, client)
 		allFindings = append(allFindings, flowFindings...)
 		execSkipped = append(execSkipped, flowSkipped...)
 	}
+	flowMs = int(time.Since(phaseStart).Milliseconds())
+	if e.cfg.Active && strings.TrimSpace(e.cfg.FlowSeed) != "" {
+		e.notifyProgress(progressPhaseFlow, progressDetailFlowDone,
+			flowStats["flow_steps"], flowStats["flow_replays"], flowStats["flow_requests"],
+			flowStats["flow_findings"], flowMs)
+	}
+	phaseStart = time.Now()
 	// Görev C: çift-kullanıcı BOLA matrisi. --active + iki kimlik şart;
 	// bulgular daima tentative (sahiplik elle doğrulanır).
 	var matrixRequests int64
+	matrixFindingCount := 0
 	if e.cfg.Active && e.HasDualAuth() {
+		e.notifyProgress(progressPhaseMatrix, progressDetailMatrixStart)
 		matrixFindings, mreq := e.runCrossUserMatrix(ctx, client, surfacePoints)
 		matrixRequests = mreq
+		matrixFindingCount = len(matrixFindings)
 		allFindings = append(allFindings, matrixFindings...)
 	}
+	matrixMs = int(time.Since(phaseStart).Milliseconds())
+	if e.cfg.Active && e.HasDualAuth() {
+		e.notifyProgress(progressPhaseMatrix, progressDetailMatrixDone,
+			matrixRequests, matrixFindingCount, matrixMs)
+	}
+	phaseStart = time.Now()
 
 	// Request smuggling (CL.TE/TE.CL/TE.TE): motor-içi GASH-033 dedektörü
 	// (internal/smuggle/detector.go). Tier1-YAML değil, motor-içi — gerekçe:
@@ -491,17 +695,27 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 	// (safe/standard/deep dahil) sessiz değil, denetim izli skip'tir;
 	// kapsam-dışı soket AÇILMAZ (≤10 istek, 5s tavan).
 	var smuggleRequests int
+	smuggleRelevant := e.cfg.Active && e.cfg.Profile == config.ProfileAggressive
+	if smuggleRelevant {
+		e.notifyProgress(progressPhaseSmuggle, progressDetailSmuggleStart)
+	}
 	smuggleRun := e.runDetector(ctx, e.smugglerEnv(target, client, crawlRes), smuggle.PluginID)
 	switch {
 	case !smuggleRun.Ran:
 		if smuggleRun.Reason != "" {
 			execSkipped = append(execSkipped, plugin.SkippedPlugin{PluginID: smuggle.PluginID, Reason: smuggleRun.Reason})
+			if smuggleRelevant {
+				e.notifyProgress(progressPhaseSmuggle, progressDetailSmuggleSkipped, smuggleRun.Reason)
+			}
 		}
 	default:
 		smuggleRequests = smuggleRun.Result.Requests
 		allFindings = append(allFindings, smuggleRun.Result.Findings...)
 		execSkipped = append(execSkipped, smuggleRun.Result.Skips...)
+		e.notifyProgress(progressPhaseSmuggle, progressDetailSmuggleDone,
+			smuggleRequests, len(smuggleRun.Result.Findings))
 	}
+	smuggleMs = int(time.Since(phaseStart).Milliseconds())
 
 	// Large discovered surfaces make Tier 2 plugins request-heavy. Keep only
 	// two long-running plugin workers in that case so the shared per-target
@@ -511,8 +725,10 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 	}
 	sem = make(chan struct{}, parallelism)
 	totalPlugins := len(ordered)
+	findingsBeforePlugins := len(allFindings)
 	var completedPlugins atomic.Int32
-	e.notifyProgress("Güvenlik Testleri", fmt.Sprintf("0/%d plugin koşturuluyor...", totalPlugins))
+	pluginsStart := time.Now()
+	e.notifyProgress(progressPhasePlugins, progressDetailPluginsStart, 0, totalPlugins)
 
 	for _, spec := range ordered {
 		wg.Add(1)
@@ -520,7 +736,7 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 			defer wg.Done()
 			if !acquireContextSlot(ctx, sem) {
 				done := completedPlugins.Add(1)
-				e.notifyProgress("Güvenlik Testleri", fmt.Sprintf("%d/%d (%s)", done, totalPlugins, s.ID))
+				e.notifyProgress(progressPhasePlugins, progressDetailPluginsProgress, done, totalPlugins, s.ID)
 				mu.Lock()
 				execSkipped = append(execSkipped, plugin.SkippedPlugin{
 					PluginID: s.ID,
@@ -531,33 +747,53 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 			}
 			defer func() { <-sem }()
 			points := pluginSurfacePoints(e.cfg, s, surfacePoints)
-			found, reason, ok := e.executeOne(ctx, s, target, client, pluginTimeout, points)
+			run := e.executeOneSafe(ctx, s, target, client, pluginTimeout, points)
 			done := completedPlugins.Add(1)
-			e.notifyProgress("Güvenlik Testleri", fmt.Sprintf("%d/%d (%s)", done, totalPlugins, s.ID))
+			e.notifyProgress(progressPhasePlugins, progressDetailPluginsProgress, done, totalPlugins, s.ID)
 			mu.Lock()
 			defer mu.Unlock()
-			if !ok {
-				execSkipped = append(execSkipped, plugin.SkippedPlugin{PluginID: s.ID, Reason: reason})
+			if !run.ran {
+				execSkipped = append(execSkipped, plugin.SkippedPlugin{PluginID: s.ID, Reason: run.reason})
 				errorCount++
 				return
 			}
-			allFindings = append(allFindings, found...)
-			if reason != "" {
-				execSkipped = append(execSkipped, plugin.SkippedPlugin{PluginID: s.ID, Reason: reason})
+			allFindings = append(allFindings, run.findings...)
+			if run.reason != "" {
+				execSkipped = append(execSkipped, plugin.SkippedPlugin{
+					PluginID: s.ID,
+					Reason:   run.reason,
+					Partial:  run.partial,
+				})
+				if run.partial {
+					partialCount++
+				}
 			}
 		}(spec)
 	}
 	wg.Wait()
-	e.notifyProgress("Korelasyon", "Bulgular analiz ediliyor ve doğrulanıyor...")
+	pluginsMs = int(time.Since(pluginsStart).Milliseconds())
+	e.notifyProgress(progressPhasePlugins, progressDetailPluginsDone,
+		totalPlugins, totalPlugins, len(allFindings)-findingsBeforePlugins,
+		partialCount, errorCount, pluginsMs)
 
 	// Generic browser-verify pass (opt-in, deep builds): static XSS findings
 	// may reach confirmed only through a real trigger plus a clean control;
 	// otherwise the static tier is preserved untouched.
 	if e.cfg.BrowserVerify {
-		execSkipped = append(execSkipped, e.verifyBrowserFindings(ctx, allFindings)...)
+		e.notifyProgress(progressPhaseVerify, progressDetailVerifyStart)
+		verifyStart := time.Now()
+		confirmedBefore := countConfirmedFindings(allFindings)
+		verifySkips := e.verifyBrowserFindings(ctx, allFindings)
+		execSkipped = append(execSkipped, verifySkips...)
+		browserVerifyMs = int(time.Since(verifyStart).Milliseconds())
+		e.notifyProgress(progressPhaseVerify, progressDetailVerifyDone,
+			countConfirmedFindings(allFindings)-confirmedBefore, len(verifySkips), browserVerifyMs)
 	}
 
+	e.notifyProgress(progressPhaseCorrelation, progressDetailCorrelationStart)
 	deduped := Correlate(allFindings)
+	e.notifyProgress(progressPhaseCorrelation, progressDetailCorrelationDone,
+		len(deduped), len(allFindings)-len(deduped))
 	counts := make(map[string]int, len(allFindings))
 	for _, f := range allFindings {
 		counts[f.Fingerprint]++
@@ -570,28 +806,64 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 
 	allSkipped := append(append([]plugin.SkippedPlugin{}, skipped...), execSkipped...)
 	wafDet, wafByp := client.WAFStats()
+	wafChallenges := client.WAFChallengeStats()
 	httpRequests := int64(0)
 	if policy != nil {
 		httpRequests = policy.TotalCount()
+	}
+	var proxyStats proxypool.Stats
+	if policy != nil {
+		proxyStats = policy.ProxyPool().Stats()
 	}
 	rep := &Report{
 		Target:   target,
 		Findings: deduped,
 		Skipped:  allSkipped,
 		Stats: map[string]int{
-			"scheduled":        len(ordered),
-			"skipped":          len(allSkipped),
-			"findings":         len(deduped),
-			"errors":           errorCount,
-			"http_requests":    int(httpRequests),
-			"waf_detected":     int(wafDet),
-			"waf_bypassed":     int(wafByp),
-			"fuzz_requests":    int(fuzzRequests),
-			"form_requests":    int(formRequests),
-			"matrix_requests":  int(matrixRequests),
-			"content_requests": contentRequests + contentFollowRequests,
-			"content_findings": contentFindingCount,
-			"smuggle_requests": smuggleRequests,
+			"scheduled":       len(ordered),
+			"skipped":         len(allSkipped),
+			"partial_plugins": partialCount,
+			"findings":        len(deduped),
+			"errors":          errorCount,
+			"http_requests":   int(httpRequests),
+			"waf_detected":    int(wafDet),
+			"waf_bypassed":    int(wafByp),
+			"waf_challenges":  int(wafChallenges),
+			// Phase timings (ms) so a long scan shows where the time went.
+			"crawl_ms":               crawlMs,
+			"crawl_budget_exhausted": crawlBudgetExhausted,
+			"crawl_incomplete":       crawlIncomplete,
+			"crawl_failed":           crawlFailed,
+			"crawl_stored_bytes":     crawlStoredBytes,
+			"crawl_urls_dropped":     crawlURLsDropped,
+			"crawl_bodies_dropped":   crawlBodiesDropped,
+			"js_recon_ms":            jsReconMs,
+			"spa_crawl_ms":           spaCrawlMs,
+			"content_discovery_ms":   contentMs,
+			"fuzz_ms":                fuzzMs,
+			"form_fuzz_ms":           formFuzzMs,
+			"flow_ms":                flowMs,
+			"matrix_ms":              matrixMs,
+			"smuggle_ms":             smuggleMs,
+			"browser_verify_ms":      browserVerifyMs,
+			"plugins_ms":             pluginsMs,
+			"total_ms":               int(time.Since(runStart).Milliseconds()),
+			"surface_points":         len(surfacePoints),
+			// Proxy pool health (0 when no pool is configured).
+			"proxy_pool_size":                 proxyStats.Size,
+			"proxy_healthy":                   proxyStats.Healthy,
+			"proxy_cooling":                   proxyStats.CoolingDown,
+			"proxy_rotations":                 int(proxyStats.Rotations),
+			"proxy_failures":                  int(proxyStats.Failures),
+			"proxy_direct_fallbacks":          int(proxyStats.DirectFallbacks),
+			"fuzz_requests":                   int(fuzzRequests),
+			"form_requests":                   int(formRequests),
+			"matrix_requests":                 int(matrixRequests),
+			"content_requests":                contentRequests + contentFollowRequests,
+			"content_findings":                contentFindingCount,
+			"content_budget_exhausted":        contentBudgetExhausted,
+			"content_follow_budget_exhausted": contentFollowBudgetExhausted,
+			"smuggle_requests":                smuggleRequests,
 			// Çok-adımlı akış replay sayaçları (flow yoksa 0).
 			"flow_seed":           flowStats["flow_seed"],
 			"flow_steps":          flowStats["flow_steps"],
@@ -600,11 +872,12 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 			"flow_bypass_checked": flowStats["flow_bypass_checked"],
 			"flow_requests":       flowStats["flow_requests"],
 			// Pasif JS recon sayaçları (crawl kapalı/başarısızken 0).
-			"js_files_fetched":     jsReconStats["js_files_fetched"],
-			"js_endpoints_found":   jsReconStats["js_endpoints_found"],
-			"js_hash_routes_found": jsReconStats["js_hash_routes_found"],
-			"js_secrets_found":     jsReconStats["js_secrets_found"],
-			"js_maps_fetched":      jsReconStats["js_maps_fetched"],
+			"js_files_fetched":          jsReconStats["js_files_fetched"],
+			"js_endpoints_found":        jsReconStats["js_endpoints_found"],
+			"js_hash_routes_found":      jsReconStats["js_hash_routes_found"],
+			"js_secrets_found":          jsReconStats["js_secrets_found"],
+			"js_maps_fetched":           jsReconStats["js_maps_fetched"],
+			"js_recon_budget_exhausted": jsReconStats["js_recon_budget_exhausted"],
 			// GASH-071/072 embedded-state and dev-build content scans.
 			"spa_state_pages":   spaStateStats["spa_state_pages"],
 			"spa_state_secrets": spaStateStats["spa_state_secrets"],
@@ -633,6 +906,30 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 	if note != "" {
 		rep.NoisyNote = []string{note}
 	}
+	if wafChallenges > 0 {
+		rep.NoisyNote = append(rep.NoisyNote, fmt.Sprintf(
+			"WAF challenge detected (%d); responses behind the WAF may be incomplete",
+			wafChallenges))
+	}
+	if proxyStats.DirectFallbacks > 0 {
+		rep.NoisyNote = append(rep.NoisyNote, fmt.Sprintf(
+			"proxy pool failed repeatedly; %d host(s) switched to direct traffic",
+			proxyStats.DirectFallbacks))
+	}
+	if crawlFailed > 0 {
+		rep.NoisyNote = append(rep.NoisyNote,
+			"surface crawl failed; plugins only saw the root page and earlier phases")
+	}
+	if crawlURLsDropped > 0 {
+		rep.NoisyNote = append(rep.NoisyNote, fmt.Sprintf(
+			"crawl discovery cap reached; %d discovered URL(s) were not queued",
+			crawlURLsDropped))
+	}
+	if crawlBodiesDropped > 0 {
+		rep.NoisyNote = append(rep.NoisyNote, fmt.Sprintf(
+			"crawl body memory budget reached; %d page/JS body copy(ies) were truncated or dropped",
+			crawlBodiesDropped))
+	}
 	if rep.Findings == nil {
 		rep.Findings = []*finding.Finding{}
 	}
@@ -642,26 +939,79 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 	return rep, nil
 }
 
+// countConfirmedFindings counts findings already at the top confidence tier.
+// What: Used only for live progress deltas around browser verification.
+func countConfirmedFindings(in []*finding.Finding) int {
+	n := 0
+	for _, f := range in {
+		if f != nil && f.Confidence == plugin.ConfidenceConfirmed {
+			n++
+		}
+	}
+	return n
+}
+
+// isTLSCertError detects certificate-chain failures so the engine can stop
+// once instead of emitting the same error for every plugin request.
+func isTLSCertError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"failed to verify certificate", "certificate signed by unknown authority",
+		"certificate has expired", "certificate is not valid", "x509:",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // crawlProgress crawl fazının tek satırlık canlı ilerleme metnini üretir.
 // What: "37/500 sayfa · example.com/admin/users"
 // Why: Faz göstergesi sayfa sayısı göstermezse uzun crawl donmuş görünür.
-func crawlProgress(done, total int, pageURL string) string {
-	label := fmt.Sprintf("%d/%d sayfa", done, total)
+// crawlPageTarget returns the host/path label shown in crawl progress. The
+// surrounding "N/M pages" text is translated by the UI.
+func crawlPageTarget(pageURL string) string {
 	u, err := url.Parse(pageURL)
 	if err != nil || u.Host == "" {
-		return label + " · " + pageURL
+		return pageURL
 	}
 	path := u.Path
 	if path == "" {
 		path = "/"
 	}
-	return fmt.Sprintf("%s · %s%s", label, u.Host, path)
+	return u.Host + path
+}
+
+// pluginRun tek plugin çalıştırmasının denetlenebilir sonucudur.
+// What: findings + insan-okunur reason + ran (hata değil) + partial (yarım kaldı).
+// Why: Rapor "atlandı" ile "bütçesine takıldı"yı ayırt etmeli.
+type pluginRun struct {
+	findings []*finding.Finding
+	reason   string
+	ran      bool
+	partial  bool
+}
+
+// executeOneSafe adds a final panic shield around plugin dispatch. The plugin
+// closure has its own recover, but a bug in the engine-side switch or point
+// selection must not take down every other plugin in the scan.
+func (e *Engine) executeOneSafe(parent context.Context, spec plugin.PluginSpec, target string, client *probe.Client, timeout time.Duration, points []loader.JSPoint) (run pluginRun) {
+	defer func() {
+		if r := recover(); r != nil {
+			run = pluginRun{reason: fmt.Sprintf("error (panic): %v", r)}
+		}
+	}()
+	return e.executeOne(parent, spec, target, client, timeout, points)
 }
 
 // executeOne runs a single plugin with fault isolation.
 // What: Tier dispatch plus finding construction under timeout and recover.
 // Why: Panic or timeout in one plugin must never stop the remaining scan.
-func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, target string, client *probe.Client, timeout time.Duration, points []loader.JSPoint) ([]*finding.Finding, string, bool) {
+func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, target string, client *probe.Client, timeout time.Duration, points []loader.JSPoint) pluginRun {
 	var collected []*finding.Finding
 	var collectMu sync.Mutex
 	entry, ok := e.registry.Get(spec.ID)
@@ -800,22 +1150,35 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 	})
 	switch res.Status {
 	case plugin.StatusOK:
-		return collected, "", true
+		return pluginRun{findings: collected, ran: true}
 	case plugin.StatusSkipped:
 		reason := res.Reason
 		if reason == "" {
 			reason = string(res.Status)
 		}
-		return collected, "skipped (bounded: " + reason + ")", true
+		return pluginRun{findings: collected, reason: "skipped (bounded: " + reason + ")", ran: true}
+	case plugin.StatusPartial:
+		reason := res.Reason
+		if reason == "" {
+			reason = string(res.Status)
+		}
+		// Bütçe/rate tavanına takıldı: plugin koştu, karar veremeden durdu.
+		// "skipped" demek yanıltıcı; partial olarak ayrı sayılır.
+		return pluginRun{
+			findings: collected,
+			reason:   "partial (not fully executed): " + reason,
+			ran:      true,
+			partial:  true,
+		}
 	case plugin.StatusTimeout:
 		if parent.Err() != nil {
-			return collected, fmt.Sprintf("skipped (scan context: %v)", parent.Err()), true
+			return pluginRun{findings: collected, reason: fmt.Sprintf("skipped (scan context: %v)", parent.Err()), ran: true}
 		}
 		reason := res.Reason
 		if reason == "" {
 			reason = string(res.Status)
 		}
-		return collected, "error (" + string(res.Status) + "): " + reason, false
+		return pluginRun{findings: collected, reason: "error (" + string(res.Status) + "): " + reason}
 	case plugin.StatusError, plugin.StatusPolicyError, plugin.StatusPanic:
 		reason := res.Reason
 		if reason == "" {
@@ -823,9 +1186,9 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 		}
 		// Policy and budget failures are skip-style; panics and timeouts are
 		// error-style, but all keep the scan alive with an auditable reason.
-		return collected, "error (" + string(res.Status) + "): " + reason, false
+		return pluginRun{findings: collected, reason: "error (" + string(res.Status) + "): " + reason}
 	default:
-		return collected, "error (" + string(res.Status) + "): " + res.Reason, false
+		return pluginRun{findings: collected, reason: "error (" + string(res.Status) + "): " + res.Reason}
 	}
 }
 
@@ -933,11 +1296,7 @@ func (e *Engine) jsEnvForScan(pctx context.Context, target string, client *probe
 
 	var oobProvider oob.Provider
 	if strings.TrimSpace(e.cfg.OOBServer) != "" {
-		if strings.EqualFold(strings.TrimSpace(e.cfg.OOBServer), "local") {
-			oobProvider, _ = oob.NewLocalProvider("")
-		} else {
-			oobProvider = oob.NewSelfHostedProvider(e.cfg.OOBServer, "")
-		}
+		oobProvider, _ = e.oobProvider()
 	}
 
 	env := &loader.JSEnv{

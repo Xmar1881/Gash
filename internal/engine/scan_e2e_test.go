@@ -6,11 +6,11 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -18,9 +18,6 @@ import (
 	"github.com/Xmar1881/Gash/internal/plugin"
 	"github.com/Xmar1881/Gash/internal/plugin/loader"
 )
-
-// crawlProgressRe: "37/500 sayfa · host/path" biçimindeki canlı ilerleme satırı.
-var crawlProgressRe = regexp.MustCompile(`^\d+/\d+ sayfa · `)
 
 // e2eHeaderPlugin is a minimal Tier 1 header check for live scan tests.
 // What: Passive header fixture used only by scan e2e tests.
@@ -88,6 +85,18 @@ func TestScanE2EHeaderFinding(t *testing.T) {
 	if rep.Findings[0].RuleID == "" {
 		t.Fatal("finding must carry a rule id")
 	}
+	for _, key := range []string{
+		"surface_points", "crawl_failed", "form_fuzz_ms", "flow_ms",
+		"matrix_ms", "smuggle_ms", "browser_verify_ms",
+		"crawl_stored_bytes", "crawl_urls_dropped", "crawl_bodies_dropped",
+	} {
+		if _, ok := rep.Stats[key]; !ok {
+			t.Fatalf("stats[%s] missing from live report", key)
+		}
+	}
+	if rep.Stats["surface_points"] < 1 {
+		t.Fatalf("surface_points must count discovered points: %+v", rep.Stats)
+	}
 }
 
 // TestScanE2EHardenedEmpty proves a hardened backend yields a valid empty report.
@@ -117,6 +126,54 @@ oracle:
   params:
     expect_external_host: true
 `
+
+// TestScanEmitsPhaseDetails locks the live menu progress contract: every
+// major phase must end with a human-readable summary, not just its label.
+func TestScanEmitsPhaseDetails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body><a href="/next">next</a></body></html>`))
+	}))
+	defer srv.Close()
+
+	dir := writeE2EPlugin(t)
+	reg := plugin.NewRegistry()
+	if _, err := loader.Discover([]string{dir}, reg); err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+
+	var (
+		mu     sync.Mutex
+		detail = map[string]string{}
+	)
+	cfg := DefaultConfig()
+	cfg.Active = true
+	cfg.OnProgress = func(phaseKey, detailKey string, args ...any) {
+		mu.Lock()
+		detail[phaseKey] = detailKey
+		mu.Unlock()
+	}
+	if _, err := New(reg, cfg).Run(context.Background(), srv.URL); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	want := map[string]string{
+		progressPhaseTech:        progressDetailTechDone,
+		progressPhasePlanning:    progressDetailPlanDone,
+		progressPhaseProtocol:    progressDetailProtocolDone,
+		progressPhaseCrawl:       progressDetailCrawlDone,
+		progressPhasePlugins:     progressDetailPluginsDone,
+		progressPhaseCorrelation: progressDetailCorrelationDone,
+	}
+	for phase, wantDetail := range want {
+		mu.Lock()
+		got := detail[phase]
+		mu.Unlock()
+		if got != wantDetail {
+			t.Fatalf("phase %q final detail key = %q, want %q", phase, got, wantDetail)
+		}
+	}
+}
 
 // TestScanReportsCrawlProgress: "Sayfa & Yüzey Keşfi" fazı canlı sayfa sayacı
 // yayınlamalı.
@@ -148,12 +205,16 @@ func TestScanReportsCrawlProgress(t *testing.T) {
 		details []string
 	)
 	cfg := DefaultConfig()
-	cfg.OnProgress = func(phase, detail string) {
-		if phase != "Sayfa & Yüzey Keşfi" {
+	cfg.OnProgress = func(phaseKey, detailKey string, args ...any) {
+		if phaseKey != progressPhaseCrawl || detailKey != progressDetailCrawlPage {
+			return
+		}
+		if len(args) != 3 {
+			t.Errorf("crawl page args = %v, want done/total/page", args)
 			return
 		}
 		mu.Lock()
-		details = append(details, detail)
+		details = append(details, fmt.Sprintf("%v/%v %v", args[0], args[1], args[2]))
 		mu.Unlock()
 	}
 	e := New(reg, cfg)
@@ -163,14 +224,13 @@ func TestScanReportsCrawlProgress(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	observed := 0
-	for _, d := range details {
-		if crawlProgressRe.MatchString(d) {
-			observed++
-		}
-	}
-	if observed < 2 {
+	if len(details) < 2 {
 		t.Fatalf("crawl ilerleme satırı yayınlanmadı (>=2 bekleniyordu): %v", details)
+	}
+	for _, d := range details {
+		if !strings.Contains(d, "/") {
+			t.Fatalf("crawl detail page arg missing: %q", d)
+		}
 	}
 }
 

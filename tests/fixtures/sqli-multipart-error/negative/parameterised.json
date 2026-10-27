@@ -1,0 +1,9 @@
+{
+  "name": "parameterised multipart handler emits no signature",
+  "target": "http://example.com/api/items",
+  "status": 200,
+  "headers": {"Content-Type": "text/html"},
+  "body": "<html><body>{\"id\":1}</body></html>",
+  "control_body": "<html><body>{\"id\":1}</body></html>",
+  "expected_verdict": "reject"
+}

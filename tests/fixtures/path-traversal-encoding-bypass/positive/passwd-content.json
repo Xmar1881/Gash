@@ -1,0 +1,10 @@
+{
+  "name": "encoded traversal serves passwd content",
+  "target": "http://example.com/download?file=..%5c..%5cetc%5cpasswd",
+  "status": 200,
+  "headers": {"Content-Type": "text/html"},
+  "body": "<html><body><pre>root:x:0:0:root:/root:/bin/bash</pre></body></html>",
+  "control_body": "<html><body>Welcome</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "confirmed"
+}

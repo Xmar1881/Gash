@@ -1,0 +1,8 @@
+{
+  "name": "no location header at all",
+  "target": "http://example.com/gash-a1b2c3d4.example",
+  "status": 200,
+  "headers": {"Content-Type": "text/html"},
+  "payload_host": "gash-a1b2c3d4.example",
+  "expected_verdict": "reject"
+}

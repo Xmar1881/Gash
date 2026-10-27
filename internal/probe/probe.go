@@ -8,6 +8,7 @@
 package probe
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -17,16 +18,16 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/Xmar1881/Gash/internal/baseline"
 	"github.com/Xmar1881/Gash/internal/plugin"
+	"github.com/Xmar1881/Gash/internal/proxypool"
 	"github.com/Xmar1881/Gash/internal/wafbypass"
 )
 
-// Response ham body'yi store'da tutar; Candidate yalnızca id referansı taşır (bellek disiplini).
+// Response ham body'yi taşır; bulgu kanıtı finding.Build aşamasında kopyalanır.
 type Response struct {
 	ID        string
 	URL       string
@@ -48,40 +49,11 @@ type Response struct {
 	RetryCount   int               // P1.1: number of retries attempted
 }
 
-// Store thread-safe response deposudur.
-type Store struct {
-	mu      sync.RWMutex
-	items   map[string]*Response
-	counter atomic.Int64
-}
-
-// NewStore boş store döner.
-func NewStore() *Store { return &Store{items: make(map[string]*Response)} }
-
-// Put yanıtı kaydeder, id döner.
-func (s *Store) Put(r *Response) string {
-	id := fmt.Sprintf("resp_%d", s.counter.Add(1))
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r.ID = id
-	s.items[id] = r
-	return id
-}
-
-// Get id ile getirir.
-func (s *Store) Get(id string) (*Response, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	r, ok := s.items[id]
-	return r, ok
-}
-
 // Client politika-filtreli HTTP istemcisidir.
 type Client struct {
 	policy         *plugin.PolicySession
 	transport      *http.Transport
 	proxyURL       *url.URL
-	store          *Store
 	maxBytes       int64
 	requestTimeout time.Duration
 	extra          map[string]string
@@ -91,6 +63,7 @@ type Client struct {
 	enableWAFBypass bool
 	wafDetected     atomic.Int64
 	wafBypassed     atomic.Int64
+	wafChallenges   atomic.Int64
 }
 
 // Options istemci ayarlarıdır.
@@ -139,17 +112,32 @@ func NewClient(opts Options) *Client {
 			}
 		}
 	}
+	// Bound response header memory; a hostile server can otherwise send a
+	// multi-megabyte header block before the body limit is ever consulted.
+	if tr.MaxResponseHeaderBytes == 0 {
+		tr.MaxResponseHeaderBytes = 1 << 20
+	}
 	if opts.ProxyURL != nil {
 		tr.Proxy = http.ProxyURL(opts.ProxyURL)
 	}
 	if opts.Policy != nil {
-		opts.Policy.SetBase(tr)
+		// A policy with a rotating pool owns its base transport. Overwriting it
+		// here would silently disable proxy failover.
+		if opts.Policy.ProxyPool() == nil {
+			opts.Policy.SetBase(tr)
+		}
+		// With multiple proxies the policy applies the timeout per attempt so a
+		// hanging proxy can be abandoned and retried elsewhere. An explicit
+		// engine-level ProxyAttemptTimeout wins; otherwise the request timeout
+		// bounds each attempt.
+		if pool := opts.Policy.ProxyPool(); pool != nil && pool.Len() > 1 && opts.Policy.AttemptTimeout() <= 0 {
+			opts.Policy.SetAttemptTimeout(opts.RequestTimeout)
+		}
 	}
 	c := &Client{
 		policy:         opts.Policy,
 		transport:      tr,
 		proxyURL:       opts.ProxyURL,
-		store:          NewStore(),
 		maxBytes:       opts.MaxBytes,
 		requestTimeout: opts.RequestTimeout,
 		extra:          cloneMap(opts.ExtraHeaders),
@@ -183,6 +171,14 @@ func (c *Client) ProxyURL() *url.URL {
 		return nil
 	}
 	return c.proxyURL
+}
+
+// ProxyPool returns the policy's rotating proxy pool, or nil.
+func (c *Client) ProxyPool() *proxypool.Pool {
+	if c == nil || c.policy == nil {
+		return nil
+	}
+	return c.policy.ProxyPool()
 }
 
 // extraHeaders bağlam başlıklarının kopyasını döner (çağıran değiştiremez).
@@ -258,19 +254,27 @@ func (c *Client) Send(ctx context.Context, method, rawURL string, headers map[st
 	if err != nil {
 		return nil, err
 	}
+	c.noteWAFResponse(rawURL, r)
 	if r.WAFDetected {
 		c.wafDetected.Add(1)
 	}
 	if !c.enableWAFBypass || noWAFBypassFromCtx(ctx) || !wafbypass.ShouldAttemptBypass(r.Status, r.Headers, r.Body) {
 		return r, nil
 	}
-	for _, att := range wafbypass.BuildAttempts(rawURL, headers, body) {
+	pluginID := plugin.PluginIDFromContext(ctx)
+	for _, att := range wafbypass.BuildAttemptsForPlugin(rawURL, headers, body, pluginID) {
 		if ctx.Err() != nil {
 			break
 		}
 		r2, err := c.doSingle(ctx, method, att.URL, att.Headers, att.Body)
 		if err != nil {
 			continue
+		}
+		// Bypass attempts are already bounded by MaxAttemptsForPlugin and the
+		// aggressive opt-in; count challenges for the report but do not trip
+		// the host circuit breaker before a later variant gets its chance.
+		if wafbypass.ChallengeKind(r2.Status, r2.Headers, r2.Body) != "" {
+			c.wafChallenges.Add(1)
 		}
 		if wafbypass.IsBlocked(r2.Status, r2.Headers, r2.Body) {
 			continue
@@ -287,10 +291,28 @@ func (c *Client) Send(ctx context.Context, method, rawURL string, headers map[st
 		r2.WAFDetected = r.WAFDetected || r2.WAFDetected
 		r2.WAFBypassed = true
 		r2.ClassifyNote += " + waf-bypass-verified:" + att.Name
+		c.noteWAFResponse(att.URL, r2) // successful application response resets host state
 		c.wafBypassed.Add(1)
 		return r2, nil
 	}
 	return r, nil
+}
+
+// WAFChallengeStats returns challenge/rate-limit responses observed.
+func (c *Client) WAFChallengeStats() int64 {
+	if c == nil {
+		return 0
+	}
+	return c.wafChallenges.Load()
+}
+
+func (c *Client) noteWAFResponse(rawURL string, r *Response) {
+	if c == nil || r == nil {
+		return
+	}
+	if wafbypass.ChallengeKind(r.Status, r.Headers, r.Body) != "" || r.Status == http.StatusTooManyRequests {
+		c.wafChallenges.Add(1)
+	}
 }
 
 // WAFStats tarama boyunca görülen WAF işareti ve başarılı bypass sayısını
@@ -302,7 +324,10 @@ func (c *Client) WAFStats() (detected, bypassed int64) {
 func (c *Client) doSingle(ctx context.Context, method, rawURL string, headers map[string]string, body []byte) (*Response, error) {
 	reqCtx := ctx
 	var cancel context.CancelFunc
-	if c.requestTimeout > 0 {
+	// When the policy manages per-attempt timeouts, an outer deadline here
+	// would consume the whole retry budget on the first hang.
+	policyOwnsTimeout := c.policy != nil && c.policy.AttemptTimeout() > 0
+	if c.requestTimeout > 0 && !policyOwnsTimeout {
 		reqCtx, cancel = context.WithTimeout(ctx, c.requestTimeout)
 		defer cancel()
 	}
@@ -336,18 +361,6 @@ func (c *Client) doSingle(ctx context.Context, method, rawURL string, headers ma
 		// Use PolicySession's centralized RoundTripWithRetry
 		resp, errResp = c.policy.RoundTripWithRetry(req)
 		if errResp != nil {
-			// Classify error for deterministic logging
-			errClass := plugin.ClassifyError(errResp)
-			r := &Response{
-				URL:          rawURL,
-				Method:       method,
-				Untrusted:    false,
-				Soft404:      false,
-				ClassifyNote: fmt.Sprintf("error: %v", errResp),
-				ErrorClass:   errClass,
-				RetryCount:   retryCount,
-			}
-			c.store.Put(r)
 			return nil, fmt.Errorf("probe do %s %s: %w", method, rawURL, errResp)
 		}
 	} else {
@@ -358,17 +371,6 @@ func (c *Client) doSingle(ctx context.Context, method, rawURL string, headers ma
 		}
 		resp, errResp = tr.RoundTrip(req)
 		if errResp != nil {
-			errClass := plugin.ClassifyError(errResp)
-			r := &Response{
-				URL:          rawURL,
-				Method:       method,
-				Untrusted:    false,
-				Soft404:      false,
-				ClassifyNote: fmt.Sprintf("error: %v", errResp),
-				ErrorClass:   errClass,
-				RetryCount:   retryCount,
-			}
-			c.store.Put(r)
 			return nil, fmt.Errorf("probe do %s %s: %w", method, rawURL, errResp)
 		}
 	}
@@ -398,30 +400,14 @@ func (c *Client) doSingle(ctx context.Context, method, rawURL string, headers ma
 		ErrorClass:   plugin.ErrorClassUnknown,
 		RetryCount:   retryCount,
 	}
-	c.store.Put(r)
 	return r, nil
 }
-
-// Store depoyu dışa açar (oracle/evidence referansı için).
-func (c *Client) Store() *Store { return c.store }
 
 func readerOf(b []byte) io.Reader {
 	if len(b) == 0 {
 		return nil
 	}
-	return &ioReader{b: b}
-}
-
-type ioReader struct {
-	b []byte
-	i int
-}
-
-func (r *ioReader) Read(p []byte) (int, error) {
-	if r.i >= len(r.b) {
-		return 0, io.EOF
-	}
-	n := copy(p, r.b[r.i:])
-	r.i += n
-	return n, nil
+	// *bytes.Reader lets net/http set GetBody, so policy retries (including
+	// proxy failover) replay the request body instead of sending it empty.
+	return bytes.NewReader(b)
 }

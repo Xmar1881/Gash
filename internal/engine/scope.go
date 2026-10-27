@@ -31,12 +31,10 @@ type ScopeManager struct {
 
 	// Allowed entries: domain, CIDR, or exact URL prefix
 	allowedEntries []ScopeEntry
-	// Resolved IPs for domain entries (for rebinding detection)
+	// Resolved IPs for domain entries (pinned on first lookup for rebinding checks)
 	resolvedIPs map[string][]net.IP
 	// Resolver for DNS lookups
 	resolver *net.Resolver
-	// Cache TTL for DNS resolutions
-	cacheTTL time.Duration
 }
 
 // ScopeEntry represents a single scope allowlist entry.
@@ -63,7 +61,6 @@ func NewScopeManager(entries []string) *ScopeManager {
 		allowedEntries: make([]ScopeEntry, 0, len(entries)),
 		resolvedIPs:    make(map[string][]net.IP),
 		resolver:       &net.Resolver{},
-		cacheTTL:       5 * time.Minute,
 	}
 	for _, e := range entries {
 		if parsed := sm.parseEntry(e); parsed != nil {
@@ -116,31 +113,48 @@ func (sm *ScopeManager) parseEntry(entry string) *ScopeEntry {
 // Why: Keeps redirect re-validation data ready in strict (--scope) mode;
 // open mode does not enforce IP pinning.
 func (sm *ScopeManager) SetOriginalTarget(target string) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
 	u, _ := url.Parse(target)
 	if u != nil {
 		sm.resolveAndCache(u.Hostname())
 	}
 }
 
-// resolveAndCache resolves a hostname and caches IPs.
+// resolveAndCache returns the pinned first lookup for host. DNS runs outside
+// the lock and a double-check keeps concurrent callers on the same IP set.
 func (sm *ScopeManager) resolveAndCache(host string) []net.IP {
-	if ips, ok := sm.resolvedIPs[host]; ok {
+	if host == "" {
+		return nil
+	}
+	sm.mu.RLock()
+	ips, ok := sm.resolvedIPs[host]
+	sm.mu.RUnlock()
+	if ok {
 		return ips
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	ips, err := sm.resolver.LookupIPAddr(ctx, host)
+	addrs, err := sm.resolver.LookupIPAddr(ctx, host)
 	if err != nil {
 		return nil
 	}
-	var ipList []net.IP
-	for _, ip := range ips {
+	ipList := make([]net.IP, 0, len(addrs))
+	for _, ip := range addrs {
 		ipList = append(ipList, ip.IP)
+	}
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if existing, ok := sm.resolvedIPs[host]; ok {
+		return existing
 	}
 	sm.resolvedIPs[host] = ipList
 	return ipList
+}
+
+// cachedIPs returns the pinned IP set without DNS work.
+func (sm *ScopeManager) cachedIPs(host string) []net.IP {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.resolvedIPs[host]
 }
 
 // CheckScope validates a URL against the scope.
@@ -250,19 +264,15 @@ func scopePathMatches(path, prefix string) bool {
 // What: Fails if hostname resolves to IPs outside the originally allowed CIDR/domain.
 // Why: Prevents TOCTOU attacks where DNS changes after scope check.
 func (sm *ScopeManager) checkIPRebinding(ctx context.Context, host, allowedDomain string) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	// Get current IPs
 	currentIPs := sm.resolveAndCache(host)
 	if currentIPs == nil {
 		return nil // Can't verify, allow (best-effort)
 	}
 
-	// Get allowed IPs for the domain entry
-	allowedIPs := sm.resolvedIPs[allowedDomain]
+	// Pinned on first use; never refreshed, or a rebinding would move the
+	// baseline along with the current answer.
+	allowedIPs := sm.cachedIPs(allowedDomain)
 	if allowedIPs == nil {
-		// First time seeing this domain, resolve and cache
 		allowedIPs = sm.resolveAndCache(allowedDomain)
 		if allowedIPs == nil {
 			return nil // Can't verify

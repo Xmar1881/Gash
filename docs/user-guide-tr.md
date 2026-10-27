@@ -104,13 +104,13 @@ Tarama seçeneklerini gösterir. Uydurma flag kullanma, listede ne varsa o geçe
       --max-requests-per-target int   per-target bütçe (default 1000)
       --max-requests-total int        global bütçe (default 10000)
       --no-plugin-cache               cache bypass (debug)
-      --oob-server string             self-hosted interaction sunucusu (boş=kapalı)
+      --oob-server string             OOB sağlayıcısı: local | interactsh (public) | interactsh://host | self-hosted API URL (boş=kapalı)
+      --oob-token string              self-hosted interactsh/API token'ı (boşsa GASH_OOB_TOKEN)
       --oob-wait string               scan-sonu OOB penceresi (default "60s")
       --parallelism int               worker sayısı (default 8)
-      --plugin-timeout string         per-plugin timeout (default "30s")
-      --profile string                scan profile: safe|standard|deep|aggressive (default "standard")
+      --plugin-timeout string         per-plugin timeout (default "60s")
+      --profile string                scan profile: safe|standard|deep|aggressive (default "standard"; pasif için "safe")
       --rate-limit float              per-target req/s (default 10)
-      --safe                          varsayılan safe (default true)
       --scope strings                 CIDR/domain allowlist
       --show-tentative                tentative'i dahil et
       --strict-plugins                yalnızca trust'lı Tier3
@@ -118,6 +118,75 @@ Tarama seçeneklerini gösterir. Uydurma flag kullanma, listede ne varsa o geçe
       --tcp-banner strings            açık TCP banner probu 'host:port' (--active şart)
       --tech strings                  bilinen teknoloji (örn. wordpress,graphql)
 ```
+
+### Proxy havuzu: timeout ve IP engeli
+
+Tek bir proxy inceleme (Burp/ZAP) için yeterlidir; ancak hedef IP'nizi
+engelliyorsa veya rate-limit uyguluyorsa tek IP ile tarama timeout'a düşer ve
+plugin'ler `skipped` olur. Proxy havuzu bu durumda devreye girer:
+
+```powershell
+# proxies.txt: satır başına bir proxy URL'i, # ile yorum
+gash scan --target https://app.example.com --scope app.example.com `
+  --proxy-file proxies.txt --proxy-rotate per-host --proxy-cooldown 45s
+```
+
+- `per-host` (varsayılan): her hedef host için tek proxy sabitlenir; oturum
+  çerezleri IP'ye bağlıysa bu modu kullanın. Hata alınca yalnızca o host'un
+  proxy'si değişir.
+- `per-request`: her istekte sıradaki proxy; yalnızca hedef oturumu IP'ye
+  bağlamıyorsa kullanın.
+- Timeout, bağlantı hatası ve `403`/`407`/`429` yanıtlarında istek bir sonraki
+  sağlıklı proxy üzerinden yeniden denenir (istek başına en fazla 2 blok
+  rotasyonu). Başarısız/bloklu proxy `--proxy-cooldown` süresi boyunca atlanır.
+- Havuzda birden fazla proxy varsa `--request-timeout` **deneme başına**
+  uygulanır; böylece takılan ilk proxy tüm plugin süresini yemez ve istek gövdesi
+  eksiksiz yeniden oynatılır.
+- `--proxy` tek proxy olarak aynen çalışır; `--proxy-file` ile birlikte
+  kullanılabilir. Kimlik bilgili URL'ler desteklenir
+  (`http://kullanıcı:parola@proxy:8080`); şemalar: `http`, `https`, `socks5`,
+  `socks5h`. Listeye `host:port`, `kullanıcı:parola@host:port` veya yaygın
+  `host:port:kullanıcı:parola` biçiminde de yazabilirsiniz.
+- `--proxy`/`--proxy-file` verilmezse çalışma dizinindeki
+  `.gash/proxies/alive.txt` (yoksa `.gash/proxies/all.txt`) otomatik yüklenir;
+  `GASH_PROXY_FILE` ile başka bir liste gösterebilirsiniz. Otomatik kullanımı
+  kapatmak için `--no-proxy` verin. Menüdeki "HER ŞEY" profili proxy listesini
+  otomatik ekler ve `per-request` + 45s cooldown kullanır.
+- Kapsam, bütçe, rate-limit ve redirect kontrolleri her denemede aynen uygulanır;
+  proxy rotasyonu bu kontrolleri atlamaz.
+
+### Aynı domain taraması (varsayılan)
+
+`--scope` verilmezse Gash hedefin kayıtlı domainini (eTLD+1) otomatik scope
+yapar; crawl ve redirect'ler yalnızca bu domain ve alt alanlarında kalır.
+Böylece Google, CDN veya sosyal medya gömmeleri gibi dış linkler taranmaz.
+Dışarı çıkmak isterseniz `--allow-external`, belirli bir listeyi zorlamak için
+`--scope` kullanın. Menüde scope boş bırakılırsa aynı otomatik kapsam uygulanır.
+
+- `--scan-timeout` (varsayılan `30m`): discovery + pluginler dahil tüm taramanın
+  süre tavanı. 338 plugin'lik taramalarda 10m çoğu plugin'i skip ettiriyordu;
+  menüdeki "HER ŞEY" profili `45m` kullanır.
+- `--crawl-timeout` (varsayılan `5m`, menü HER ŞEY `10m`): BFS keşif fazının
+  süre tavanı; yavaş proxy havuzu tüm scan süresini yiyemez, pluginlere süre
+  kalır. Rapor `crawl_ms`, `crawl_budget_exhausted`, `crawl_incomplete` taşır.
+- Proxy havuzu bir host için üst üste 6 transport hatası alırsa o host doğrudan
+  bağlantıya düşer (`proxy_direct_fallbacks`). Doğrudan çıkışın kabul
+  edilmediği işlerde `--no-proxy` veya sabit tek proxy kullanın.
+- `--proxy-timeout` (varsayılan `8s`): çoklu proxy'de tek deneme süresi; ölü
+  proxy'nin 20s asılı kalmasını engeller. `0` verilirse `--request-timeout`
+  kullanılır.
+- İçerik keşfi 8 paralel prob kullanır ve wordlist fazı 90s, mini-crawl 60s ile
+  sınırlıdır; sayaç `N/80` olarak akar. Raporda `content_discovery_ms`,
+  `content_budget_exhausted` ve `content_follow_budget_exhausted` görünür.
+- JS recon follow-crawl + source map fazı 90s ile sınırlıdır
+  (`js_recon_budget_exhausted`); rapor `crawl_ms`, `js_recon_ms`,
+  `spa_crawl_ms`, `fuzz_ms`, `form_fuzz_ms`, `flow_ms`, `matrix_ms`,
+  `smuggle_ms`, `browser_verify_ms`, `plugins_ms` ve `total_ms` sürelerini,
+  ayrıca `surface_points`, `crawl_failed`, `crawl_stored_bytes`,
+  `crawl_urls_dropped` ve `crawl_bodies_dropped` sayaçlarını taşır. Crawl
+  belleği 64 MiB gövde ve `max(1000, 20×sayfa)` URL ile sınırlıdır; analiz
+  tam yanıt üzerinde çalışır, yalnızca saklanan kopya kırpılır. Bulk taramada
+  login oturumu hedef başına izoledir; önceki hedefin çerezi sonrakine geçmez.
 
 ### Komut 3: Örnek local tarama
 
@@ -134,6 +203,44 @@ go run ./cmd/gash scan --target http://localhost:8080 --scope localhost
 ```text
 Error: scan: --target zorunlu
 ```
+
+### Etkileşimli menü (`gash menu`)
+
+Komutları ezberlemek istemiyorsan menüyü aç:
+
+```powershell
+go run ./cmd/gash menu
+```
+
+Sekmeler: `1` tarama, `2` pluginler, `3` bench, `4` OpenAPI, `5` diff,
+`6` suppress, `7` konsol, `8` sistem durumu, `9` yardım. Sekme adını da
+yazabilirsin (`scan`, `durum`, `yardim`); `0` veya `iptal` geri döner.
+
+Tarama sekmesinde:
+
+- **Toplu hedef dosyası:** hedef alanına bir dosya yolu yazarsan her satır ayrı
+  hedef olarak `--target-file` ile taranır; scope her hedefin kendi domainine
+  otomatik uygulanır. Çıktı klasörü ve `--resume` sorulur.
+- **Proxy modu:** `auto` sağlıklı listeyi otomatik kullanır, `off` doğrudan
+  bağlanır (`--no-proxy`), `single` tek proxy sorar, `all` tüm proxy listesini
+  `per-request` rotasyonla verir.
+- **Kimlik modu:** `cookie`, `header` veya `login` seçebilirsin. `login` güvenli
+  profili otomatik `standard`a yükseltir ve `--active` ekler.
+- **Dış alan adları:** varsayılan kapalıdır; açarsan `--allow-external` eklenir.
+- Çalıştırmadan önce komut özeti gösterilir; `--cookie`, `--auth-header`,
+  `--oob-token`, `--login-pass`, `--basic-auth` ve proxy kimlik bilgileri
+  `[redacted]`/`***` olarak maskelenir.
+- Tarama sırasında her faz bittiğinde son detayı ve süresi sabitlenir; aktif
+  faz canlı güncellenir (sayfa/endpoint/istek/bulgu/plugin sayaçları). Atlanan
+  fazın gerekçesi de yazılır; örnek: `✔ [İçerik Keşfi] tamam · 82 istek ·
+  1 bulgu · 45000 ms`.
+- Son komutu yeniden çalıştırmak için ana menüde `r` (veya `tekrar`) tuşuna bas.
+
+`8` sistem durumu sekmesi derleme etiketlerini, Chrome/headless durumunu, Go
+sürümünü, yüklü plugin sayısını, otomatik proxy listesini ve son raporları
+gösterir; `o` rapor klasörünü açar, `v` son raporu görüntüler, `p` proxy
+sağlık kontrolü komutunu yazdırır. Ayrıntılı menü rehberi:
+[menu.md](menu.md).
 
 ## 4. Plugin akışı: new / validate / test
 
@@ -194,10 +301,22 @@ sürece). Tüm dedektörler, tüm HTTP metotları, genişletilmiş bütçe.
 go run ./cmd/gash scan --target http://127.0.0.1:8081 --scope 127.0.0.1 --aggressive --format json
 ```
 
-WAF ile karşılaşırsan tarama durmaz: durum `waf_detected` sayacına işlenir,
-agresif modda sınırlı bypass varyantı (header/HPP/encode/yorum/case, en fazla
-5 deneme, aynı kapsam ve bütçe içinde) denenir. Blok sayfanın kendisi asla
-kanıt sayılmaz. Chunked gönderim desteklenmez (bkz. `docs/known-limits.md`).
+WAF ile karşılaşırsan tarama durmaz: durum `waf_detected` / `waf_challenges`
+sayaçlarına işlenir. Agresif modda sınıflı semantik varyantlar denenir
+(header/HPP/encode/yorum/case + SQLi `/**/`/versioned comment/HEX/CHAR/CHR +
+yüzde/GBK quote ve `%0b`/`%0c`/`%a0` whitespace farkları + XSS alternatif
+tag/entity/Unicode + shell `${IFS}` + path encode; content-type switching
+(JSON→text/plain/vendor, form→multipart, multipart duplicate field); JSON
+duplicate-key/Unicode-escape parser farkları; path-normalization `//`, `/./`,
+`;`; IP spoof header'ları; en fazla 16, aynı kapsam ve bütçe içinde). Cloudflare/Akamai/Imperva/DataDome/PerimeterX/AWS
+WAF/Sucuri/F5/Kasada challenge sayfaları untrusted kabul edilir ve
+`waf_challenges` sayacına işlenir; host-genelinde plugin skip uygulanmaz.
+Proxy rotasyonu ve per-target rate limit devrede kalır. Headless Chrome challenge
+sayfasını `payload_waf_challenge` / `control_waf_challenge` olarak blocked
+döndürür; challenge DOM'u hedef kanıtı sayılmaz. Anti-bot stealth kapsam
+dışıdır; IP engeli devam ederse `--no-proxy` veya güvenilir proxy kullanın.
+Blok sayfanın kendisi asla kanıt sayılmaz. Chunked gönderim desteklenmez
+(bkz. `docs/known-limits.md`).
 
 ## 7. Kimlik ve kapsam (P2)
 
@@ -271,8 +390,17 @@ go run ./cmd/gash suppress remove <finding-id>
 OOB (Out-of-Band), kör açıklar için dış doğrulama kanalıdır.
 
 - `--oob-server` boşsa OOB kapalıdır.
+- Seçenekler:
+  - `local`: dahili dinleyici; hedef bu makineye erişebiliyorsa çalışır.
+  - `interactsh`: public interactsh havuzu; tak-çalıştır ama **üçüncü taraf**
+    servistir, callback metadatası ağınızdan çıkar.
+  - `interactsh://host`: kendi interactsh sunucunuz; hassas hedefler için
+    önerilir. Token gerekiyorsa `--oob-token` veya `GASH_OOB_TOKEN`.
+  - `https://...`: custom self-hosted API.
 - `oob=required` bir plugin, sunucu yokken hiç çalışmaz. Sahte `tentative` üretmez, dürüstçe atlanır (skip).
 - `--oob-server` verirsen `--active` de zorunludur. Çünkü OOB payload göndermek invasive sayılır.
+- Interactsh kaydı başarısız olursa tarama durmaz; `oob-provider` skip kaydı
+  rapora yazılır ve OOB plugin'leri kanıt üretmez.
 
 Özet: `--oob-server` yoksa blind/OOB bulgusu bekleme, bu normaldir.
 

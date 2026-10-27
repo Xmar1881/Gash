@@ -1,0 +1,13 @@
+{
+  "name": "nested $ne operator matches every record",
+  "target": "http://example.com/api/users",
+  "status": 200,
+  "headers": {"Content-Type": "application/json"},
+  "body": "{\"result\":\"admin\"}",
+  "control_body": "{\"error\":\"not found\"}",
+  "control_status": 200,
+  "true_bodies": ["{\"result\":\"admin\"}", "{\"result\":\"admin\"}", "{\"result\":\"admin\"}"],
+  "false_bodies": ["{\"error\":\"not found\"}", "{\"error\":\"not found\"}", "{\"error\":\"not found\"}"],
+  "expected_verdict": "accept",
+  "expected_confidence": "confirmed"
+}

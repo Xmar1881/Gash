@@ -32,14 +32,42 @@ func (e *Engine) oobSource() loader.OOBSource {
 	if e == nil || strings.TrimSpace(e.cfg.OOBServer) == "" {
 		return nil
 	}
-	if strings.EqualFold(strings.TrimSpace(e.cfg.OOBServer), "local") {
-		p, err := oob.NewLocalProvider("")
-		if err != nil {
-			return nil
-		}
-		return &engineOOBSource{provider: p}
+	provider, err := e.oobProvider()
+	if err != nil || provider == nil || !provider.Enabled() {
+		return nil
 	}
-	return &engineOOBSource{provider: oob.NewSelfHostedProvider(e.cfg.OOBServer, "")}
+	return &engineOOBSource{provider: provider}
+}
+
+// oobProvider builds (once) the configured OOB provider.
+// What: local, interactsh (public/self-hosted), or the custom self-hosted API.
+// Why: Interactsh registration must happen once per scan, not per detector or
+// plugin; the cached provider also keeps the callback session stable.
+func (e *Engine) oobProvider() (oob.Provider, error) {
+	if e == nil {
+		return nil, nil
+	}
+	e.oobOnce.Do(func() {
+		server := strings.TrimSpace(e.cfg.OOBServer)
+		switch {
+		case server == "":
+			return
+		case strings.EqualFold(server, "local"):
+			p, err := oob.NewLocalProvider("")
+			e.oobProv, e.oobProvErr = p, err
+		case isInteractshServer(server):
+			p, err := oob.NewInteractshProvider(server, e.cfg.OOBToken)
+			e.oobProv, e.oobProvErr = p, err
+		default:
+			e.oobProv = oob.NewSelfHostedProvider(server, e.cfg.OOBToken)
+		}
+	})
+	return e.oobProv, e.oobProvErr
+}
+
+func isInteractshServer(s string) bool {
+	l := strings.ToLower(strings.TrimSpace(s))
+	return l == "interactsh" || strings.HasPrefix(l, "interactsh://") || strings.HasPrefix(l, "interactsh:")
 }
 
 // Generate mints a fresh correlation ID plus DNS domain and HTTP URL.

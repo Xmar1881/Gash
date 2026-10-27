@@ -1,0 +1,9 @@
+{
+  "name": "parameterised xml handler emits no database signature",
+  "target": "http://example.com/api/import",
+  "status": 200,
+  "headers": {"Content-Type": "application/xml"},
+  "body": "<request><id>1</id></request>",
+  "control_body": "<request><id>1</id></request>",
+  "expected_verdict": "reject"
+}

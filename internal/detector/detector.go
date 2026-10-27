@@ -276,6 +276,8 @@ type Env struct {
 	Infra Infra
 	// Log writes a structured line through the engine logger (never stdout).
 	Log func(level, msg string)
+	// Progress reports bounded work inside a long detector (done/total).
+	Progress func(done, total int)
 }
 
 // logf calls the env logger when set.

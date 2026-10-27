@@ -14,6 +14,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/url"
 	"sort"
@@ -140,15 +141,25 @@ func (e *Engine) runDetector(ctx context.Context, env *detector.Env, id string) 
 	if allowed, reason := d.Spec().Evaluate(e.detectorPolicy()); !allowed {
 		return detectorRun{Reason: reason}
 	}
-	res, err := d.Run(ctx, env)
+	res, err := runDetectorSafely(d, ctx, env)
 	if err != nil {
-		// A detector failure is never a scan failure (B7), and it is never
-		// invented as an audit-trailed skip either: detectors report their own
-		// honest skips through Result.Skipped (see the smuggling detector's
-		// scope and HTTP/2 refusals). An error here means "unmeasurable".
-		return detectorRun{}
+		// A detector failure is never a scan failure (B7). A panic is reported
+		// as an error record instead of taking the process down with it.
+		return detectorRun{Reason: fmt.Sprintf("error (detector %s): %v", id, err)}
 	}
 	return detectorRun{Ran: true, Result: res}
+}
+
+// runDetectorSafely isolates extension-point panics. Detectors are engine
+// owned but still third-party code in practice; a nil dereference or bad cast
+// must not kill a scan that has already produced findings.
+func runDetectorSafely(d detector.Detector, ctx context.Context, env *detector.Env) (res detector.Result, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+	return d.Run(ctx, env)
 }
 
 // detectorEnv builds the brokered environment for engine-owned detectors.

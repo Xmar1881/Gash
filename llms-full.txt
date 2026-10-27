@@ -146,13 +146,20 @@ Other entry points: `gash menu` (interactive console), `gash bench run`
 
 ## Safety defaults
 
-- `safe` is the default profile: passive checks only.
-- `--active`, `--profile deep`, `--aggressive`, and OOB are explicit opt-ins.
+- The CLI default profile is `standard` (controlled active checks); `--profile
+  safe` is strictly passive (GET/HEAD/OPTIONS).
+- `--profile deep`, `--profile aggressive`, `--active`-only checks, and OOB are
+  explicit opt-ins.
 - Out-of-band callbacks are self-hosted only and disabled by default; blind
   plugins skip honestly with `oob-not-configured`.
-- `--scope` restricts requests to one host and its subdomains, blocks
-  out-of-scope redirects, and pins DNS (rebinding protection). Without
-  `--scope`, the scanner runs in open mode and follows any host.
+- Without `--scope`, the crawler and redirects stay on the target's registrable
+  domain (eTLD+1); `--allow-external` restores open mode. `--scope` pins an
+  explicit CIDR/domain allowlist, blocks out-of-scope redirects, and pins DNS
+  (rebinding protection).
+- The interactive menu (`gash menu`, TR/EN) exposes the same controls: tabbed
+  scan/plugin/bench/OpenAPI/diff/suppress/console/status/help screens, bulk
+  target files, proxy modes, auth modes, redacted command preview, and repeat
+  last command.
 - Scan only systems you own or have written permission to test.
 
 ## Quality gates enforced in CI
@@ -205,8 +212,9 @@ build gate (precision ≥ 0.99 and zero `firm+` corpus false positives); OOB is
 self-hosted only and skips honestly; and the license is AGPL-3.0-only.
 
 **Why do I get no findings on a known-vulnerable target?**
-Common causes: the target is out of `--scope`; the `safe` (passive) profile is in
-use, so try `--active` or `--profile deep`; the plugin is not loaded (check
+Common causes: the target is out of `--scope`; the passive `safe` profile was
+selected, so try `--profile standard`, `--profile deep`, or
+`--profile aggressive`; the plugin is not loaded (check
 `gash plugins list`); OOB is not configured for a blind plugin; or the rate limit
 and request budget are too low.
 

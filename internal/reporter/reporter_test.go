@@ -7,6 +7,7 @@ package reporter
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/Xmar1881/Gash/internal/engine"
@@ -40,6 +41,42 @@ func TestSARIFEmptyValid(t *testing.T) {
 	}
 	if v["version"] != "2.1.0" {
 		t.Fatalf("sarif version: %v", v["version"])
+	}
+}
+
+// TestTextReportSeparatesPartialPlugins: bütçesine takılan plugin "skipped"
+// listesinde değil, kendi "partial" grubunda ve ayrı sayaçla görünmeli.
+// What: 1 gerçek skip + 1 partial içeren rapor metni doğrulanır.
+// Why: Aynı listede karışınca "hiç koşmadı" izlenimi doğuyordu.
+func TestTextReportSeparatesPartialPlugins(t *testing.T) {
+	rep := &engine.Report{
+		Target: "http://example.com/",
+		Stats:  map[string]int{"skipped": 3, "partial_plugins": 1},
+		Skipped: []plugin.SkippedPlugin{
+			{PluginID: "requires-auth-plugin", Reason: "skipped (requires auth)"},
+			{PluginID: "late-plugin", Reason: "skipped (scan context: context deadline exceeded)"},
+			{PluginID: "open-redirect-param", Reason: "partial (not fully executed): plugin: budget exceeded: plugin 30", Partial: true},
+		},
+	}
+	var buf bytes.Buffer
+	if err := WriteText(&buf, rep, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "not applicable (configuration/profile): 1") {
+		t.Fatalf("config dışlaması ayrı raporlanmadı:\n%s", out)
+	}
+	if !strings.Contains(out, "not completed (deadline/limit): 1") {
+		t.Fatalf("gerçek skip sayısı 1 olmalı:\n%s", out)
+	}
+	if !strings.Contains(out, "partial plugins (request budget/rate ceiling reached): 1") {
+		t.Fatalf("partial grubu ayrı raporlanmadı:\n%s", out)
+	}
+	if strings.Contains(out, "not completed (deadline/limit): 2") {
+		t.Fatalf("config/partial kaydı not-completed sayısına eklenmemeli:\n%s", out)
+	}
+	if !strings.Contains(out, "partial (not fully executed)") {
+		t.Fatalf("partial nedeni raporda yok:\n%s", out)
 	}
 }
 
@@ -98,5 +135,34 @@ func TestBrowserConfirmedEvidenceType(t *testing.T) {
 	}
 	if !bytes.Contains(jsonBuf.Bytes(), []byte(`"browser-confirmed"`)) {
 		t.Fatalf("browser-confirmed evidence_type JSON'da olmali: %s", jsonBuf.String())
+	}
+}
+
+func TestSkipSummaryGroupsReasons(t *testing.T) {
+	skips := []plugin.SkippedPlugin{
+		{Reason: "skipped (scan context: context deadline exceeded)"},
+		{Reason: "skipped (scan context: context deadline exceeded)"},
+		{Reason: "skipped (requires auth)"},
+		{Reason: "skipped (tier3-untrusted, requires trust via `gash plugins trust`)"},
+	}
+	got := skipSummary(skips)
+	want := " (2 scan deadline, 1 requires auth, 1 tier3-untrusted)"
+	if got != want {
+		t.Fatalf("skipSummary = %q, want %q", got, want)
+	}
+}
+
+// TestErrorSummarySeparatesNetworkFromPolicy keeps transport failures from
+// being mislabeled as policy/budget errors just because the policy roundtripper
+// appears in the error chain.
+func TestErrorSummarySeparatesNetworkFromPolicy(t *testing.T) {
+	errs := []plugin.SkippedPlugin{
+		{Reason: "error (error): probe do GET http://127.0.0.1:1/: policy roundtrip (attempt 4): dial tcp 127.0.0.1:1: connectex: No connection could be made because the target machine actively refused it."},
+		{Reason: "error (policy_error): scope violation: host outside allowlist"},
+	}
+	got := errorSummary(errs)
+	want := " (1 limit, 1 network)"
+	if got != want {
+		t.Fatalf("errorSummary = %q, want %q", got, want)
 	}
 }

@@ -1,0 +1,10 @@
+{
+  "name": "redirect to a different external host is not our payload",
+  "target": "http://example.com//gash-a1b2c3d4.example/",
+  "status": 302,
+  "headers": {"Content-Type": "text/html", "Location": "https://other.example/"},
+  "payload_host": "gash-a1b2c3d4.example",
+  "control_status": 200,
+  "control_body": "<html><body>home</body></html>",
+  "expected_verdict": "reject"
+}

@@ -161,7 +161,54 @@ When intercepting HTTPS traffic, proxies terminate the client TLS connection and
   gash scan --target https://app.example.com --proxy http://127.0.0.1:8080
   ```
 
-### 3. Mutual TLS (mTLS) in Proxy Scenarios
+### 3. Rotating Proxy Pools (Timeout & IP-Block Failover)
+
+A single proxy is enough for interception, but it does not help when the target
+rate-limits or blocks the proxy's source IP. Gash accepts a pool and rotates on
+failure:
+
+```sh
+gash scan --target https://app.example.com --scope app.example.com \
+  --proxy-file proxies.txt --proxy-rotate per-host --proxy-cooldown 45s
+```
+
+`proxies.txt` contains one URL per line (`#` starts a comment). `--proxy` stays
+available for a single upstream and can be combined with the file.
+
+- `per-host` (default) keeps one proxy per target host so cookie/IP-bound
+  sessions stay stable, and rotates only that host's proxy on failure.
+- `per-request` advances the pool on every request; use it only when the target
+  does not bind sessions to the source IP.
+- Timeouts, connection errors, and `403`/`407`/`429` responses trigger another
+  attempt through the next healthy proxy (at most two block-rotations per
+  request). A failing or blocked proxy cools down for `--proxy-cooldown` and is
+  skipped while other proxies remain healthy.
+- With a multi-proxy pool, `--proxy-timeout` (default 8s) bounds one attempt so
+  a dead proxy cannot consume the whole request budget; `--request-timeout`
+  still bounds direct and single-proxy requests. The retried request body is
+  replayed intact.
+- Scope, budget, rate, and redirect checks still run before every attempt; a
+  rotated request is a new policy-checked request, not a transport bypass.
+- After six consecutive transport failures for one host, the pool switches that
+  host to direct traffic and reports `proxy_direct_fallbacks`; a dead pool
+  cannot stall the whole scan. Use `--no-proxy` if direct egress is not
+  acceptable for the engagement.
+- `--crawl-timeout` (default 5m; menu everything 10m) bounds BFS discovery so a
+  slow pool cannot consume the scan deadline before plugins run.
+
+Proxy URLs may include credentials (`http://user:pass@proxy:8080`). Supported
+schemes are `http`, `https`, `socks5`, and `socks5h`. Bare list entries
+(`host:port`, `user:pass@host:port`, and `host:port:user:pass`) are normalized
+to `http://`. The pool never logs URLs or credentials.
+
+When neither `--proxy` nor `--proxy-file` is given, the scanner auto-loads the
+first non-empty local list from `.gash/proxies/alive.txt` or
+`.gash/proxies/all.txt` (working directory). `GASH_PROXY_FILE` points at a
+different list, and `--no-proxy` disables automatic discovery. The interactive
+menu's "everything" preset adds the detected list explicitly with
+`per-request` rotation and a 45s cooldown.
+
+### 4. Mutual TLS (mTLS) in Proxy Scenarios
 When the target application requires client certificate authentication (mTLS):
 
 - **Proxy-Terminated mTLS Handshake**: In an interception topology (`Gash -> Proxy -> Target`), the client certificate authentication is negotiated between the **upstream proxy** and the **target server**.
@@ -170,3 +217,63 @@ When the target application requires client certificate authentication (mTLS):
   - Gash communicates with the proxy over HTTP (or standard TLS to the proxy), and the proxy presents the client certificate to the target host during the upstream TLS handshake.
 - **Fail-Closed Security**: If the proxy fails to present a valid client certificate or the target rejects it (e.g. HTTP 403 / TLS handshake failure), Gash classifies the error as transport failure and isolates the affected probes without leaking credentials.
 
+
+### 5. Out-of-Band Verification (Opt-in Interactsh & Self-Hosted)
+
+Gash never enables OOB by default. Select a provider explicitly:
+
+```sh
+# Public interactsh fleet: plug-and-play, third-party service (explicit opt-in)
+gash scan --target https://app.example.com --active --oob-server interactsh
+
+# Self-hosted interactsh: recommended for sensitive engagements
+gash scan --target https://app.example.com --active \
+  --oob-server interactsh://oob.example.com --oob-token "$GASH_OOB_TOKEN"
+
+# Built-in local listener (the target must reach this host)
+gash scan --target http://192.0.2.10 --active --oob-server local
+
+# Custom self-hosted API (the legacy /api/v1/poll contract)
+gash scan --target https://app.example.com --active \
+  --oob-server https://oob.example.com
+```
+
+- Public interactsh registers a session with `oast.pro`/`oast.live`/... and is
+  never the default. Callback metadata leaves your network; use self-hosted
+  interactsh for sensitive targets.
+- Tokens for self-hosted interactsh come from `--oob-token` or
+  `GASH_OOB_TOKEN`; the token is never written to reports or logs.
+- One interactsh session is registered per scan and shared by Tier 1 and Tier 2
+  plugins. Each payload still uses its own single-use correlation label, and
+  confirmation requires a decrypted callback.
+- If registration fails, the scan continues with an `oob-provider` skip entry;
+  OOB plugins do not fabricate findings.
+
+## WAF Challenges and Bypass Discipline
+
+- Challenge pages from Cloudflare, Akamai, Imperva, DataDome, PerimeterX, AWS
+  WAF, Sucuri, F5, and Kasada are classified as untrusted, even on HTTP 200.
+- Aggressive mode retries up to 24 scoped variants: header-only, HPP
+  (including benign-first/last-wins differentials), double encoding, mixed
+  case, class-aware semantic payloads (SQLi comments, versioned MySQL
+  comments, symbolic `||`/`&&`, `0x`/`CHAR()`/`CHR()`, percent/GBK quote and
+  whitespace differentials, modern SVG/MathML/Media XSS tags, backtick and
+  computed `alert` calls plus entity/Unicode forms that preserve the canary,
+  `${IFS}` shell separators, encoded traversal, and parser-confusion URLs),
+  content-type switching (`text/plain`, vendor JSON, multipart for forms,
+  multipart duplicate fields, and a body with no `Content-Type`), parser
+  differentials (JSON duplicate keys, `\uXXXX` value escapes and escaped key
+  names), malformed multipart field names (NUL suffix, filename-bearing
+  fields), 8 KiB inspection-window padding, path-normalization confusion
+  (`//`, `/./`, `..;/`, `;`), decimal/hex/octal/IPv6 IP spellings, and
+  IP-spoofing headers (`X-Forwarded-For`, `Forwarded`, `CF-Connecting-IP`,
+  `True-Client-IP`, `X-Original-URL`, `X-Forwarded-Host`, ...).
+- A variant only counts as a bypass after two stable application responses; a
+  block page, login page, soft-404, or dynamic body never does.
+- Challenge/429 responses are counted as `waf_challenges`; the scanner does not
+  skip the host or its plugins. Proxy rotation and the per-target rate limit
+  still apply, so a blocking WAF does not turn into a mass-skip.
+- The headless browser checks challenge markers before and after the canary
+  probe and returns `payload_waf_challenge` / `control_waf_challenge` (blocked)
+  rather than treating challenge DOM as target evidence. Anti-bot stealth is
+  intentionally out of scope.

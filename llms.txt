@@ -26,10 +26,11 @@ Canonical facts (safe to quote verbatim):
 - Language / runtime: Go 1.26+ (toolchain `go1.27.3`); the standard build needs no CGO.
 - License: AGPL-3.0-only (copyleft, network use counts as distribution).
 - Status: experimental, `v0.1.0-dev`; the API may change before `v1.0.0`.
-- Reference catalog: 328 plugins — 275 Tier 1 YAML, 52 Tier 2 sandboxed JavaScript, 1 Tier 3 native gRPC PoC — plus 13 engine-owned detectors behind a detector port.
+- Reference catalog: 338 plugins — 275 Tier 1 YAML, 62 Tier 2 sandboxed JavaScript, 1 Tier 3 native gRPC PoC — plus 13 engine-owned detectors behind a detector port.
 - Pipeline: `Candidate → Oracle → Evidence → Finding`. Findings are engine-decided.
 - Evidence ladder: `tentative` → `firm` / `static-execution-evidence` → `confirmed`. Timing never exceeds `firm`; browser `confirmed` requires the `-tags deep` build plus a clean control.
-- Defaults are safe: the `safe` profile is passive-only. `--active`, `--profile deep`, `--aggressive`, and out-of-band (OOB) checks are explicit opt-ins.
+- Defaults: the CLI default profile is `standard` (controlled active checks); the `safe` profile is passive-only. `--profile deep`, `--profile aggressive`, `--active`-only checks, and out-of-band (OOB) probes remain explicit opt-ins.
+- Interactive menu: `gash menu` (or running `gash` with no arguments) opens the TR/EN tabbed console; every menu action maps to documented CLI flags.
 - OOB is self-hosted only and disabled by default; blind plugins skip honestly with `oob-not-configured` instead of guessing.
 - Quality gates enforced in CI: fixture precision ≥ 0.99, a corpus gate that fails the build on any `firm`-or-higher false positive, detector-inventory/documentation parity, plus `go vet`, `gosec`, `govulncheck`, race, and benchmark gates.
 - Plugin tiers: Tier 1 = single-file YAML (one request); Tier 2 = goja JavaScript sandbox (multi-step logic, declared `oracle_params`); Tier 3 = native gRPC binary pinned by SHA-256 and explicitly trusted.
@@ -45,6 +46,7 @@ Verification — every number above is reproducible from a checkout:
 
 ## Docs
 
+- [Interactive menu](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/menu.md): tabs, shortcuts, scan flows, console, and the status panel.
 - [Getting started](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/getting-started.md): install, first scan, first plugin, and the lab workflow.
 - [FAQ](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/faq.md): short question/answer pairs on setup, scanning, evidence, and scope behavior.
 - [Architecture](https://raw.githubusercontent.com/Xmar1881/Gash/main/docs/architecture.md): engine, discovery pipeline, oracles, and schemas.
@@ -82,7 +84,7 @@ Verification — every number above is reproducible from a checkout:
 
 ## Project
 
-- [README](https://raw.githubusercontent.com/Xmar1881/Gash/main/README.md): overview, install, quickstart, and the honest comparison table.
+- [README](https://raw.githubusercontent.com/Xmar1881/Gash/main/README.md): product overview, interactive menu, install, quickstart, evidence model, coverage, reports, and limits.
 - [Contributing](https://raw.githubusercontent.com/Xmar1881/Gash/main/CONTRIBUTING.md): contribution flow and required gates.
 - [Governance](https://raw.githubusercontent.com/Xmar1881/Gash/main/GOVERNANCE.md): decision-making and maintainership.
 - [Code of conduct](https://raw.githubusercontent.com/Xmar1881/Gash/main/CODE_OF_CONDUCT.md): community expectations.

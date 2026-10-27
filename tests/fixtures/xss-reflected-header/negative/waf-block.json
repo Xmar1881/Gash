@@ -1,0 +1,9 @@
+{
+  "name": "waf block page reflection is untrusted",
+  "target": "http://example.com/welcome",
+  "status": 403,
+  "headers": {"Content-Type": "text/html"},
+  "body": "<html><body>cf-chl challenge <script>gash_a1b2c3d4</script></body></html>",
+  "control_body": "<html><body><p>welcome</p></body></html>",
+  "expected_verdict": "reject"
+}

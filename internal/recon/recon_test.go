@@ -8,9 +8,11 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Xmar1881/Gash/internal/detector"
 	"github.com/Xmar1881/Gash/internal/plugin"
+	"github.com/Xmar1881/Gash/internal/probe"
 )
 
 // scanPagesFixture mirrors the crawler output every test below drives.
@@ -229,4 +231,42 @@ func TestDetectorsRegisterAndStayUngated(t *testing.T) {
 			t.Fatalf("devbuild_markers missing: %+v", dev.Stats)
 		}
 	})
+}
+
+// TestJSReconFollowBudget proves a blocked follow crawl cannot consume the
+// whole scan deadline.
+func TestJSReconFollowBudget(t *testing.T) {
+	old := jsReconBudget
+	jsReconBudget = 30 * time.Millisecond
+	defer func() { jsReconBudget = old }()
+
+	policy := plugin.NewPolicySession(plugin.DefaultPolicyConfig(), nil)
+	client := probe.NewClient(probe.Options{Policy: policy, RequestTimeout: time.Second})
+	env := &detector.Env{
+		Target: "http://example.com",
+		Probe:  client,
+		Crawl: detector.Crawl{
+			JSFilesFetched: 1,
+			JSSources: []detector.Page{{
+				URL:  "http://example.com/app.js",
+				Body: []byte(`fetch("/api/items")`),
+			}},
+		},
+		URLAllowed: func(string) bool { return true },
+		FollowCrawl: func(ctx context.Context, rawURL string) ([]detector.Surface, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	start := time.Now()
+	res, err := JSRecon{}.Run(context.Background(), env)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("js recon budget not enforced: %s", elapsed)
+	}
+	if res.Stats["js_recon_budget_exhausted"] != 1 {
+		t.Fatalf("budget exhaustion not reported: %+v", res.Stats)
+	}
 }

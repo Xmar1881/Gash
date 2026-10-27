@@ -36,6 +36,33 @@ func New() *Context {
 	return &Context{Headers: make(map[string]string), Cookies: make(map[string]string)}
 }
 
+// Clone returns an independent copy. It lets one scan run merge login-derived
+// credentials without mutating the caller's declared context, so a reused
+// engine cannot leak a session into the next bulk target. Nil-safe.
+func (c *Context) Clone() *Context {
+	if c == nil {
+		return nil
+	}
+	out := &Context{
+		BasicUser: c.BasicUser,
+		BasicPass: c.BasicPass,
+		hasAuth:   c.hasAuth,
+	}
+	if c.Headers != nil {
+		out.Headers = make(map[string]string, len(c.Headers))
+		for k, v := range c.Headers {
+			out.Headers[k] = v
+		}
+	}
+	if c.Cookies != nil {
+		out.Cookies = make(map[string]string, len(c.Cookies))
+		for k, v := range c.Cookies {
+			out.Cookies[k] = v
+		}
+	}
+	return out
+}
+
 // HasAuth en az bir kimlik bilgisi tanımlı mı (engine requires_auth kapısı).
 func (c *Context) HasAuth() bool {
 	if c == nil {

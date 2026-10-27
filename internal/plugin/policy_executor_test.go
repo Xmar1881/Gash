@@ -100,21 +100,26 @@ func TestExecutePolicyError(t *testing.T) {
 	}
 }
 
-func TestExecuteControlledPolicyStopsAreSkipped(t *testing.T) {
+// TestExecuteControlledPolicyStopsAreHonest: bütçe/rate tavanı kısmi (partial),
+// kapsam dışı ise gerçek skip olarak raporlanır.
+// What: ErrBudgetExceeded/ErrRateLimited -> StatusPartial, ErrScopeViolation -> StatusSkipped.
+// Why: "skipped" demek, tavanına takılan plugin için yanıltıcıydı.
+func TestExecuteControlledPolicyStopsAreHonest(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		err  error
+		want PluginStatus
 	}{
-		{name: "budget", err: ErrBudgetExceeded},
-		{name: "rate", err: ErrRateLimited},
-		{name: "scope", err: ErrScopeViolation},
+		{name: "budget", err: ErrBudgetExceeded, want: StatusPartial},
+		{name: "rate", err: ErrRateLimited, want: StatusPartial},
+		{name: "scope", err: ErrScopeViolation, want: StatusSkipped},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			res := Execute(context.Background(), tc.name, func(context.Context) ([]Candidate, error) {
 				return nil, tc.err
 			})
-			if res.Status != StatusSkipped {
-				t.Fatalf("controlled policy stop must be skipped, got %s", res.Status)
+			if res.Status != tc.want {
+				t.Fatalf("got %s, want %s", res.Status, tc.want)
 			}
 		})
 	}

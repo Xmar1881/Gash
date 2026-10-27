@@ -95,6 +95,40 @@ func TestApplyToRequestPreservesExplicit(t *testing.T) {
 	}
 }
 
+func TestCloneIsIndependent(t *testing.T) {
+	src := New()
+	if err := src.ParseAuthHeader("Authorization: Bearer base"); err != nil {
+		t.Fatal(err)
+	}
+	if err := src.ParseCookie("session=base"); err != nil {
+		t.Fatal(err)
+	}
+	clone := src.Clone()
+	added := New()
+	if err := added.ParseCookie("session=login"); err != nil {
+		t.Fatal(err)
+	}
+	if err := added.ParseAuthHeader("X-Login: yes"); err != nil {
+		t.Fatal(err)
+	}
+	clone.MergeMissing(added)
+	if _, ok := src.Cookies["session"]; !ok || src.Cookies["session"] != "base" {
+		t.Fatalf("kaynak cookie değişmemeli: %+v", src.Cookies)
+	}
+	if _, ok := src.Headers["X-Login"]; ok {
+		t.Fatalf("login header kaynağa sızmamalı: %+v", src.Headers)
+	}
+	if clone.Cookies["session"] != "base" {
+		t.Fatalf("açık cookie login tarafından ezilmemeli: %+v", clone.Cookies)
+	}
+	if clone.Headers["X-Login"] != "yes" || clone.Headers["Authorization"] != "Bearer base" {
+		t.Fatalf("klon login değerlerini taşımalı: %+v", clone.Headers)
+	}
+	if (*Context)(nil).Clone() != nil {
+		t.Fatal("nil Clone nil dönmeli")
+	}
+}
+
 func TestRedactedLeaksNothing(t *testing.T) {
 	c := New()
 	_ = c.ParseAuthHeader("Authorization: Bearer süper-gizli")

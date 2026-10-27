@@ -1,0 +1,10 @@
+{
+  "name": "xml field closure triggers a postgres signature",
+  "target": "http://example.com/api/import",
+  "status": 500,
+  "headers": {"Content-Type": "application/xml"},
+  "body": "<error>ERROR: syntax error at or near \"'\"</error>",
+  "control_body": "<request><id>1</id></request>",
+  "expected_verdict": "accept",
+  "expected_confidence": "confirmed"
+}

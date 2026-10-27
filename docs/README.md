@@ -16,6 +16,7 @@ Markdown file in this repository.
 ## Start Here
 
 - [Getting Started](getting-started.md) — install, first scan, first plugin
+- [Interactive Menu](menu.md) — guided scans, tabs, console, status panel
 - [FAQ](faq.md) — common setup, scanning, and evidence questions
 - [Türkçe Başlangıç Rehberi](user-guide-tr.md) — Turkish beginner guide
 - [Quickstart](../README.md#quickstart) — copy-paste commands

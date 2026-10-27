@@ -1,0 +1,9 @@
+{
+  "name": "signature also present for the neutral multipart field",
+  "target": "http://example.com/api/items",
+  "status": 500,
+  "headers": {"Content-Type": "text/html"},
+  "body": "<html><body>You have an error in your SQL syntax</body></html>",
+  "control_body": "<html><body>You have an error in your SQL syntax</body></html>",
+  "expected_verdict": "reject"
+}

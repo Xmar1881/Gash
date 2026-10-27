@@ -116,17 +116,168 @@ func WriteText(w io.Writer, rep *engine.Report, opts Options) error {
 			return fmt.Errorf("reporter text: %w", err)
 		}
 	}
-	if len(rep.Skipped) > 0 {
-		if _, err := fmt.Fprintf(w, "skipped plugins: %d\n", len(rep.Skipped)); err != nil {
+	// Kanıt disiplini: "koşmadı" (skipped) ile "bütçesine takıldı, yarım kaldı"
+	// (partial) ayrı raporlanır; ikisi aynı listede karışmaz.
+	var partials, rest, failures []plugin.SkippedPlugin
+	var notApplicable []plugin.SkippedPlugin
+	for _, s := range rep.Skipped {
+		if s.Partial {
+			partials = append(partials, s)
+			continue
+		}
+		if notApplicableReason(s.Reason) {
+			notApplicable = append(notApplicable, s)
+			continue
+		}
+		if errorReason(s.Reason) {
+			failures = append(failures, s)
+			continue
+		}
+		rest = append(rest, s)
+	}
+	if len(notApplicable) > 0 {
+		if _, err := fmt.Fprintf(w, "not applicable (configuration/profile): %d\n", len(notApplicable)); err != nil {
 			return fmt.Errorf("reporter text: %w", err)
 		}
-		for _, s := range rep.Skipped {
-			if _, err := fmt.Fprintf(w, "  - %s: %s\n", s.PluginID, s.Reason); err != nil {
-				return fmt.Errorf("reporter text: %w", err)
-			}
+		printSkippedDetails(w, notApplicable)
+	}
+	if len(failures) > 0 {
+		if _, err := fmt.Fprintf(w, "runtime errors: %d%s\n", len(failures), errorSummary(failures)); err != nil {
+			return fmt.Errorf("reporter text: %w", err)
 		}
+		printSkippedDetails(w, failures)
+	}
+	if len(rest) > 0 {
+		if _, err := fmt.Fprintf(w, "not completed (deadline/limit): %d%s\n", len(rest), skipSummary(rest)); err != nil {
+			return fmt.Errorf("reporter text: %w", err)
+		}
+		printSkippedDetails(w, rest)
+	}
+	if len(partials) > 0 {
+		if _, err := fmt.Fprintf(w, "partial plugins (request budget/rate ceiling reached): %d\n", len(partials)); err != nil {
+			return fmt.Errorf("reporter text: %w", err)
+		}
+		printSkippedDetails(w, partials)
 	}
 	return nil
+}
+
+func printSkippedDetails(w io.Writer, skips []plugin.SkippedPlugin) {
+	const detailCap = 20
+	for i, s := range skips {
+		if i >= detailCap {
+			_, _ = fmt.Fprintf(w, "  ... and %d more (see JSON report)\n", len(skips)-detailCap)
+			return
+		}
+		_, _ = fmt.Fprintf(w, "  - %s: %s\n", s.PluginID, displayReason(s.Reason))
+	}
+}
+
+// displayReason strips the internal "skipped (...)" wrapper from the text
+// report; JSON keeps the full auditable reason.
+func displayReason(reason string) string {
+	const prefix = "skipped ("
+	if strings.HasPrefix(reason, prefix) && strings.HasSuffix(reason, ")") {
+		return reason[len(prefix) : len(reason)-1]
+	}
+	return reason
+}
+
+// errorReason separates runtime failures from configuration exclusions and
+// genuine skips in the text report.
+func errorReason(reason string) bool {
+	r := strings.ToLower(reason)
+	if strings.HasPrefix(r, "error (") || strings.Contains(r, "render error:") {
+		return true
+	}
+	for _, marker := range []string{"panic:", "tls: failed", "context deadline exceeded while"} {
+		if strings.Contains(r, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func errorSummary(errs []plugin.SkippedPlugin) string {
+	counts := map[string]int{}
+	for _, s := range errs {
+		r := strings.ToLower(s.Reason)
+		switch {
+		case strings.Contains(r, "timeout"):
+			counts["timeout"]++
+		case strings.Contains(r, "tls"), strings.Contains(r, "certificate"):
+			counts["tls"]++
+		case strings.Contains(r, "proxyconnect"), strings.Contains(r, "proxy connect"):
+			counts["proxy"]++
+		case strings.Contains(r, "policy violation"), strings.Contains(r, "scope"),
+			strings.Contains(r, "budget"), strings.Contains(r, "rate limit"),
+			strings.Contains(r, "rate-limited"), strings.Contains(r, "backpressure"):
+			counts["limit"]++
+		case strings.Contains(r, "connection refused"), strings.Contains(r, "dial tcp"),
+			strings.Contains(r, "no such host"), strings.Contains(r, "connection reset"),
+			strings.Contains(r, "network is unreachable"):
+			counts["network"]++
+		default:
+			counts["other"]++
+		}
+	}
+	var parts []string
+	for _, key := range []string{"timeout", "tls", "proxy", "limit", "network", "other"} {
+		if counts[key] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", counts[key], key))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
+}
+
+// notApplicableReason separates configuration/profile exclusions from real
+// skips (timeouts, deadlines, errors) in the text report.
+func notApplicableReason(reason string) bool {
+	r := strings.ToLower(reason)
+	for _, marker := range []string{
+		"requires --active", "requires --deep", "requires auth",
+		"oob-not-configured", "tier3-untrusted", "requires trust",
+		"disabled by profile", "smuggle-probe requires",
+	} {
+		if strings.Contains(r, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// skipSummary groups skip reasons so a 300-plugin report says why the plugins
+// did not run instead of only listing them.
+func skipSummary(skips []plugin.SkippedPlugin) string {
+	counts := map[string]int{}
+	for _, s := range skips {
+		r := strings.ToLower(s.Reason)
+		switch {
+		case strings.Contains(r, "deadline exceeded"):
+			counts["scan deadline"]++
+		case strings.Contains(r, "requires auth"):
+			counts["requires auth"]++
+		case strings.Contains(r, "tier3-untrusted"):
+			counts["tier3-untrusted"]++
+		case strings.Contains(r, "scan context"):
+			counts["scan context"]++
+		default:
+			counts["other"]++
+		}
+	}
+	var parts []string
+	for _, key := range []string{"scan deadline", "requires auth", "tier3-untrusted", "scan context", "other"} {
+		if counts[key] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", counts[key], key))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
 }
 
 // WriteSARIF SARIF v2.1.0 minimal-geçerli çıktıdır (CI kapısı).

@@ -13,13 +13,13 @@ Gash is a Go-native, plugin-driven web security scanner. Its core philosophy: **
 | **Finding authority** | Engine oracles only | Template matchers | Scan rules + alerts | Scanner + analyst |
 | **Plugin model** | Drop-in YAML/JS/native | YAML templates | Add-ons/scripts | BApp extensions |
 | **False-positive discipline** | Corpus gate (precision ≥ 0.99) | Community QA | Risk/confidence taxonomy | Manual verification |
-| **OOB** | Self-hosted only, honest skip | Interactsh (public OK) | Add-ons | Collaborator (SaaS) |
+| **OOB** | Opt-in local/self-hosted/interactsh; honest skip | Interactsh (public OK) | Add-ons | Collaborator (SaaS) |
 | **License** | AGPL-3.0-only | MIT/BSD | Apache 2.0 | Commercial |
 
 ### Is Gash production-ready?
 
 **Experimental** (`v0.1.0-dev`). The core architecture is stable but:
-- Plugin set is growing (328 reference plugins)
+- Plugin set is growing (338 reference plugins)
 - Real-world recall is manually measured on lab targets only
 - Deep build (browser) requires Chrome/Chromium
 - API may change before `v1.0.0`
@@ -42,7 +42,9 @@ go build ./...
 
 ### Do I need CGO?
 
-**No.** `CGO_ENABLED=0` is recommended for static binaries. Only the deep build (`-tags deep`) uses `chromedp` which requires CGO for ChromeDP.
+**No.** `CGO_ENABLED=0` is recommended for static binaries. The deep build
+(`-tags deep`) uses `chromedp`, which is pure Go but needs a local
+Chrome/Chromium installation at runtime.
 
 ### Can I cross-compile?
 
@@ -62,20 +64,32 @@ CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o gash-darwin-arm64 ./cmd/gash
 
 Common causes:
 
-1. **Scope**: Target not in `--scope` (default allows all, but cross-host redirects followed)
-2. **Profile**: Using `safe` (default) — passive only. Try `--active` or `--profile deep`
+1. **Scope**: Target outside the automatic same-site scope (default: target's
+   registrable domain; `--allow-external` opts out)
+2. **Profile**: The CLI default is `standard` (controlled active); `--profile
+   safe` is passive-only. Try `--profile deep` (deep build + Chrome) or
+   `--profile aggressive` for broader checks.
 3. **Plugin not loaded**: Check `./gash plugins list | grep <plugin-id>`
 4. **OOB not configured**: Blind plugins (`*_oob`, `*_timing`) require `--oob-server`
 5. **Rate limit too low**: Increase `--rate-limit` and `--max-requests-total`
 
 ### What does `--scope` actually do?
 
-Without `--scope`: **open mode** — follows all redirects/crawl links (any host, any scheme).
+Without `--scope`: **same-site mode** — the target's registrable domain
+(eTLD+1) and its subdomains are allowed; external crawl links and redirects are
+blocked. `--allow-external` restores the old open mode.
 With `--scope example.com`:
 - Only requests to `example.com` and subdomains allowed
 - Redirects to outside scope are blocked
 - DNS rebinding protection (pinning)
 - HTTP→HTTPS upgrade only, never downgrade
+
+### Why did the scan visit Google / Instagram / a CDN?
+
+Older builds ran in open mode without `--scope`, so the crawler followed every
+external link it found and could spend the whole scan deadline outside the
+target. Current builds default to the target's registrable domain. If you still
+see external hops, pass `--scope` explicitly or remove `--allow-external`.
 
 ### How do I scan a target behind login?
 
@@ -182,24 +196,33 @@ For differential/error/timing oracles, Gash sends a **control request** with a n
 
 ### Why are OOB plugins skipping with `oob-not-configured`?
 
-OOB verification is **explicit opt-in**. You must run your own interaction server:
+OOB verification is **explicit opt-in**, but there are plug-and-play options:
 
 ```sh
-# Start interactsh server (example)
-interactsh-server
+# Public interactsh fleet (third-party service; explicit opt-in)
+./gash scan --target https://example.com --active --oob-server interactsh
 
-# Scan with OOB
-./gash scan --target https://example.com --oob-server https://your.interactsh.server
+# Self-hosted interactsh (recommended for sensitive targets)
+./gash scan --target https://example.com --active --oob-server interactsh://oob.example.com
+
+# Built-in local listener (target must be able to reach this host)
+./gash scan --target https://example.com --active --oob-server local
+
+# Custom self-hosted API
+./gash scan --target https://example.com --active --oob-server https://your.server
 ```
 
-Without `--oob-server`, all `oob: required` plugins honestly skip and report `oob-not-configured` in stats.
+Self-hosted interactsh servers that require a token accept `--oob-token` or
+`GASH_OOB_TOKEN`. Without any `--oob-server`, all `oob: required` plugins
+honestly skip and report `oob-not-configured` in stats.
 
 ### Can I use a public Interactsh server?
 
-**No.** Gash requires self-hosted OOB to prevent:
-- Callback leakage to third parties
-- Uncontrolled correlation windows
-- Dependency on external infrastructure
+**Yes, explicitly.** `--oob-server interactsh` registers a session with the
+official public fleet (`oast.pro`, `oast.live`, ...). It is a third-party
+service: callback metadata leaves your network, so use a self-hosted
+interactsh server for sensitive engagements. Public interactsh is never the
+default.
 
 ---
 
@@ -304,7 +327,9 @@ go run ./cmd/gash bench baseline dist/bench-latest/report.json > bench/baselines
 
 **No.** Zero telemetry, zero external calls unless you configure:
 - `--oob-server` (your server)
-- `--proxy` (your proxy)
+- `--proxy` / `--proxy-file` (your proxy), or the auto-detected local list
+  `.gash/proxies/alive.txt` / `all.txt` (disable with `--no-proxy` or
+  `GASH_PROXY_FILE`)
 - `--scope` DNS resolution (target hosts only)
 
 ### Can I use Gash commercially?

@@ -40,16 +40,21 @@ var (
 	// phrases such as "access denied" are deliberately excluded: a static
 	// security document served with 200 can contain them without being a WAF.
 	strongWAFMarkers = []string{
-		"cf-chl", "cf_chl", "__cf_bm",
+		"cf-chl", "cf_chl",
 		"just a moment...", "attention required! | cloudflare",
+		"cf-error-details", "cf-mitigated",
 		"sucuri website firewall",
+		"incapsula incident id", "_incapsula_resource",
+		"captcha-delivery.com", "datadome captcha", "px-captcha",
+		"aws-waf-token", "awswaf",
+		"the requested url was rejected",
 	}
 	blockMarkers = []string{
 		"access denied", "request blocked",
 	}
 	weakWAFMarkers = []string{
-		"cloudflare", "akamai", "incapsula", "imperva", "recaptcha",
-		"hcaptcha", "captcha", "retry-after", "waf", "challenge",
+		"cloudflare", "akamai", "reference #", "incapsula", "imperva", "recaptcha",
+		"hcaptcha", "captcha", "retry-after", "waf", "challenge", "f5 networks",
 	}
 	maskPatterns = []string{
 		`name="csrf[^"]*" value="[^"]*"`,

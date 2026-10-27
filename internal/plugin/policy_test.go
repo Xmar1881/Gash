@@ -7,6 +7,7 @@ package plugin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -194,6 +195,34 @@ func TestScope_IPHostExactMatchOnly(t *testing.T) {
 			t.Fatalf("candidate %s must be rejected for exact IP scope entry", candidate)
 		}
 	}
+}
+
+// TestScope_ConcurrentCIDRChecks exercises the resolver cache from many
+// goroutines. Without locking this is a concurrent map write/read panic.
+func TestScope_ConcurrentCIDRChecks(t *testing.T) {
+	sm := newScopeManager([]string{"127.0.0.0/8"})
+	urls := make([]*url.URL, 0, 32)
+	for i := 1; i <= 32; i++ {
+		u, err := url.Parse(fmt.Sprintf("http://127.0.0.%d/", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		urls = append(urls, u)
+	}
+	var wg sync.WaitGroup
+	for _, u := range urls {
+		wg.Add(1)
+		go func(target *url.URL) {
+			defer wg.Done()
+			for i := 0; i < 20; i++ {
+				if err := sm.check(context.Background(), target); err != nil {
+					t.Errorf("in-scope CIDR host rejected: %v", err)
+					return
+				}
+			}
+		}(u)
+	}
+	wg.Wait()
 }
 
 func TestDefaultRedirectPolicy_UpgradeOnly(t *testing.T) {

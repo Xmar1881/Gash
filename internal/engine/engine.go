@@ -17,6 +17,7 @@ import (
 	"github.com/Xmar1881/Gash/internal/detector"
 	"github.com/Xmar1881/Gash/internal/finding"
 	"github.com/Xmar1881/Gash/internal/headless"
+	"github.com/Xmar1881/Gash/internal/oob"
 	"github.com/Xmar1881/Gash/internal/plugin"
 	"github.com/Xmar1881/Gash/internal/plugin/loader"
 	"github.com/Xmar1881/Gash/internal/proto"
@@ -53,6 +54,8 @@ type Config struct {
 	RatePerSecond        float64
 	Parallelism          int
 	OOBServer            string
+	// OOBToken authenticates a self-hosted interactsh server (optional).
+	OOBToken string
 	// BrowserVerify enables the generic controlled browser-verify pass for
 	// static-execution-evidence XSS findings (needs a -tags deep build plus a
 	// Chrome binary; the CLI gates it behind --active). Off by default.
@@ -76,12 +79,29 @@ type Config struct {
 	MaxPages         int    // Maximum pages to crawl (default 50)
 	Depth            int    // Maximum crawl depth (default 3)
 	ProxyURL         string // Upstream HTTP proxy URL (e.g. http://127.0.0.1:8080)
+	// ProxyURLs is a rotating proxy pool (from --proxy/--proxy-file). Empty
+	// means direct traffic. The pool rotates on timeouts and block statuses.
+	ProxyURLs []string
+	// ProxyRotate selects per-host (default) or per-request rotation.
+	ProxyRotate string
+	// ProxyCooldown skips a failing proxy for this long (0 = pool default).
+	ProxyCooldown time.Duration
+	// ProxyAttemptTimeout bounds one proxy attempt when the pool has more than
+	// one member, so a dead proxy cannot consume the whole request timeout.
+	ProxyAttemptTimeout time.Duration
 	// RequestTimeout per-HTTP-request timeout (default 15s).
 	RequestTimeout time.Duration
 	// ScanTimeout bounds the complete engine run, including discovery and
 	// plugin scheduling (default 10m). Per-request and per-plugin timeouts do
 	// not replace this outer deadline.
 	ScanTimeout time.Duration
+	// CrawlTimeout bounds the BFS discovery phase so a dead proxy pool cannot
+	// spend the whole scan deadline before plugins run (0 = 5m).
+	CrawlTimeout time.Duration
+	// SkipTLSFailFast disables the HTTPS certificate preflight abort. It is a
+	// test seam for self-signed fixture servers; production scans keep the
+	// fail-closed default.
+	SkipTLSFailFast bool
 	// MaxResponseBytes caps stored response bodies (default 5MB).
 	MaxResponseBytes int64
 	// OpenAPISpec --openapi-spec karşılığıdır (dosya yolu veya http(s) URL).
@@ -130,8 +150,10 @@ type Config struct {
 	CustomProfile *config.Profile
 	// P1.2: Effective detectors enabled by profile (populated at runtime)
 	enabledDetectors map[string]bool
-	// OnProgress is an optional callback called as the engine advances through scan phases.
-	OnProgress func(phase string, detail string)
+	// OnProgress receives stable phase/detail keys plus formatting args while
+	// the engine advances. Display text is owned by the CLI/menu translator;
+	// the engine never hardcodes user-visible progress strings.
+	OnProgress func(phaseKey, detailKey string, args ...any)
 }
 
 // DefaultConfig bayrak default'larıdır.
@@ -149,7 +171,10 @@ func DefaultConfig() Config {
 		Depth:                3,
 		RequestTimeout:       20 * time.Second,
 		ScanTimeout:          10 * time.Minute,
+		CrawlTimeout:         5 * time.Minute,
 		MaxResponseBytes:     5 * 1024 * 1024,
+		ProxyRotate:          "per-host",
+		ProxyCooldown:        30 * time.Second,
 		DBPorts:              proto.DefaultDBPorts(),
 		MaxInfraPorts:        20,
 		InfraTimeout:         5 * time.Second,
@@ -196,6 +221,15 @@ type Engine struct {
 	// analysis over crawler output, wordlist probing). It is the single
 	// enumerable list of scan units that cannot be YAML or JS plugins.
 	detectors *detector.Registry
+	// oobOnce caches the OOB provider so interactsh registers one session per
+	// scan instead of once per detector/plugin.
+	oobOnce    sync.Once
+	oobProv    oob.Provider
+	oobProvErr error
+	// runMu serializes Run on one Engine. Run swaps per-target runtime state
+	// (auth clone, detected tech/caps), so concurrent calls would otherwise
+	// race even though the transport/policy themselves are concurrency-safe.
+	runMu sync.Mutex
 }
 
 // New motor kurar.
@@ -361,7 +395,7 @@ func (e *Engine) filterReason(s plugin.PluginSpec) (string, bool) {
 		if oracle == "oob" && s.OOB == plugin.OOBRequired && e.cfg.OOBServer != "" {
 			// Explicit OOB configuration overrides profile
 		} else if !e.cfg.enabledDetectors[oracle] {
-			return fmt.Sprintf("skipped (detector %s disabled by profile %s)", oracle, e.EffectiveProfile().Name), false
+			return fmt.Sprintf("skipped (oracle %q disabled by profile %s)", oracle, e.EffectiveProfile().Name), false
 		}
 	}
 	return "", true
@@ -450,9 +484,9 @@ func (e *Engine) SharedPolicy() *plugin.PolicySession {
 }
 
 // Run executes scheduled plugins against the target with live probing.
-func (e *Engine) notifyProgress(phase, detail string) {
+func (e *Engine) notifyProgress(phaseKey, detailKey string, args ...any) {
 	if e.cfg.OnProgress != nil {
-		e.cfg.OnProgress(phase, detail)
+		e.cfg.OnProgress(phaseKey, detailKey, args...)
 	}
 }
 
@@ -461,7 +495,22 @@ func (e *Engine) notifyProgress(phase, detail string) {
 // get deterministic Tier1/Tier2/Tier3 verification through one pipeline.
 // P2.6 sırası: istemci kur → login → teknoloji tespiti → schedule → koşum.
 func (e *Engine) Run(ctx context.Context, target string) (*Report, error) {
-	e.notifyProgress("Başlatılıyor", "Hedef ve tarama istemcisi hazırlanıyor...")
+	e.runMu.Lock()
+	defer e.runMu.Unlock()
+
+	// Bulk scans reuse one Engine across targets. Login merges new cookies into
+	// cfg.Auth, so clone the declared context for this run and restore it after:
+	// a session established for target A must never authenticate target B.
+	baseAuth, baseHasAuth := e.cfg.Auth, e.cfg.HasAuth
+	if baseAuth != nil {
+		e.cfg.Auth = baseAuth.Clone()
+	}
+	defer func() {
+		e.cfg.Auth = baseAuth
+		e.cfg.HasAuth = baseHasAuth
+	}()
+
+	e.notifyProgress(progressPhaseStarting, progressDetailStartingPrepare)
 	scanCtx, cancel := context.WithTimeout(ctx, e.effectiveScanTimeout())
 	defer cancel()
 	if err := scanCtx.Err(); err != nil {
@@ -476,10 +525,22 @@ func (e *Engine) Run(ctx context.Context, target string) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	e.notifyProgress(progressPhaseStarting, progressDetailStartingReady)
+	if e.cfg.Login != nil {
+		e.notifyProgress(progressPhaseLogin, progressDetailLoginStart)
+	}
 	login, err := e.runLogin(scanCtx, client)
 	if err != nil {
 		// Kapsam/politika ihlali: fail-closed, tarama başlamaz.
 		return nil, err
+	}
+	if e.cfg.Login != nil {
+		detailKey := progressDetailLoginOK
+		if login.succeeded == 0 {
+			detailKey = progressDetailLoginFail
+		}
+		e.notifyProgress(progressPhaseLogin, detailKey,
+			login.attempted, login.succeeded, login.cookies)
 	}
 	if login.succeeded == 1 && login.auth != nil {
 		// Açık kimlik beyanı login türevinin üzerindedir (ad bazında).
@@ -492,21 +553,26 @@ func (e *Engine) Run(ctx context.Context, target string) (*Report, error) {
 	}
 	// Çalışma-anı teknoloji tespiti: tek pasif GET ile zincir girdisi.
 	// Hata = boş küme (kullanıcı --tech tek başına yeterli); ek trafik yok.
-	e.notifyProgress("Teknoloji Analizi", "Sunucu parmak izi analiz ediliyor...")
+	e.notifyProgress(progressPhaseTech, progressDetailTechStart)
 	e.detectRuntimeTech(scanCtx, normalized, client)
-	e.notifyProgress("Planlama", "Dedektörler ve kontroller planlanıyor...")
+	e.notifyProgress(progressPhaseTech, progressDetailTechDone,
+		len(e.detectedTech), len(e.detectedCaps))
+	e.notifyProgress(progressPhasePlanning, progressDetailPlanStart)
 	ordered, skipped, err := e.Schedule(scanCtx)
 	if err != nil {
 		return nil, err
 	}
 	// Login skip izi en başta raporlanır (başarısızlık sessiz kalmaz).
 	skipped = append(append([]plugin.SkippedPlugin{}, login.skipped...), skipped...)
+	e.notifyProgress(progressPhasePlanning, progressDetailPlanDone,
+		len(ordered), len(skipped))
 	if len(ordered) == 0 {
 		rep := &Report{
 			Target:   normalized,
 			Findings: []*finding.Finding{},
 			Stats: map[string]int{
-				"scheduled": 0, "skipped": len(skipped), "findings": 0, "errors": 0,
+				"scheduled": 0, "skipped": len(skipped), "partial_plugins": 0,
+				"findings": 0, "errors": 0,
 				"login_attempted": login.attempted,
 				"login_succeeded": login.succeeded,
 				"login_cookies":   login.cookies,

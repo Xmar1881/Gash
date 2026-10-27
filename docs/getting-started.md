@@ -75,10 +75,10 @@ This produces a report in `dist/bench-results-<timestamp>/` with:
 Scan a local target you own (e.g., a dev server):
 
 ```sh
-# Passive scan (safe default)
-./gash scan --target http://localhost:8080 --scope localhost
+# Passive scan (safe profile: GET/HEAD/OPTIONS only)
+./gash scan --target http://localhost:8080 --scope localhost --profile safe
 
-# Active scan (requires --active)
+# Active scan (standard profile is the CLI default; --active is explicit)
 ./gash scan --target http://localhost:8080 --scope localhost --active
 
 # Deep scan with browser verification (requires Chrome)

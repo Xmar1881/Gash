@@ -21,6 +21,7 @@ import (
 	"github.com/Xmar1881/Gash/internal/engine"
 	"github.com/Xmar1881/Gash/internal/plugin"
 	"github.com/Xmar1881/Gash/internal/plugin/loader"
+	"github.com/Xmar1881/Gash/internal/proxypool"
 	"github.com/Xmar1881/Gash/internal/reporter"
 )
 
@@ -149,13 +150,18 @@ func runBulkScan(
 		return fmt.Errorf("scan: --output-dir oluşturulamadı %q: %w", outputDir, err)
 	}
 
-	var parsedProxy *url.URL
+	rawProxies := make([]string, 0, len(cfg.ProxyURLs)+1)
 	if strings.TrimSpace(cfg.ProxyURL) != "" {
-		var err error
-		parsedProxy, err = url.Parse(strings.TrimSpace(cfg.ProxyURL))
-		if err != nil {
-			return fmt.Errorf("scan: geçersiz proxy URL %q: %w", cfg.ProxyURL, err)
-		}
+		rawProxies = append(rawProxies, cfg.ProxyURL)
+	}
+	rawProxies = append(rawProxies, cfg.ProxyURLs...)
+	proxyURLs, err := proxypool.ParseList(rawProxies)
+	if err != nil {
+		return fmt.Errorf("scan: %w", err)
+	}
+	rotate, err := proxypool.ParseStrategy(cfg.ProxyRotate)
+	if err != nil {
+		return fmt.Errorf("scan: %w", err)
 	}
 	if len(cfg.Scope) == 0 {
 		fmt.Fprintln(cmd.ErrOrStderr(), "notice: no --scope set: redirects and crawl links on any host will be followed; scan only systems you are authorized to test.")
@@ -172,7 +178,14 @@ func runBulkScan(
 	pcfg.Scope = cfg.Scope
 	pcfg.RatePerSecond = cfg.RatePerSecond
 	pcfg.MaxResponseBytes = maxResponseBytes
-	pcfg.ProxyURL = parsedProxy
+	pcfg.ProxyURLs = proxyURLs
+	pcfg.ProxyRotate = rotate
+	pcfg.ProxyCooldown = cfg.ProxyCooldown
+	if cfg.ProxyAttemptTimeout > 0 && len(proxyURLs) > 1 {
+		pcfg.AttemptTimeout = cfg.ProxyAttemptTimeout
+	} else if len(proxyURLs) > 1 && cfg.RequestTimeout > 0 {
+		pcfg.AttemptTimeout = cfg.RequestTimeout
+	}
 	if cfg.ScanTimeout > 0 {
 		pcfg.ScanTimeout = cfg.ScanTimeout
 	} else if cfg.PluginTimeoutMs > 0 {

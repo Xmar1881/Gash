@@ -1,0 +1,10 @@
+{
+  "name": "multipart field closure triggers an mssql signature",
+  "target": "http://example.com/api/items",
+  "status": 500,
+  "headers": {"Content-Type": "text/html"},
+  "body": "<html><body>Incorrect syntax near '1'</body></html>",
+  "control_body": "<html><body>{\"id\":1}</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "confirmed"
+}

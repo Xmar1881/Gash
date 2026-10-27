@@ -338,3 +338,95 @@ func TestWordlistTechSelection(t *testing.T) {
 		t.Errorf("/admin hassas sayılmamalı")
 	}
 }
+
+// TestContentDiscoveryBudget proves a slow target/proxy cannot keep the
+// wordlist phase alive past its time cap.
+func TestContentDiscoveryBudget(t *testing.T) {
+	old := contentDiscoveryBudget
+	contentDiscoveryBudget = 50 * time.Millisecond
+	defer func() { contentDiscoveryBudget = old }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(200 * time.Millisecond):
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := testClient(t, srv.URL)
+	opts := DefaultContentOptions()
+	opts.BaselineSamples = 1
+	opts.Entries = []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
+	start := time.Now()
+	res, err := DiscoverContent(context.Background(), client, srv.URL, TechFingerprint{}, baseline.NewDefaultModel(), opts)
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("content discovery budget not enforced: %s", elapsed)
+	}
+	if !res.BudgetExhausted {
+		t.Fatalf("budget exhaustion not reported: %+v", res)
+	}
+}
+
+// TestContentDiscoveryParallelProbes proves the wordlist phase no longer
+// issues its bounded probes one at a time.
+func TestContentDiscoveryParallelProbes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := testClient(t, srv.URL)
+	opts := DefaultContentOptions()
+	opts.BaselineSamples = 1
+	opts.MaxRecurseDepth = 0
+	for i := 0; i < 24; i++ {
+		opts.Entries = append(opts.Entries, "probe-"+string(rune('a'+i)))
+	}
+	start := time.Now()
+	res, err := DiscoverContent(context.Background(), client, srv.URL, TechFingerprint{}, baseline.NewDefaultModel(), opts)
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	elapsed := time.Since(start)
+	if elapsed > 1500*time.Millisecond {
+		t.Fatalf("probes look serial: %s for %d requests", elapsed, res.Requests)
+	}
+	if res.Requests < 24 {
+		t.Fatalf("expected at least 24 probes, got %d", res.Requests)
+	}
+}
+
+// TestContentDiscoveryProgress proves the spinner receives bounded progress.
+func TestContentDiscoveryProgress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := testClient(t, srv.URL)
+	opts := DefaultContentOptions()
+	opts.BaselineSamples = 1
+	opts.MaxRecurseDepth = 0
+	opts.Entries = []string{"a", "b", "c", "d", "e", "f", "g", "h"}
+	var calls, lastDone, lastTotal int
+	opts.OnProgress = func(done, total int) {
+		calls++
+		lastDone, lastTotal = done, total
+	}
+	res, err := DiscoverContent(context.Background(), client, srv.URL, TechFingerprint{}, baseline.NewDefaultModel(), opts)
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if calls < 2 {
+		t.Fatalf("progress callback not used: %d calls", calls)
+	}
+	if lastTotal != opts.MaxProbes || lastDone < res.Requests {
+		t.Fatalf("progress = %d/%d, requests=%d", lastDone, lastTotal, res.Requests)
+	}
+}

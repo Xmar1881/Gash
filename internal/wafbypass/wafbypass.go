@@ -61,11 +61,21 @@ const MaxAttempts = 5
 // açık istek başlığı varsa istek kazanır (üzerine yazılmaz).
 func BypassHeaders() map[string]string {
 	return map[string]string{
-		"X-Forwarded-For":  "127.0.0.1",
-		"X-Originating-IP": "127.0.0.1",
-		"X-Remote-IP":      "127.0.0.1",
-		"Client-IP":        "127.0.0.1",
-		"X-Real-IP":        "127.0.0.1",
+		"X-Forwarded-For":    "127.0.0.1",
+		"X-Originating-IP":   "127.0.0.1",
+		"X-Remote-IP":        "127.0.0.1",
+		"X-Remote-Addr":      "127.0.0.1",
+		"Client-IP":          "127.0.0.1",
+		"X-Real-IP":          "127.0.0.1",
+		"CF-Connecting-IP":   "127.0.0.1",
+		"True-Client-IP":     "127.0.0.1",
+		"X-Client-IP":        "127.0.0.1",
+		"X-Forwarded-Host":   "127.0.0.1",
+		"X-Original-Host":    "127.0.0.1",
+		"X-Forwarded-Prefix": "/",
+		"Forwarded":          "for=127.0.0.1",
+		"X-Original-URL":     "/",
+		"X-Rewrite-URL":      "/",
 	}
 }
 

@@ -17,10 +17,13 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/Xmar1881/Gash/internal/baseline"
 	"github.com/Xmar1881/Gash/internal/finding"
@@ -65,12 +68,22 @@ type ContentOptions struct {
 	Entries []string
 	// WordlistName override etiketi (kanıt izlenebilirliği, testlerde raporlanır).
 	WordlistName string
+	// OnProgress reports completed probes (baseline included) against MaxProbes.
+	OnProgress func(done, total int)
 }
 
 // DefaultContentOptions önerilen sınırlar.
 func DefaultContentOptions() ContentOptions {
 	return ContentOptions{MaxProbes: 80, MaxRecurseDepth: 2, BaselineSamples: 2}
 }
+
+// contentDiscoveryBudget caps the wordlist phase so a slow proxy pool cannot
+// consume the scan deadline. Variable so tests can shorten it.
+var contentDiscoveryBudget = 90 * time.Second
+
+// contentDiscoveryWorkers bounds parallel probes. The shared policy session
+// still enforces the per-host rate limit and request budget.
+const contentDiscoveryWorkers = 8
 
 // ContentResult keşif çıktısıdır.
 type ContentResult struct {
@@ -81,6 +94,9 @@ type ContentResult struct {
 	Requests int
 	// Wordlist seçilen listedir (kanıt izi).
 	Wordlist string
+	// BudgetExhausted is set when the phase hit its time cap before probing
+	// every wordlist entry.
+	BudgetExhausted bool
 }
 
 // wordlistLoad gömülü listeyi okur (boş-satır/yorumsuz, sıra korunur).
@@ -387,9 +403,11 @@ func DiscoverContent(ctx context.Context, client *probe.Client, target string, f
 	}
 
 	maxReq := opts.MaxProbes
-	pctx := plugin.WithPlugin(ctx, PluginIDContentDiscovery, true, &maxReq)
+	discCtx, cancel := context.WithTimeout(ctx, contentDiscoveryBudget)
+	defer cancel()
+	pctx := plugin.WithPlugin(discCtx, PluginIDContentDiscovery, true, &maxReq)
 
-	model = ensureBaseline(ctx, client, pctx, strings.TrimSuffix(base.String(), "/"), model, opts.BaselineSamples)
+	model = ensureBaseline(discCtx, client, pctx, strings.TrimSuffix(base.String(), "/"), model, opts.BaselineSamples)
 
 	var entries []string
 	wordlist := opts.WordlistName
@@ -412,12 +430,19 @@ func DiscoverContent(ctx context.Context, client *probe.Client, target string, f
 		}
 	}
 	requests := opts.BaselineSamples
+	progress := func(done int) {
+		if opts.OnProgress != nil {
+			opts.OnProgress(done, opts.MaxProbes)
+		}
+	}
+	progress(requests)
 	if needHEAD {
 		cu := strings.TrimSuffix(base.String(), "/") + "/gash-404-" + randHex(8)
 		if resp, err := client.Send(pctx, http.MethodHead, cu, nil, nil); err == nil && resp != nil {
 			headControl = resp.Status
 		}
 		requests++
+		progress(requests)
 	}
 
 	res := &ContentResult{Wordlist: wordlist}
@@ -453,127 +478,166 @@ func DiscoverContent(ctx context.Context, client *probe.Client, target string, f
 		return resolved.String(), resolved.EscapedPath(), true
 	}
 
+	type probeJob struct {
+		it        item
+		fullURL   string
+		path      string
+		sensitive bool
+		method    string
+	}
+	type probeOutcome struct {
+		job  probeJob
+		resp *probe.Response
+		err  error
+	}
 	for len(queue) > 0 {
-		if requests >= opts.MaxProbes {
+		if requests >= opts.MaxProbes || discCtx.Err() != nil {
 			break
 		}
-		if err := ctx.Err(); err != nil {
-			break
-		}
-		it := queue[0]
-		queue = queue[1:]
-		fullURL, path, ok := joinPath(it.entry)
-		if !ok {
-			continue
-		}
-		norm := strings.ToLower(path)
-		if visited[norm] {
-			continue
-		}
-		visited[norm] = true
-
-		sensitive := IsSensitivePath(it.entry)
-		method := http.MethodGet
-		if sensitive {
-			method = http.MethodHead
-		}
-		resp, err := client.Send(pctx, method, fullURL, nil, nil)
-		requests++
-		if err != nil || resp == nil {
-			continue
-		}
-		switch resp.Status {
-		case http.StatusOK,
-			http.StatusMovedPermanently, http.StatusFound,
-			http.StatusTemporaryRedirect, http.StatusPermanentRedirect,
-			http.StatusUnauthorized, http.StatusForbidden:
-			// candidate
-		default:
-			continue
-		}
-
-		var signal string
-		var strong bool
-		conf := plugin.ConfidenceTentative
-		decision := "tentative"
-
-		if sensitive {
-			// HEAD/boyut sinyali: gövde YOK, marker doğrulanamaz → en fazla tentative.
-			if resp.Status == headControl {
-				continue // kontrolle aynı statü → ayırt edici değil
-			}
-			cl := strings.TrimSpace(resp.Headers.Get("Content-Length"))
-			if resp.Status == http.StatusOK || resp.Status == http.StatusForbidden {
-				if cl == "" || cl == "0" {
-					// Boyutsuz HEAD tek başına kanıt değil; 403 statü-sinyali yeterli.
-					if resp.Status != http.StatusForbidden {
-						continue
-					}
-				}
-				signal = "head-size"
-				conf = plugin.ConfidenceTentative
-				decision = "tentative(head-only)"
-			} else {
+		batch := make([]probeJob, 0, contentDiscoveryWorkers)
+		for len(queue) > 0 && len(batch) < contentDiscoveryWorkers && requests+len(batch) < opts.MaxProbes {
+			it := queue[0]
+			queue = queue[1:]
+			fullURL, path, ok := joinPath(it.entry)
+			if !ok {
 				continue
 			}
-		} else {
-			cls := model.Classify(resp.Status, resp.Headers, resp.Body)
-			if cls.Untrusted || cls.Soft404 {
-				continue // baseline/WAF negatifi → reject
+			norm := strings.ToLower(path)
+			if visited[norm] {
+				continue
+			}
+			visited[norm] = true
+			sensitive := IsSensitivePath(it.entry)
+			method := http.MethodGet
+			if sensitive {
+				method = http.MethodHead
+			}
+			batch = append(batch, probeJob{
+				it: it, fullURL: fullURL, path: path,
+				sensitive: sensitive, method: method,
+			})
+		}
+		if len(batch) == 0 {
+			continue
+		}
+		outcomes := make([]probeOutcome, len(batch))
+		var wg sync.WaitGroup
+		for i := range batch {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				resp, err := client.Send(pctx, batch[i].method, batch[i].fullURL, nil, nil)
+				outcomes[i] = probeOutcome{job: batch[i], resp: resp, err: err}
+			}(i)
+		}
+		wg.Wait()
+		requests += len(batch)
+		progress(requests)
+
+		for _, oc := range outcomes {
+			resp, err := oc.resp, oc.err
+			it := oc.job.it
+			fullURL, path := oc.job.fullURL, oc.job.path
+			sensitive := oc.job.sensitive
+			if err != nil || resp == nil {
+				continue
 			}
 			switch resp.Status {
-			case http.StatusUnauthorized:
-				signal = "status-auth-required"
-			case http.StatusForbidden:
-				signal = "status-forbidden"
-			case http.StatusMovedPermanently, http.StatusFound,
-				http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
-				loc := strings.TrimSpace(resp.Headers.Get("Location"))
-				if loc == "" {
+			case http.StatusOK,
+				http.StatusMovedPermanently, http.StatusFound,
+				http.StatusTemporaryRedirect, http.StatusPermanentRedirect,
+				http.StatusUnauthorized, http.StatusForbidden:
+				// candidate
+			default:
+				continue
+			}
+
+			var signal string
+			var strong bool
+			conf := plugin.ConfidenceTentative
+			decision := "tentative"
+
+			if sensitive {
+				// HEAD/boyut sinyali: gövde YOK, marker doğrulanamaz → en fazla tentative.
+				if resp.Status == headControl {
+					continue // kontrolle aynı statü → ayırt edici değil
+				}
+				cl := strings.TrimSpace(resp.Headers.Get("Content-Length"))
+				if resp.Status == http.StatusOK || resp.Status == http.StatusForbidden {
+					if cl == "" || cl == "0" {
+						// Boyutsuz HEAD tek başına kanıt değil; 403 statü-sinyali yeterli.
+						if resp.Status != http.StatusForbidden {
+							continue
+						}
+					}
+					signal = "head-size"
+					conf = plugin.ConfidenceTentative
+					decision = "tentative(head-only)"
+				} else {
 					continue
 				}
-				signal = "redirect"
-			default: // 200
-				window := resp.Body
-				if len(window) > maxSignalBytes {
-					window = window[:maxSignalBytes]
+			} else {
+				cls := model.Classify(resp.Status, resp.Headers, resp.Body)
+				if cls.Untrusted || cls.Soft404 {
+					continue // baseline/WAF negatifi → reject
 				}
-				sig, isStrong := signalOf(path, string(window))
-				if sig == "" {
-					signal = "bare-200"
-					conf = plugin.ConfidenceTentative // çıplak 200 → tentative tavan
-				} else {
-					signal = sig
-					strong = isStrong
-					if strong {
-						conf = plugin.ConfidenceConfirmed
-						decision = "confirmed(signal+control)"
+				switch resp.Status {
+				case http.StatusUnauthorized:
+					signal = "status-auth-required"
+				case http.StatusForbidden:
+					signal = "status-forbidden"
+				case http.StatusMovedPermanently, http.StatusFound,
+					http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+					loc := strings.TrimSpace(resp.Headers.Get("Location"))
+					if loc == "" {
+						continue
+					}
+					signal = "redirect"
+				default: // 200
+					window := resp.Body
+					if len(window) > maxSignalBytes {
+						window = window[:maxSignalBytes]
+					}
+					sig, isStrong := signalOf(path, string(window))
+					if sig == "" {
+						signal = "bare-200"
+						conf = plugin.ConfidenceTentative // çıplak 200 → tentative tavan
 					} else {
-						conf = plugin.ConfidenceTentative
-						decision = "tentative(weak-signal)"
+						signal = sig
+						strong = isStrong
+						if strong {
+							conf = plugin.ConfidenceConfirmed
+							decision = "confirmed(signal+control)"
+						} else {
+							conf = plugin.ConfidenceTentative
+							decision = "tentative(weak-signal)"
+						}
 					}
 				}
 			}
-		}
-		_ = decision
+			_ = decision
 
-		f := buildContentFinding(fullURL, method, path, resp.Status, signal, conf, wordlist, it.depth)
-		// Soft-404 parmak izi yokluğu kanıt notuna işlenir (denetlenebilirlik).
-		sum := sha256.Sum256(model.Mask(resp.Body))
-		f.Evidence["body_sha256_16"] = hex.EncodeToString(sum[:])[:16]
-		res.Findings = append(res.Findings, f)
-		res.DiscoveredPaths = append(res.DiscoveredPaths, fullURL)
+			f := buildContentFinding(fullURL, oc.job.method, path, resp.Status, signal, conf, wordlist, it.depth)
+			// Soft-404 parmak izi yokluğu kanıt notuna işlenir (denetlenebilirlik).
+			sum := sha256.Sum256(model.Mask(resp.Body))
+			f.Evidence["body_sha256_16"] = hex.EncodeToString(sum[:])[:16]
+			res.Findings = append(res.Findings, f)
+			res.DiscoveredPaths = append(res.DiscoveredPaths, fullURL)
 
-		// Smart-recurse: bulunan path'e yedek uzantılar (derinlik tavanlı).
-		if it.depth < opts.MaxRecurseDepth {
-			trimmed := strings.TrimSuffix(it.entry, "/")
-			for _, suf := range BackupSuffixes {
-				if requests+len(queue) >= opts.MaxProbes+len(BackupSuffixes) {
-					break
+			// Smart-recurse: bulunan path'e yedek uzantılar (derinlik tavanlı).
+			if it.depth < opts.MaxRecurseDepth {
+				trimmed := strings.TrimSuffix(it.entry, "/")
+				for _, suf := range BackupSuffixes {
+					if requests+len(queue) >= opts.MaxProbes+len(BackupSuffixes) {
+						break
+					}
+					queue = append(queue, item{entry: trimmed + suf, depth: it.depth + 1})
 				}
-				queue = append(queue, item{entry: trimmed + suf, depth: it.depth + 1})
 			}
 		}
+	}
+	if errors.Is(discCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+		res.BudgetExhausted = true
 	}
 	res.Requests = requests
 	return res, nil

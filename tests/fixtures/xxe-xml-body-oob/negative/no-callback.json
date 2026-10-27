@@ -1,0 +1,9 @@
+{
+  "name": "no callback means no finding",
+  "target": "http://example.com/soap/import",
+  "status": 200,
+  "headers": {"Content-Type": "application/xml"},
+  "body": "<response><status>accepted</status></response>",
+  "oob_callback": false,
+  "expected_verdict": "reject"
+}

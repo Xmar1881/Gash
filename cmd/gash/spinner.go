@@ -13,21 +13,30 @@ import (
 	"unicode/utf8"
 )
 
+// Spinner message keys. Engine progress keys are translated with the same
+// catalogs, so the menu language switch also affects scan progress.
+const (
+	spinnerPhaseStarting = "progress.phase.starting"
+	spinnerDetailPrepare = "progress.detail.starting.prepare"
+	spinnerDetailDone    = "progress.detail.done"
+)
+
 type scanSpinner struct {
-	mu        sync.Mutex
-	out       io.Writer
-	th        theme
-	target    string
-	phase     string
-	detail    string
-	lastPhase string
-	started   time.Time
-	active    bool
-	stopCh    chan struct{}
-	doneCh    chan struct{}
-	frames    []string
-	lastLen   int
-	isTTY     bool
+	mu           sync.Mutex
+	out          io.Writer
+	th           theme
+	target       string
+	phase        string
+	detail       string
+	started      time.Time
+	phaseStarted time.Time
+	active       bool
+	stopCh       chan struct{}
+	doneCh       chan struct{}
+	frames       []string
+	lastLen      int
+	width        int
+	isTTY        bool
 }
 
 func newScanSpinner(out io.Writer, target string) *scanSpinner {
@@ -36,15 +45,17 @@ func newScanSpinner(out io.Writer, target string) *scanSpinner {
 	if !th.tty {
 		frames = []string{"-", "\\", "|", "/"}
 	}
+	lang := currentUILang()
 	return &scanSpinner{
 		out:     out,
 		th:      th,
 		target:  target,
-		phase:   "Başlatılıyor",
-		detail:  "Hedef taranmaya hazırlanıyor...",
+		phase:   msg(lang, spinnerPhaseStarting),
+		detail:  msg(lang, spinnerDetailPrepare),
 		frames:  frames,
 		isTTY:   isInteractive(out),
 		started: time.Now(),
+		width:   detectWidth(),
 		stopCh:  make(chan struct{}),
 		doneCh:  make(chan struct{}),
 	}
@@ -54,12 +65,14 @@ func (s *scanSpinner) Start() {
 	s.mu.Lock()
 	s.active = true
 	s.started = time.Now()
+	s.phaseStarted = s.started
 	isTTY := s.isTTY
+	phase, detail := s.phase, s.detail
 	s.mu.Unlock()
 
 	if !isTTY {
-		// Non-TTY (pipe, background task): print clean header
-		fmt.Fprintf(s.out, "  › [Başlatılıyor] Hedef taranmaya hazırlanıyor...\n")
+		// Non-TTY (pipe, background task): one clean line per phase transition.
+		fmt.Fprintf(s.out, "  › [%s] %s\n", phase, detail)
 		return
 	}
 
@@ -81,22 +94,50 @@ func (s *scanSpinner) Start() {
 	}()
 }
 
-func (s *scanSpinner) OnProgress(phase, detail string) {
+// OnProgress records the current phase/detail. Keys are translated through the
+// TR/EN catalogs; the engine never sends display text. A phase change freezes
+// the previous phase with its last detail and measured duration.
+func (s *scanSpinner) OnProgress(phaseKey, detailKey string, args ...any) {
+	lang := currentUILang()
+	phase := msg(lang, phaseKey)
+	detail := msg(lang, detailKey, args...)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if !s.isTTY {
-		if phase != s.lastPhase {
-			s.lastPhase = phase
-			fmt.Fprintf(s.out, "  › [%s] %s\n", phase, detail)
+	if phase != s.phase {
+		if s.active && s.phase != "" {
+			s.finalizePhaseLocked()
 		}
 		s.phase = phase
+		s.phaseStarted = time.Now()
 		s.detail = detail
+		if !s.isTTY {
+			fmt.Fprintf(s.out, "  › [%s] %s\n", phase, detail)
+		}
 		return
 	}
-
-	s.phase = phase
 	s.detail = detail
+}
+
+// finalizePhaseLocked writes the completed phase as a permanent line. It is
+// called with s.mu held and resets the spinner line bookkeeping.
+func (s *scanSpinner) finalizePhaseLocked() {
+	if s.phase == "" {
+		return
+	}
+	dur := time.Since(s.phaseStarted)
+	detail := truncate(s.detail, s.detailBudget(s.phase))
+	if s.isTTY {
+		fmt.Fprintf(s.out, "\r\x1b[2K  %s %s %s %s\n",
+			s.th.good("✔"),
+			s.th.bold("["+s.phase+"]"),
+			detail,
+			s.th.muted("("+fmtDuration(dur)+")"))
+	} else {
+		fmt.Fprintf(s.out, "  ✔ [%s] %s (%s)\n", s.phase, detail, fmtDuration(dur))
+	}
+	s.lastLen = 0
 }
 
 func (s *scanSpinner) draw(frameIdx int) {
@@ -116,16 +157,13 @@ func (s *scanSpinner) draw(frameIdx int) {
 	phaseStr := s.th.bold("[" + s.phase + "]")
 	timeStr := s.th.muted("(" + timerStr + ")")
 
-	detailClean := s.detail
-	if utf8.RuneCountInString(detailClean) > 42 {
-		runes := []rune(detailClean)
-		detailClean = string(runes[:39]) + "..."
-	}
+	detailClean := truncate(s.detail, s.detailBudget(s.phase))
+	budget := s.detailBudget(s.phase)
 
-	rawLine := fmt.Sprintf("  %s %s %-42s %s", frame, "["+s.phase+"]", detailClean, "("+timerStr+")")
+	rawLine := fmt.Sprintf("  %s %s %-*s %s", frame, "["+s.phase+"]", budget, detailClean, "("+timerStr+")")
 	rawLen := utf8.RuneCountInString(rawLine)
 
-	coloredLine := fmt.Sprintf("  %s %s %-42s %s", icon, phaseStr, detailClean, timeStr)
+	coloredLine := fmt.Sprintf("  %s %s %-*s %s", icon, phaseStr, budget, detailClean, timeStr)
 
 	padding := ""
 	if s.lastLen > rawLen {
@@ -136,14 +174,34 @@ func (s *scanSpinner) draw(frameIdx int) {
 	fmt.Fprintf(s.out, "\r%s%s", coloredLine, padding)
 }
 
+// detailBudget keeps the detail within the terminal width, leaving room for
+// the spinner, phase label, and timer.
+func (s *scanSpinner) detailBudget(phase string) int {
+	width := s.width
+	if width <= 0 {
+		width = 76
+	}
+	budget := width - utf8.RuneCountInString(phase) - 18
+	if budget < 24 {
+		budget = 24
+	}
+	if budget > 90 {
+		budget = 90
+	}
+	return budget
+}
+
 func (s *scanSpinner) Stop() {
 	s.mu.Lock()
 	if !s.active {
 		s.mu.Unlock()
 		return
 	}
-	s.active = false
 	isTTY := s.isTTY
+	if s.phase != "" {
+		s.finalizePhaseLocked()
+	}
+	s.active = false
 	if isTTY {
 		close(s.stopCh)
 	}
@@ -159,14 +217,13 @@ func (s *scanSpinner) Stop() {
 	timerStr := fmt.Sprintf("%02d:%02d", mins, secs)
 
 	if isTTY {
-		clearLine := "\r" + strings.Repeat(" ", s.lastLen+10) + "\r"
 		doneMsg := fmt.Sprintf("  %s %s %s\n\n",
 			s.th.good("✔"),
-			s.th.bold("Tarama tamamlandı!"),
+			s.th.bold(msg(currentUILang(), spinnerDetailDone)),
 			s.th.muted("("+timerStr+")"),
 		)
-		fmt.Fprint(s.out, clearLine+doneMsg)
+		fmt.Fprint(s.out, doneMsg)
 	} else {
-		fmt.Fprintf(s.out, "  ✔ Tarama tamamlandı! (%s)\n\n", timerStr)
+		fmt.Fprintf(s.out, "  ✔ %s (%s)\n\n", msg(currentUILang(), spinnerDetailDone), timerStr)
 	}
 }

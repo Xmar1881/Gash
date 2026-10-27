@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Xmar1881/Gash/internal/proxypool"
 	"golang.org/x/time/rate"
 )
 
@@ -126,6 +128,16 @@ type PolicyConfig struct {
 	BackpressureLimit int
 	// ProxyURL upstream HTTP proxy URL (örn. http://127.0.0.1:8080).
 	ProxyURL *url.URL
+	// ProxyURLs upstream proxy pool. Multiple entries rotate; a single entry
+	// behaves like ProxyURL. Empty means direct traffic.
+	ProxyURLs []*url.URL
+	// ProxyRotate is the pool strategy (per-host default, or per-request).
+	ProxyRotate proxypool.Strategy
+	// ProxyCooldown skips a failing proxy for this long.
+	ProxyCooldown time.Duration
+	// AttemptTimeout bounds one transport attempt (not the whole retry chain),
+	// so a hanging proxy can fail over to the next one.
+	AttemptTimeout time.Duration
 }
 
 // RetryConfig controls retry behavior for idempotent requests.
@@ -212,6 +224,13 @@ func pluginFromCtx(ctx context.Context) pluginCtx {
 	return pluginCtx{}
 }
 
+// PluginIDFromContext returns the plugin ID embedded by WithPlugin.
+// What: Read-only accessor for the WAF bypass layer's class selection.
+// Why: Semantic variants need to know whether the payload is SQLi/XSS/shell.
+func PluginIDFromContext(ctx context.Context) string {
+	return pluginFromCtx(ctx).ID
+}
+
 // PolicySession tüm probe.Send çağrılarının geçtiği http.RoundTripper sarmalayıcıdır (A-11).
 // Beyana güvenilmez: safe=true POST atamaz, bütçe/scope/rate/retry/redirect/backpressure burada enforce edilir.
 type PolicySession struct {
@@ -235,6 +254,10 @@ type PolicySession struct {
 	scopeManager *scopeManager
 	// P1.3: Scan budget
 	scanBudget *scanBudget
+
+	// Proxy pool (optional) and per-attempt timeout for retry/failover.
+	proxyPool      *proxypool.Pool
+	attemptTimeout atomic.Int64
 }
 
 // NewPolicySession proxy'yi kurar (base nil ise http.DefaultTransport).
@@ -252,16 +275,23 @@ func NewPolicySession(cfg PolicyConfig, base http.RoundTripper) *PolicySession {
 		cfg.MaxRequestBytes = 1024 * 1024
 	}
 
+	proxyURLs := make([]*url.URL, 0, len(cfg.ProxyURLs)+1)
+	if cfg.ProxyURL != nil {
+		proxyURLs = append(proxyURLs, cfg.ProxyURL)
+	}
+	proxyURLs = append(proxyURLs, cfg.ProxyURLs...)
+
+	var pool *proxypool.Pool
 	if base == nil {
-		if cfg.ProxyURL != nil {
+		if len(proxyURLs) > 0 {
+			pool = proxypool.New(proxyURLs, proxypool.Config{
+				Strategy: cfg.ProxyRotate,
+				Cooldown: cfg.ProxyCooldown,
+			})
 			if defTr, ok := http.DefaultTransport.(*http.Transport); ok {
-				tr := defTr.Clone()
-				tr.Proxy = http.ProxyURL(cfg.ProxyURL)
-				base = tr
+				base = proxypool.NewRoundTripper(pool, defTr.Clone())
 			} else {
-				base = &http.Transport{
-					Proxy: http.ProxyURL(cfg.ProxyURL),
-				}
+				base = proxypool.NewRoundTripper(pool, nil)
 			}
 		} else {
 			base = http.DefaultTransport
@@ -274,6 +304,7 @@ func NewPolicySession(cfg PolicyConfig, base http.RoundTripper) *PolicySession {
 	ps := &PolicySession{
 		cfg:             cfg,
 		base:            base,
+		proxyPool:       pool,
 		perTarget:       make(map[string]*atomic.Int64),
 		perPlugin:       make(map[string]*atomic.Int64),
 		limiters:        make(map[string]*rate.Limiter),
@@ -281,6 +312,9 @@ func NewPolicySession(cfg PolicyConfig, base http.RoundTripper) *PolicySession {
 		backpressureSem: make(chan struct{}, max(cfg.BackpressureLimit, 50)),
 		scopeManager:    newScopeManager(cfg.Scope),
 		scanBudget:      newScanBudget(cfg.MaxRequestsTotal, cfg.MaxRequestsPerTarget, maxPerPath),
+	}
+	if cfg.AttemptTimeout > 0 {
+		ps.attemptTimeout.Store(int64(cfg.AttemptTimeout))
 	}
 	if cfg.GlobalRatePerSecond > 0 {
 		ps.globalLimiter = rate.NewLimiter(rate.Limit(cfg.GlobalRatePerSecond), int(cfg.GlobalRatePerSecond)+1)
@@ -310,7 +344,6 @@ type scopeManager struct {
 	entries     []scopeEntry
 	resolvedIPs map[string][]net.IP
 	resolver    *net.Resolver
-	cacheTTL    time.Duration
 }
 
 type scopeEntryType int
@@ -334,7 +367,6 @@ func newScopeManager(entries []string) *scopeManager {
 		entries:     make([]scopeEntry, 0, len(entries)),
 		resolvedIPs: make(map[string][]net.IP),
 		resolver:    &net.Resolver{},
-		cacheTTL:    5 * time.Minute,
 	}
 	for _, e := range entries {
 		if parsed := sm.parseEntry(e); parsed != nil {
@@ -377,30 +409,49 @@ func (sm *scopeManager) parseEntry(entry string) *scopeEntry {
 // What: Diagnostics/DNS-cache seed only; open mode has no enforcement role.
 // Why: Keeps SetOriginalTarget call sites working without implicit-scope blocking.
 func (sm *scopeManager) setOriginalTarget(target string) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
 	u, _ := url.Parse(target)
 	if u != nil {
 		sm.resolveAndCache(u.Hostname())
 	}
 }
 
+// resolveAndCache returns the first-seen IP set for host. Resolution happens
+// outside the lock so one slow DNS answer cannot block every scope check; the
+// double-check keeps concurrent callers on the same pinned set.
 func (sm *scopeManager) resolveAndCache(host string) []net.IP {
-	if ips, ok := sm.resolvedIPs[host]; ok {
+	if host == "" {
+		return nil
+	}
+	sm.mu.RLock()
+	ips, ok := sm.resolvedIPs[host]
+	sm.mu.RUnlock()
+	if ok {
 		return ips
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	ips, err := sm.resolver.LookupIPAddr(ctx, host)
+	addrs, err := sm.resolver.LookupIPAddr(ctx, host)
 	if err != nil {
 		return nil
 	}
-	var ipList []net.IP
-	for _, ip := range ips {
+	ipList := make([]net.IP, 0, len(addrs))
+	for _, ip := range addrs {
 		ipList = append(ipList, ip.IP)
+	}
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if existing, ok := sm.resolvedIPs[host]; ok {
+		return existing
 	}
 	sm.resolvedIPs[host] = ipList
 	return ipList
+}
+
+// cachedIPs returns the pinned IP set without performing DNS work.
+func (sm *scopeManager) cachedIPs(host string) []net.IP {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.resolvedIPs[host]
 }
 
 // check validates a URL against the session scope (single decision point).
@@ -514,15 +565,15 @@ func scopePathMatches(path, prefix string) bool {
 }
 
 func (sm *scopeManager) checkIPRebinding(ctx context.Context, host, allowedDomain string) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	currentIPs := sm.resolveAndCache(host)
 	if currentIPs == nil {
 		return nil
 	}
 
-	allowedIPs := sm.resolvedIPs[allowedDomain]
+	// The allowed domain's IP set is pinned on first use and never refreshed:
+	// scope pinning must compare against the original infrastructure, not a
+	// second lookup that could follow the same rebinding.
+	allowedIPs := sm.cachedIPs(allowedDomain)
 	if allowedIPs == nil {
 		allowedIPs = sm.resolveAndCache(allowedDomain)
 		if allowedIPs == nil {
@@ -823,6 +874,30 @@ func (p *PolicySession) SetBase(base http.RoundTripper) {
 	}
 }
 
+// SetAttemptTimeout bounds one transport attempt. It is intentionally separate
+// from the caller's deadline: retries and proxy failover need room to run.
+func (p *PolicySession) SetAttemptTimeout(d time.Duration) {
+	if p != nil {
+		p.attemptTimeout.Store(int64(d))
+	}
+}
+
+// AttemptTimeout returns the per-attempt timeout (0 = caller deadline only).
+func (p *PolicySession) AttemptTimeout() time.Duration {
+	if p == nil {
+		return 0
+	}
+	return time.Duration(p.attemptTimeout.Load())
+}
+
+// ProxyPool returns the rotating proxy pool, or nil for direct traffic.
+func (p *PolicySession) ProxyPool() *proxypool.Pool {
+	if p == nil {
+		return nil
+	}
+	return p.proxyPool
+}
+
 // Base returns the underlying RoundTripper.
 func (p *PolicySession) Base() http.RoundTripper {
 	if p == nil {
@@ -947,6 +1022,19 @@ func (p *PolicySession) RoundTripWithRetry(req *http.Request) (*http.Response, e
 	redirectCount := 0
 	currentReq := req
 
+	// A rotating base (proxy pool) can turn block-style responses into another
+	// attempt through a different source IP. Without one these lists stay empty.
+	var rotator interface{ Rotate(*http.Request) }
+	if r, ok := p.base.(interface{ Rotate(*http.Request) }); ok {
+		rotator = r
+	}
+	var proxyRetryStatuses []int
+	if advisor, ok := p.base.(interface{ RetryStatuses() []int }); ok {
+		proxyRetryStatuses = advisor.RetryStatuses()
+	}
+	proxyRotations := 0
+	const maxProxyRotations = 2
+
 	for attempt := 0; attempt <= p.cfg.RetryConfig.MaxRetries; attempt++ {
 		// Check context cancellation
 		select {
@@ -965,9 +1053,22 @@ func (p *PolicySession) RoundTripWithRetry(req *http.Request) (*http.Response, e
 			return nil, err
 		}
 
-		// Execute request
-		resp, err := p.base.RoundTrip(currentReq)
+		// A retried request must replay its body: the previous transport
+		// attempt already consumed it. GetBody is set by the probe client.
+		if currentReq.GetBody != nil {
+			if body, berr := currentReq.GetBody(); berr == nil {
+				currentReq.Body = body
+			}
+		}
+
+		// Per-attempt timeout keeps one hanging proxy from consuming the whole
+		// retry budget, which is what used to leave no room for failover.
+		attemptReq, cancel := p.attemptRequest(currentReq)
+		resp, err := p.base.RoundTrip(attemptReq)
 		if err != nil {
+			if cancel != nil {
+				cancel()
+			}
 			lastErr = err
 			class := ClassifyError(err)
 
@@ -978,15 +1079,18 @@ func (p *PolicySession) RoundTripWithRetry(req *http.Request) (*http.Response, e
 
 			// Check if retryable
 			if attempt < p.cfg.RetryConfig.MaxRetries && IsRetryable(class, 0, p.cfg.RetryConfig.RetryableStatus) {
-				delay := p.backoffDelay(attempt)
-				select {
-				case <-time.After(delay):
-					continue
-				case <-currentReq.Context().Done():
+				if rotator != nil {
+					rotator.Rotate(currentReq)
+				}
+				if !p.waitRetry(currentReq.Context(), p.backoffDelay(attempt)) {
 					return nil, currentReq.Context().Err()
 				}
+				continue
 			}
 			return nil, fmt.Errorf("policy roundtrip (attempt %d): %w", attempt+1, err)
+		}
+		if cancel != nil {
+			resp.Body = &cancelReadCloser{ReadCloser: resp.Body, cancel: cancel}
 		}
 
 		// Response size limit check
@@ -1076,22 +1180,72 @@ func (p *PolicySession) RoundTripWithRetry(req *http.Request) (*http.Response, e
 			continue
 		}
 
+		// Block-style responses rotate to another proxy before they are handed
+		// back as evidence: a 403/407/429 may be the source IP, not the target.
+		if rotator != nil && attempt < p.cfg.RetryConfig.MaxRetries &&
+			proxyRotations < maxProxyRotations &&
+			isRetryableStatus(resp.StatusCode, proxyRetryStatuses) {
+			resp.Body.Close()
+			rotator.Rotate(currentReq)
+			proxyRotations++
+			if !p.waitRetry(currentReq.Context(), p.backoffDelay(attempt)) {
+				return nil, currentReq.Context().Err()
+			}
+			continue
+		}
+
 		// Check for retryable server status codes
 		if attempt < p.cfg.RetryConfig.MaxRetries && isRetryableStatus(resp.StatusCode, p.cfg.RetryConfig.RetryableStatus) {
 			resp.Body.Close()
-			delay := p.backoffDelay(attempt)
-			select {
-			case <-time.After(delay):
-				continue
-			case <-currentReq.Context().Done():
+			if !p.waitRetry(currentReq.Context(), p.backoffDelay(attempt)) {
 				return nil, currentReq.Context().Err()
 			}
+			continue
 		}
 
 		return resp, nil
 	}
 
 	return lastResp, lastErr
+}
+
+// attemptRequest applies the per-attempt deadline while preserving the caller's
+// cancellation (plugin/scan deadline).
+func (p *PolicySession) attemptRequest(req *http.Request) (*http.Request, context.CancelFunc) {
+	d := p.AttemptTimeout()
+	if d <= 0 {
+		return req, nil
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), d)
+	return req.WithContext(ctx), cancel
+}
+
+// waitRetry sleeps before a retry, returning false when the caller is done.
+func (p *PolicySession) waitRetry(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// cancelReadCloser keeps the per-attempt deadline alive until the response body
+// is closed (body reads happen after RoundTripWithRetry returns).
+type cancelReadCloser struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c *cancelReadCloser) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
 }
 
 // enforcePreflight runs safe/scope/rate/budget checks before each request attempt.

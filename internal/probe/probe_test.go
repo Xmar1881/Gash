@@ -23,6 +23,18 @@ func TestCanaryUnique(t *testing.T) {
 	}
 }
 
+func TestNewClientBoundsResponseHeaders(t *testing.T) {
+	c := NewClient(Options{})
+	if got := c.Transport().MaxResponseHeaderBytes; got != 1<<20 {
+		t.Fatalf("default response header limit = %d, want 1MiB", got)
+	}
+	custom := &http.Transport{MaxResponseHeaderBytes: 4096}
+	c2 := NewClient(Options{Transport: custom})
+	if got := c2.Transport().MaxResponseHeaderBytes; got != 4096 {
+		t.Fatalf("explicit header limit overwritten: %d", got)
+	}
+}
+
 func TestSendClassifiesWAF(t *testing.T) {
 	v := vcr.New()
 	defer v.Close()

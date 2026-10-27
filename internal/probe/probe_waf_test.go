@@ -232,3 +232,27 @@ func TestSendWAFUnbypassableStaysBlocked(t *testing.T) {
 		t.Fatalf("aşılamayan engelde detected=1 bypassed=0 olmalı, got %d/%d", det, byp)
 	}
 }
+
+func TestWAFChallengeIsCountedNotBlocking(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("<html>Just a moment...</html>"))
+	}))
+	defer srv.Close()
+	c, ctx := wafTestClient(true)
+	for i := 0; i < 3; i++ {
+		if _, err := c.Send(ctx, http.MethodGet, srv.URL+"/s?q=1", nil, nil); err != nil {
+			t.Fatalf("send %d: %v", i, err)
+		}
+	}
+	if challenges := c.WAFChallengeStats(); challenges == 0 {
+		t.Fatal("challenge responses must be counted")
+	}
+	resp, err := c.Send(ctx, http.MethodGet, srv.URL+"/s?q=2", nil, nil)
+	if err != nil {
+		t.Fatalf("challenge must not block later requests: %v", err)
+	}
+	if resp.Status != http.StatusForbidden {
+		t.Fatalf("expected the challenge response, got %d", resp.Status)
+	}
+}

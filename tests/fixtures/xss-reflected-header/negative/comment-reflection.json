@@ -1,0 +1,9 @@
+{
+  "name": "header value reflected only inside a comment",
+  "target": "http://example.com/welcome",
+  "status": 200,
+  "headers": {"Content-Type": "text/html"},
+  "body": "<html><body><!-- agent gash_a1b2c3d4 --><p>welcome</p></body></html>",
+  "control_body": "<html><body><p>welcome</p></body></html>",
+  "expected_verdict": "reject"
+}

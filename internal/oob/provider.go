@@ -27,6 +27,8 @@ const (
 	ProviderExternal
 	// ProviderLocal dahili in-process dinleyici (sunucusuz).
 	ProviderLocal
+	// ProviderInteractsh interactsh protokolü (public veya self-hosted).
+	ProviderInteractsh
 )
 
 // Provider OOB callback sağlayıcı arayüzüdür.

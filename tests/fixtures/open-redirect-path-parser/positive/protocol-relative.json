@@ -1,0 +1,12 @@
+{
+  "name": "protocol-relative path redirects to the payload host",
+  "target": "http://example.com//gash-a1b2c3d4.example/",
+  "status": 302,
+  "headers": {"Content-Type": "text/html", "Location": "https://gash-a1b2c3d4.example/login"},
+  "payload_host": "gash-a1b2c3d4.example",
+  "control_status": 200,
+  "control_headers": {"Content-Type": "text/html"},
+  "control_body": "<html><body>home</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "confirmed"
+}

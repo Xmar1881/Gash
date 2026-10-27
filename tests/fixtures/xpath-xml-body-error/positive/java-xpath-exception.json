@@ -1,0 +1,10 @@
+{
+  "name": "java xpath expression exception confirms at firm",
+  "target": "http://example.com/api/search",
+  "status": 500,
+  "headers": {"Content-Type": "application/xml"},
+  "body": "<error>javax.xml.xpath.XPathExpressionException: Invalid XPath expression</error>",
+  "control_body": "<result><item>1</item></result>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

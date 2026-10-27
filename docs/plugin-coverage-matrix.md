@@ -25,6 +25,8 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `xss-stored-json-api` | JS | stored | probe | false | true | static-execution-evidence | none | ✓ | Complete | JSON write plus render flow; sibling render page is the clean control |
 | `xss-reflected-url-context` | JS | reflection | probe | false | true | static-execution-evidence | none | ✓ | Complete | `javascript:`-scheme payload into a URL sink (`href`/`src`); `contexts: [url-executable]` + clean control, lowercase and mixed-case |
 | `xss-stored-header-two-step` | JS | stored | probe | false | true | static-execution-evidence | none | ✓ | Complete | Header-borne write (`Referer`) plus re-read render; a sibling page that never saw the payload is the clean control |
+| `xss-path-segment` | JS | reflection | probe | false | true | static-execution-evidence | none | ✓ | Complete | Encoded executable payload appended as a path segment; the unmodified base page is the clean control |
+| `xss-reflected-header` | JS | reflection | probe | false | true | static-execution-evidence | none | ✓ | Complete | User-Agent/Referer reflected into executable HTML; the header-less re-fetch is the clean control |
 
 **Gaps:**
 - No DOM XSS plugin for fragment/hash routes without deep build (engine-owned `browserExecution` oracle exists but no Tier 1/2 plugin)
@@ -32,6 +34,7 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 - No XSS via `postMessage` / cross-origin messaging
 - No XSS in WebSocket messages
 - JSON body reflection and JSON API stored flows are covered; a single render base without a sibling page yields no candidate (no clean control)
+- Path-segment and request-header reflection are covered by `xss-path-segment` and `xss-reflected-header`; custom application headers are not enumerated
 
 ---
 
@@ -51,6 +54,8 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `sqli-json-body-differential` | JS | differential | probe | false | true | confirmed | none | ✓ | Complete | JSON body true/false closures into the discovered field; echo guard + 3/3 stability |
 | `sqli-json-body-timing` | JS | timing | probe | false | true | firm | none | ✓ | Complete | JSON body delay payloads measured against a neutral baseline; timing ceiling stays firm |
 | `sqli-oob-second-order` | JS | oob | probe | false | true | confirmed | required | ✓ | Complete | Write plus neutral re-read at the same point with a callback-only closure (no output, no delay) |
+| `sqli-xml-body-error` | JS | error | probe | false | true | confirmed | none | ✓ | Complete | XML/SOAP body element injection with an explicit `application/xml` document; neutral-document control |
+| `sqli-multipart-error` | JS | error | probe | false | true | confirmed | none | ✓ | Complete | Multipart form rebuilt with a self-chosen boundary; sibling fields (CSRF included) replayed; neutral-field control |
 
 **Gaps:**
 - **PostgreSQL blind SQLi OOB**: No callback-only primitive short of `COPY ... TO PROGRAM` / `dblink` (documented in known-limits.md)
@@ -107,11 +112,12 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `nosql-auth-bypass-differential` | YAML | differential | probe | false | true | firm | none | ✓ | Complete | Operator-injected JSON body vs invalid-credential control |
 | `nosql-injection-timing-json-body` | JS | timing | probe | false | true | firm | none | ✓ | Complete | `$where` sleep/busy-loop at the top of a JSON body vs a neutral `$where` baseline; timing ceiling stays firm |
 | `nosql-injection-differential-json-body` | JS | differential | probe | false | true | confirmed | none | ✓ | Complete | Always-true operator object (`$ne`, `$gt`) vs a non-matching literal in a JSON field; echo guard + 3/3 stability |
+| `nosql-nested-json-operator` | JS | differential | probe | false | true | confirmed | none | ✓ | Complete | Operator object nested under a `filter` envelope; three repeats per branch, echo guard, neutral control |
 
 **Gaps:**
 - **No blind NoSQL injection with OOB** (exfiltration via DNS/HTTP); timing and operator differential are now covered
 - **No query-string (non-JSON) NoSQL bypass variants beyond `nosql-injection-timing`** (documented as out of scope in known-limits.md)
-- **Nested JSON paths** are not expanded; only the discovered top-level field is rebuilt
+- **Nested filter envelopes** are covered by `nosql-nested-json-operator`; deeper paths and array elements are not expanded
 
 ---
 
@@ -141,10 +147,12 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `xml-external-entity-blind` | YAML | oob | probe | false | true | confirmed | required | ✓ | Partial | Duplicate of xxe-oob/xxe-blind-oob? |
 | `xxe-json-body-oob` | JS | oob | probe | false | true | confirmed | required | ✓ | Complete | XML carried in a JSON field; external parameter entity callback (single-quoted SYSTEM literal) |
 | `xxe-json-body-error` | JS | error | probe | false | true | firm | none | ✓ | Complete | XML with an unresolvable external entity carried in a JSON field; parser failure absent for the neutral document, `mode: generic_error`, firm ceiling |
+| `xxe-xml-body-oob` | JS | oob | probe | false | true | confirmed | required | ✓ | Complete | Raw XML and SOAP bodies with an external parameter entity; one shared callback window |
+| `xxe-svg-upload-oob` | JS | oob | probe | false | true | confirmed | required | ✓ | Complete | SVG multipart upload parsed server-side; confirmed only on an entity callback |
 
 **Gaps:**
 - **Duplicate plugins**: `xxe-oob`, `xxe-blind-oob`, `xml-external-entity-blind` appear to overlap
-- No XXE via SOAP/SAML specific vectors
+- **SAML-specific attribute vectors** remain untested; direct XML/SOAP bodies and SVG uploads are covered
 - Parameter-entity exfiltration is covered for JSON-carried XML by `xxe-json-body-oob` (callback only, no file read)
 
 ---
@@ -173,11 +181,12 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `file-inclusion-rfi` | YAML | reflection | probe | false | true | confirmed | none | ✓ | Complete | RFI via reflection oracle (loopback canary) |
 | `rfi-remote-include` | YAML | reflection | probe | false | true | confirmed | none | ✓ | Complete | Remote file include via reflection |
 | `lfi-json-body` | JS | error | probe | false | true | confirmed | none | ✓ | Complete | Per-field JSON body payloads with `mode: path_traversal` from `oracle_params`; real file-content signatures |
+| `path-traversal-encoding-bypass` | JS | error | probe | false | true | confirmed | none | ✓ | Complete | Single/double-encoded, backslash, overlong-style and dot-collapsed traversal families; echo guard + neutral control |
 
 **Gaps:**
 - **No blind path traversal** (documented as undetectable in known-limits.md - GASH-018)
 - **No path traversal via archive upload** (zip slip, tar slip)
-- **No path traversal via Unicode/encoding bypasses** (double encoding, UTF-7, etc.)
+- **Encoding bypass families** are covered by `path-traversal-encoding-bypass`; server-specific decoding order remains unmeasured
 - JSON body fields are covered by `lfi-json-body`; query-string traversal stays with `path-traversal-error`
 
 ---
@@ -190,11 +199,12 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 | `oauth-open-redirect` | YAML | redirect | probe | true | false | confirmed | none | ✓ | Complete | OAuth authorize paths with redirect_uri params |
 | `open-redirect-json-body` | JS | redirect | probe | false | true | confirmed | none | ✓ | Complete | Per-field JSON body injection; neutral-value control gate before the oracle |
 | `open-redirect-userinfo-confusion` | JS | redirect | probe | false | true | confirmed | none | ✓ | Complete | Four parser-confusion variants per point (protocol-relative, userinfo, suffix, fragment); per-run canary payload host |
+| `open-redirect-path-parser` | JS | redirect | probe | false | true | confirmed | none | ✓ | Complete | Path-borne protocol-relative, backslash and encoded-slash variants; neutral-path control before the oracle |
 
 **Gaps:**
 - **No open redirect via JavaScript** (DOM-based `location.href`, `window.open`)
 - **No open redirect via header injection** (Location header via CRLF)
-- POST/JSON body redirects are covered by `open-redirect-json-body` (client-side navigation is out of scope)
+- Path parser-confusion variants are covered by `open-redirect-path-parser`; POST/JSON body redirects by `open-redirect-json-body` (client-side navigation is out of scope)
 
 ---
 
@@ -261,6 +271,7 @@ This document catalogs all detectors/plugins in Gash, organized by security clas
 |-----------|------|--------|-------|------|--------|-------------------|-----|----------|--------|-------|
 | `xpath-injection-error` | YAML | error | probe | false | true | firm | none | ✓ | Complete | XPath parser error signatures |
 | `xpath-injection-json-body` | JS | error | probe | false | true | firm | none | ✓ | Complete | Per-field JSON body syntax probes with `mode: xpath` from `oracle_params`; parser signatures, firm ceiling |
+| `xpath-xml-body-error` | JS | error | probe | false | true | firm | none | ✓ | Complete | XML body element injection with `mode: xpath`; parser signatures absent from the neutral document, firm ceiling |
 | `ssi-injection` | YAML | error | probe | false | true | firm | none | ✓ | Complete | SSI printenv two-marker pair |
 | `prototype-pollution-differential` | YAML | differential | probe | false | true | confirmed | none | ✓ | Complete | Prototype pollution via differential |
 | `prototype-pollution-json-body` | JS | differential | probe | false | true | confirmed | none | ✓ | Complete | Nested `__proto__` member sent as a JSON field value vs a plain object over three repeats; echo guard + 3/3 stability |
@@ -452,20 +463,20 @@ section of `docs/detector-inventory.md`.
 
 | Security Class | Plugins | Complete | Partial | Gaps Identified |
 |----------------|---------|----------|---------|-----------------|
-| XSS | 9 | 8 | 1 | DOM fragment/hash, mXSS, postMessage, WebSocket |
-| SQL Injection | 10 | 9 | 1 | PostgreSQL blind OOB, time-based variants |
+| XSS | 11 | 10 | 1 | DOM fragment/hash, mXSS, postMessage, WebSocket (path/header reflection covered) |
+| SQL Injection | 12 | 11 | 1 | PostgreSQL blind OOB, time-based variants (XML/multipart covered) |
 | Command Injection | 6 | 6 | 0 | Windows vectors |
 | SSRF | 5 | 4 | 1 | PDF generation, DNS rebinding, GCP/DO metadata, redirect chains |
-| NoSQL Injection | 4 | 3 | 1 | Blind OOB, query-string bypass |
+| NoSQL Injection | 5 | 4 | 1 | Blind OOB, query-string bypass, deeper JSON paths |
 | LDAP Injection | 5 | 4 | 1 | OOB exfiltration (JSON body covered), filter manipulation |
-| XXE | 6 | 5 | 1 | Duplicate plugins, SOAP/SAML |
+| XXE | 8 | 7 | 1 | Duplicate plugins, SAML attributes (SOAP/XML body and SVG upload covered) |
 | SSTI | 4 | 3 | 1 | Engine-specific, non-HTML contexts (JSON body OOB covered) |
-| Path Traversal | 4 | 4 | 0 | Blind (undetectable), archive upload, encoding bypasses |
-| Open Redirect | 4 | 4 | 0 | JS-based, header-based |
+| Path Traversal | 5 | 5 | 0 | Blind (undetectable), archive upload, server decoding order |
+| Open Redirect | 5 | 5 | 0 | JS-based, header-based |
 | CORS | 4 | 4 | 0 | Preflight cache poisoning, subdomain enumeration |
 | Cookie/Session | 3 | 3 | 0 | Cookie prefixes, session fixation, timeout, CSRF Lax bypass |
 | Auth/Authorization | 9 | 7 | 2 | Role-based/vertical escalation, function-level, auth bypass flows, session mgmt, duplicates |
-| Other Injection | 12 | 12 | 0 | Request smuggling plugin, WebSocket |
+| Other Injection | 13 | 13 | 0 | Request smuggling plugin, WebSocket |
 | Info Disclosure | 11 | 11 | 0 | Debug endpoints, sensitive files, API docs, cloud creds |
 | File Upload | 4 | 4 | 0 | zip slip, polyglot |
 | Deserialization | 2 | 1 | 1 | OOB gadget chains, .NET, Java ysoserial, PHP |
@@ -476,8 +487,8 @@ section of `docs/detector-inventory.md`.
 | HPP | 5 | 5 | 0 | — |
 | Infrastructure | N/A | N/A | N/A | Engine-owned, no plugins needed |
 
-**Total Plugins**: ~95 (excluding engine-owned recon)
-**Complete**: ~80
+**Total Plugins**: ~105 (excluding engine-owned recon)
+**Complete**: ~90
 **Partial**: ~10
 **Significant Gaps**: 15+ classes with missing coverage
 

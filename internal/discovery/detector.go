@@ -55,18 +55,27 @@ func (ContentDetector) Run(ctx context.Context, env *detector.Env) (detector.Res
 	}
 	fpTech := TechFingerprint{Capabilities: map[string]bool{}}
 	fpTech.Tech = append(fpTech.Tech, env.Tech...)
-	res, err := DiscoverContent(ctx, env.Probe, env.Target, fpTech, nil, DefaultContentOptions())
+	opts := DefaultContentOptions()
+	if env.Progress != nil {
+		opts.OnProgress = env.Progress
+	}
+	res, err := DiscoverContent(ctx, env.Probe, env.Target, fpTech, nil, opts)
 	if err != nil {
 		return detector.Result{}, err
 	}
 	if res == nil {
 		return detector.Result{}, nil
 	}
+	budget := 0
+	if res.BudgetExhausted {
+		budget = 1
+	}
 	return detector.Result{
 		Findings: res.Findings,
 		Stats: map[string]int{
-			"content_requests": res.Requests,
-			"content_findings": len(res.Findings),
+			"content_requests":         res.Requests,
+			"content_findings":         len(res.Findings),
+			"content_budget_exhausted": budget,
 		},
 		Requests: res.Requests,
 		Paths:    res.DiscoveredPaths,

@@ -18,6 +18,8 @@ import (
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
+
+	"github.com/Xmar1881/Gash/internal/wafbypass"
 )
 
 // Supported reports whether this build carries a real browser driver.
@@ -159,10 +161,12 @@ func VerifyXSSWithAuth(ctx context.Context, payloadURL, controlURL, authHeader s
 		return Result{}, fmt.Errorf("headless: xss control phase: %w", err)
 	}
 	return Result{
-		Triggered:     payload.hit,
-		ControlClean:  !control.hit,
-		PayloadStatus: payload.status,
-		ControlStatus: control.status,
+		Triggered:        payload.hit,
+		ControlClean:     !control.hit,
+		PayloadStatus:    payload.status,
+		ControlStatus:    control.status,
+		PayloadChallenge: payload.challenge,
+		ControlChallenge: control.challenge,
 	}, nil
 }
 
@@ -224,8 +228,9 @@ func authActions(target, authHeader string) (chromedp.Action[chromedp.Void], err
 
 // xssPhaseResult carries one navigation's trigger plus main-document status.
 type xssPhaseResult struct {
-	hit    bool
-	status int
+	hit       bool
+	status    int
+	challenge bool
 }
 
 // xssPhase runs one navigation and observes the token-stamped triggers.
@@ -308,9 +313,35 @@ func xssPhase(allocCtx context.Context, target, authHeader, token string) (xssPh
 		if _, err := chromedp.Navigate(target)(ctx, t); err != nil {
 			return xssPhaseResult{}, fmt.Errorf("chromedp navigate %s: %w", target, err)
 		}
+		// A WAF/CAPTCHA challenge can return 200 and keep the renderer busy.
+		// Detect it before the canary probe so the engine records an honest
+		// blocked evidence state instead of treating challenge DOM as target.
+		challenge := func() bool {
+			title, err := chromedp.Evaluate[string](`document.title`)(ctx, t)
+			if err != nil {
+				return false
+			}
+			text, err := chromedp.Evaluate[string](`(document.body && document.body.innerText) ? document.body.innerText.slice(0, 4096) : ""`)(ctx, t)
+			if err != nil {
+				return false
+			}
+			return wafbypass.ChallengeText(title, text) != ""
+		}
+		challengeOut := func() xssPhaseResult {
+			mu.Lock()
+			out := xssPhaseResult{status: documentStatus, challenge: true}
+			mu.Unlock()
+			return out
+		}
+		if challenge() {
+			return challengeOut(), nil
+		}
 		hit, err := waitForCanary(ctx, t, token, canarySettle)
 		if err != nil {
 			return xssPhaseResult{}, fmt.Errorf("chromedp canary probe %s: %w", target, err)
+		}
+		if challenge() {
+			return challengeOut(), nil
 		}
 		mu.Lock()
 		out := xssPhaseResult{hit: hit, status: documentStatus}

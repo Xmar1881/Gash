@@ -1,0 +1,9 @@
+{
+  "name": "signature also present for the neutral document",
+  "target": "http://example.com/api/import",
+  "status": 500,
+  "headers": {"Content-Type": "application/xml"},
+  "body": "<error>You have an error in your SQL syntax</error>",
+  "control_body": "<error>You have an error in your SQL syntax</error>",
+  "expected_verdict": "reject"
+}

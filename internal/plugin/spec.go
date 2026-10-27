@@ -162,8 +162,12 @@ const (
 	StatusError       PluginStatus = "error"
 	StatusPolicyError PluginStatus = "policy_error"
 	StatusSkipped     PluginStatus = "skipped"
-	StatusTimeout     PluginStatus = "timeout"
-	StatusPanic       PluginStatus = "panic"
+	// StatusPartial: plugin koştu ama ilan ettiği istek tavanı (max_requests)
+	// veya rate-limit yüzünden karar veremeden durdu. "skipped" değildir:
+	// kısmi sonuç üretmiş olabilir ve rapor bunu ayrı saymalıdır.
+	StatusPartial PluginStatus = "partial"
+	StatusTimeout PluginStatus = "timeout"
+	StatusPanic   PluginStatus = "panic"
 )
 
 // PluginResult scheduler'a döner; tarama durmaz (B7).
@@ -178,4 +182,7 @@ type PluginResult struct {
 type SkippedPlugin struct {
 	PluginID string
 	Reason   string
+	// Partial: plugin tam koşmadı (bütçe/rate tavanı) ama hata da değil.
+	// Why: Rapor "koşmadı" ile "yarım kaldı"yı ayırt edebilmeli.
+	Partial bool
 }

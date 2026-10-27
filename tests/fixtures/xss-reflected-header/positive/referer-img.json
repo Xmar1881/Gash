@@ -1,0 +1,10 @@
+{
+  "name": "referer reflected into an executable event handler",
+  "target": "http://example.com/login",
+  "status": 200,
+  "headers": {"Content-Type": "text/html"},
+  "body": "<html><body><img src=x onerror=alert(gash_a1b2c3d4)></body></html>",
+  "control_body": "<html><body><p>sign in</p></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "static-execution-evidence"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "nested $gt operator matches every record",
+  "target": "http://example.com/api/users",
+  "status": 200,
+  "headers": {"Content-Type": "application/json"},
+  "body": "{\"items\":[{\"user\":\"admin\"}]}",
+  "control_body": "{\"items\":[]}",
+  "control_status": 200,
+  "true_bodies": ["{\"items\":[{\"user\":\"admin\"}]}", "{\"items\":[{\"user\":\"admin\"}]}", "{\"items\":[{\"user\":\"admin\"}]}"],
+  "false_bodies": ["{\"items\":[]}", "{\"items\":[]}", "{\"items\":[]}"],
+  "expected_verdict": "accept",
+  "expected_confidence": "confirmed"
+}

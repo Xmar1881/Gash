@@ -12,7 +12,11 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +24,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
+
+	"github.com/Xmar1881/Gash/internal/headless"
+	"github.com/Xmar1881/Gash/internal/plugin"
+	"github.com/Xmar1881/Gash/internal/plugin/loader"
 )
 
 var (
@@ -64,6 +72,7 @@ type tab struct {
 
 type lastRun struct {
 	cmd    string
+	raw    []string
 	took   time.Duration
 	failed bool
 	valid  bool
@@ -87,23 +96,18 @@ type choice struct {
 
 func newMenuCmd() *cobra.Command {
 	var langFlag string
+	helpLang := detectLang("")
 	cmd := &cobra.Command{
 		Use:     "menu",
 		Aliases: []string{"console", "interactive", "shell"},
-		Short:   "Etkileşimli menü + Gash komut terminali (TR/EN)",
-		Long: "Etkileşimli menüyü açar. Menüden tarama, plugin, benchmark, OpenAPI, diff ve suppress\n" +
-			"işlemleri yapılabilir; komut terminalinden tüm gash komutları çalıştırılabilir.\n\n" +
-			"Dil: varsayılan TR'dir. '--lang en', GASH_LANG=en ortam değişkeni veya menü içindeki 'l'\n" +
-			"kısayolu ile EN'e geçilir.\n" +
-			"Tuşlar: her sekmeye tek harflik kısayol atanmıştır; Enter vurgulanan sekmeyi açar,\n" +
-			"':komut' menüden çıkmadan komut çalıştırır, soru sırasında 'iptal' işlemi iptal eder,\n" +
-			"Ctrl+C çalışan komutu durdurur.",
-		Args: cobra.NoArgs,
+		Short:   msg(helpLang, "menu.cmd.short"),
+		Long:    msg(helpLang, "menu.cmd.long"),
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInteractiveMenuLang(cmd.InOrStdin(), cmd.OutOrStdout(), langFlag)
 		},
 	}
-	cmd.Flags().StringVar(&langFlag, "lang", "auto", "Arayüz dili / UI language: auto|tr|en")
+	cmd.Flags().StringVar(&langFlag, "lang", "auto", msg(helpLang, "menu.langFlag"))
 	return cmd
 }
 
@@ -118,6 +122,7 @@ func runInteractiveMenuLang(in io.Reader, out io.Writer, langFlag string) error 
 }
 
 func newMenuSession(in io.Reader, out io.Writer, l uiLang) *menuSession {
+	setActiveUILang(l)
 	return &menuSession{
 		in:          bufio.NewReader(in),
 		out:         out,
@@ -174,7 +179,16 @@ func (s *menuSession) run() error {
 		s.printTabBar()
 		s.printTabContent()
 		s.printInfoBar()
-		raw, err := s.readRaw("  " + s.th.brand(s.t("menu.prompt.label")) + " " + s.th.accent("❯") + " ")
+		promptMark := s.th.accent("❯")
+		if s.last.valid {
+			if s.last.failed {
+				promptMark = s.th.bad("❯")
+			} else {
+				promptMark = s.th.good("❯")
+			}
+		}
+		raw, err := s.readRaw("  " + s.th.brand("gash") + " " +
+			s.th.muted(s.t("menu.prompt.label")) + " " + promptMark + " ")
 		if err != nil {
 			s.stopOn(err)
 			return nil
@@ -216,7 +230,37 @@ func (s *menuSession) run() error {
 			continue
 		case "l", "lang", "dil", "diller", "language":
 			s.lang = s.lang.other()
+			setActiveUILang(s.lang)
 			s.printf("  %s\n", s.th.muted(s.t("lang.switched")))
+			continue
+		case "r", "repeat", "tekrar":
+			if !s.last.valid || len(s.last.raw) == 0 {
+				s.println("  " + s.th.muted(s.t("menu.noLast")))
+				continue
+			}
+			// Args are replayed verbatim so values containing spaces keep their
+			// quoting instead of being re-split on the flattened display line.
+			s.execute(append([]string(nil), s.last.raw...)...)
+			continue
+		case "b", "bench", "benchmark":
+			if s.openQuickTool("bench") {
+				return nil
+			}
+			continue
+		case "o", "openapi", "api":
+			if s.openQuickTool("openapi") {
+				return nil
+			}
+			continue
+		case "d", "diff", "compare":
+			if s.openQuickTool("diff") {
+				return nil
+			}
+			continue
+		case "x", "suppress", "sustur":
+			if s.openQuickTool("suppress") {
+				return nil
+			}
 			continue
 		}
 		if i := s.findTab(choice); i >= 0 {
@@ -242,6 +286,29 @@ func (s *menuSession) openTab(i int) (quit bool) {
 	return s.stopOn(s.tabs[i].handler(s))
 }
 
+// openQuickTool jumps straight into one specialized tool while leaving the
+// Tools tab selected behind it, so returning lands on the tool group.
+func (s *menuSession) openQuickTool(kind string) (quit bool) {
+	for i, t := range s.tabs {
+		if t.key == "t" {
+			s.currentTab = i
+			break
+		}
+	}
+	var err error
+	switch kind {
+	case "bench":
+		err = s.benchFlow()
+	case "openapi":
+		err = s.openAPIFlow()
+	case "diff":
+		err = s.diffFlow()
+	case "suppress":
+		err = s.suppressFlow()
+	}
+	return s.stopOn(err)
+}
+
 func (s *menuSession) initTabs() {
 	s.tabs = []tab{
 		{
@@ -259,39 +326,28 @@ func (s *menuSession) initTabs() {
 			aliases: []string{"plugin", "plugins"},
 		},
 		{
-			key: "b", short: "3", icon: "▲",
-			name: "tab.bench.name", description: "tab.bench.desc",
-			handler: func(ms *menuSession) error { return ms.benchFlow() },
-			details: []string{"tab.bench.d1", "tab.bench.d2", "tab.bench.d3"},
-			aliases: []string{"bench"},
+			key: "t", short: "3", icon: "⚙",
+			name: "tab.tools.name", description: "tab.tools.desc",
+			handler: func(ms *menuSession) error { return ms.toolsFlow() },
+			details: []string{"tab.tools.d1", "tab.tools.d2"},
+			aliases: []string{"tools", "araclar", "araçlar"},
 		},
 		{
-			key: "o", short: "4", icon: "◆",
-			name: "tab.openapi.name", description: "tab.openapi.desc",
-			handler: func(ms *menuSession) error { return ms.openAPIFlow() },
-			details: []string{"tab.openapi.d1", "tab.openapi.d2"},
-		},
-		{
-			key: "d", short: "5", icon: "◐",
-			name: "tab.diff.name", description: "tab.diff.desc",
-			handler: func(ms *menuSession) error { return ms.diffFlow() },
-			details: []string{"tab.diff.d1", "tab.diff.d2"},
-		},
-		{
-			key: "x", short: "6", icon: "■",
-			name: "tab.suppress.name", description: "tab.suppress.desc",
-			handler: func(ms *menuSession) error { return ms.suppressFlow() },
-			details: []string{"tab.suppress.d1"},
-		},
-		{
-			key: "c", short: "7", icon: "❯",
+			key: "c", short: "4", icon: "❯",
 			name: "tab.console.name", description: "tab.console.desc",
 			handler: func(ms *menuSession) error { return ms.commandConsole() },
 			details: []string{"tab.console.d1", "tab.console.d2", "tab.console.d3"},
 			aliases: []string{"console", "shell", "terminal"},
 		},
 		{
-			key: "h", short: "8", icon: "?",
+			key: "u", short: "5", icon: "▣",
+			name: "tab.status.name", description: "tab.status.desc",
+			handler: func(ms *menuSession) error { return ms.statusFlow() },
+			details: []string{"tab.status.d1", "tab.status.d2", "tab.status.d3"},
+			aliases: []string{"status", "durum", "info", "sistem"},
+		},
+		{
+			key: "h", short: "6", icon: "?",
 			name: "tab.help.name", description: "tab.help.desc",
 			handler: func(ms *menuSession) error { ms.helpScreen(); return nil },
 			details: []string{"tab.help.d1"},
@@ -345,22 +401,6 @@ func (s *menuSession) findTab(q string) int {
 // ─────────────────────────────────────────────────────────────────────────────
 // Tema ve çizim yardımcıları
 // ─────────────────────────────────────────────────────────────────────────────
-
-// Geriye dönük uyumluluk: paketteki diğer dosyalar bu sabitleri kullanıyor olabilir.
-const (
-	Reset   = "\033[0m"
-	Bold    = "\033[1m"
-	Dim     = "\033[2m"
-	Red     = "\033[31m"
-	Green   = "\033[32m"
-	Yellow  = "\033[33m"
-	Blue    = "\033[34m"
-	Magenta = "\033[35m"
-	Cyan    = "\033[36m"
-	White   = "\033[37m"
-	BgBlue  = "\033[44m"
-	BgGray  = "\033[100m"
-)
 
 // theme çıktının nereye gittiğine göre renk kullanıp kullanmayacağına karar verir:
 // terminal değilse (pipe, dosya, test) veya NO_COLOR tanımlıysa düz metin üretir.
@@ -424,32 +464,8 @@ func (t theme) bad(s string) string    { return t.paint("38;2;248;113;113", "31"
 func (t theme) muted(s string) string  { return t.paint("38;2;148;163;184", "90", s) }
 func (t theme) bold(s string) string   { return t.paint("1", "1", s) }
 func (t theme) pill(s string) string   { return t.paint("1;38;2;15;23;42;48;2;56;225;255", "1;30;46", s) }
-
-func lerp(a, b int, t float64) int { return a + int(float64(b-a)*t+0.5) }
-
-// gradient: satırı soldan sağa camgöbeği → mor geçişiyle boyar.
-func (t theme) gradient(line string, total int) string {
-	if !t.color {
-		return line
-	}
-	var b strings.Builder
-	for i, r := range []rune(line) {
-		if r == ' ' {
-			b.WriteRune(r)
-			continue
-		}
-		ratio := float64(i) / float64(total-1)
-		if t.truecolor {
-			fmt.Fprintf(&b, "\033[38;2;%d;%d;%dm%c",
-				lerp(56, 139, ratio), lerp(225, 92, ratio), lerp(255, 246, ratio), r)
-		} else if ratio < 0.5 {
-			fmt.Fprintf(&b, "\033[36;1m%c", r)
-		} else {
-			fmt.Fprintf(&b, "\033[35;1m%c", r)
-		}
-	}
-	b.WriteString("\033[0m")
-	return b.String()
+func (t theme) keycap(s string) string {
+	return t.paint("1;38;2;226;232;240;48;2;30;41;59", "1;37;40", s)
 }
 
 // visibleLen ANSI kaçış dizilerini saymadan görünen karakter sayısını döndürür.
@@ -536,6 +552,30 @@ func (s *menuSession) rule() {
 	s.println("  " + s.th.muted(strings.Repeat("─", s.boxWidth())))
 }
 
+// lineLR prints a left/right aligned chrome line. ANSI styling is ignored when
+// measuring, so colored labels still align on the panel width.
+func (s *menuSession) lineLR(left, right string) {
+	width := s.boxWidth()
+	pad := width - visibleLen(left) - visibleLen(right)
+	if pad < 1 {
+		if over := visibleLen(right) + visibleLen(left) - width + 1; over > 0 {
+			right = truncate(right, maxInt(0, visibleLen(right)-over))
+		}
+		pad = width - visibleLen(left) - visibleLen(right)
+		if pad < 1 {
+			pad = 1
+		}
+	}
+	s.println("  " + left + strings.Repeat(" ", pad) + right)
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // panel yuvarlak köşeli bir kutu çizer. title ve satırlar önceden boyanmış olabilir.
 func (s *menuSession) panel(title string, edge func(string) string, lines ...string) {
 	if edge == nil {
@@ -562,8 +602,8 @@ func (s *menuSession) panel(title string, edge func(string) string, lines ...str
 
 // kv: panel içinde "Etiket   değer" satırı üretir; uzun değerleri kırpar.
 func (s *menuSession) kv(label, value string) string {
-	const labelW = 8
-	return s.th.muted(padVisible(label, labelW)) + truncate(value, s.boxWidth()-4-labelW)
+	const labelW = 14
+	return s.th.muted(padVisible(truncate(label, labelW), labelW)+" ") + truncate(value, s.boxWidth()-5-labelW)
 }
 
 func kb(t theme, key, desc string) string {
@@ -571,19 +611,22 @@ func kb(t theme, key, desc string) string {
 }
 
 // keyTag: bir kısayol harfini köşeli parantez içinde vurgular (örn. "[s]").
-func (s *menuSession) keyTag(key string) string {
-	if key == "" {
-		return ""
-	}
-	return s.th.accent("[" + key + "]")
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Ekranlar: banner, sekme çubuğu, içerik, bilgi çubuğu
 // ─────────────────────────────────────────────────────────────────────────────
 
+// menuVersion is the operator-facing build line shown in the menu chrome.
+const menuVersion = "v0.1.0-dev"
+
 func (s *menuSession) printTabBar() {
 	s.println()
+	tab := s.tabs[s.currentTab]
+	left := s.th.brand("GASH") + " " + s.th.muted("›") + " " +
+		s.th.accent(tab.icon) + " " + s.th.bold(s.t(tab.name))
+	right := s.th.muted(fmt.Sprintf("%s · %d/%d", s.lang, s.currentTab+1, len(s.tabs)))
+	s.lineLR(left, right)
+	s.rule()
+
 	var line strings.Builder
 	used := 0
 	flush := func() {
@@ -594,16 +637,15 @@ func (s *menuSession) printTabBar() {
 		}
 	}
 	for i, t := range s.tabs {
-		name := s.t(t.name)
-		plain := fmt.Sprintf(" %s %s ", t.key, name)
-		w := utf8.RuneCountInString(plain)
+		text := fmt.Sprintf("%s %s", t.short, s.t(t.name))
+		w := utf8.RuneCountInString(text) + 2
 		if used > 0 && used+w+1 > s.boxWidth() {
 			flush()
 		}
 		if i == s.currentTab {
-			line.WriteString(s.th.pill(plain))
+			line.WriteString(s.th.pill("▸ " + text + " "))
 		} else {
-			line.WriteString(s.th.accent(" "+t.key) + s.th.muted(" "+name+" "))
+			line.WriteString(s.th.muted(" " + text + " "))
 		}
 		line.WriteString(" ")
 		used += w + 1
@@ -623,52 +665,51 @@ func (s *menuSession) printTabContent() {
 	if len(t.details) > 0 {
 		lines = append(lines, "")
 		for _, d := range t.details {
-			lines = append(lines, s.th.accent("•")+" "+truncate(s.t(d), inner-2))
+			lines = append(lines, s.th.accent("›")+" "+truncate(s.t(d), inner-2))
 		}
 	}
 	lines = append(lines, "",
-		s.th.accent("Enter")+s.th.muted(s.t("tabcontent.open")))
-	title := s.th.accent(icon) + " " + s.th.bold(s.t(t.name)) + " " +
-		s.th.muted(fmt.Sprintf("[%s/%s]", t.short, t.key))
+		s.th.keycap(" Enter ↵ ")+s.th.muted(strings.TrimSpace(s.t("tabcontent.open"))))
+	title := s.th.accent(icon) + " " + s.th.bold(s.t(t.name))
 	s.panel(title, s.th.accent, lines...)
 }
 
 func (s *menuSession) printInfoBar() {
 	s.println()
+	s.rule()
 	s.println("  " + s.th.muted(s.t("infobar.main", len(s.tabs))))
 	if s.last.valid {
 		mark := s.th.good("✔")
 		if s.last.failed {
 			mark = s.th.bad("✘")
 		}
-		s.println("  " + s.th.muted(s.t("infobar.last")) + " " + truncate(s.last.cmd, s.boxWidth()-24) +
-			" " + mark + " " + s.th.muted(fmtDuration(s.last.took)))
+		s.println("  " + s.th.accent("↳") + " " + s.th.muted(s.t("infobar.last")) + " " +
+			truncate(s.last.cmd, s.boxWidth()-26) + " " + mark + " " + s.th.muted(fmtDuration(s.last.took)))
 	}
 }
 
 func (s *menuSession) printBanner() {
-	art := []string{
-		` ██████╗  █████╗ ███████╗██╗  ██╗`,
-		`██╔════╝ ██╔══██╗██╔════╝██║  ██║`,
-		`██║  ███╗███████║███████╗███████║`,
-		`██║   ██║██╔══██║╚════██║██╔══██║`,
-		`╚██████╔╝██║  ██║███████║██║  ██║`,
-		` ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝`,
-	}
 	s.println()
-	for _, l := range art {
-		s.println("    " + s.th.gradient(l, 33))
-	}
-	s.println()
-	s.println("    " + s.th.accent(s.t("banner.tagline")))
-	s.println("    " + s.th.muted(s.t("banner.credits")))
+	left := s.th.brand("◆ GASH") + " " + s.th.keycap(" "+menuVersion+" ")
+	right := s.th.muted(s.t("banner.meta", s.lang.String(), len(s.tabs)))
+	s.lineLR(left, right)
+	s.println("  " + s.th.accent(s.t("banner.tagline")))
+	s.println("  " + s.th.muted(s.t("banner.credits")))
 	s.println()
 
-	var warn []string
-	for _, l := range wrapText(s.t("banner.legalText"), s.boxWidth()-4) {
-		warn = append(warn, s.th.warn(l))
+	prefix := "⚠ " + s.t("banner.legalTitle") + " · "
+	wrapWidth := s.boxWidth() - visibleLen(prefix) - 3
+	if wrapWidth < 20 {
+		wrapWidth = 20
 	}
-	s.panel(s.th.warn(s.t("banner.legalTitle")), s.th.warn, warn...)
+	legal := wrapText(s.t("banner.legalText"), wrapWidth)
+	for i, l := range legal {
+		if i == 0 {
+			s.println("  " + s.th.warn("⚠ "+s.t("banner.legalTitle")) + s.th.muted(" · "+l))
+		} else {
+			s.println("    " + s.th.muted(l))
+		}
+	}
 }
 
 func (s *menuSession) header(icon, title string) {
@@ -678,7 +719,7 @@ func (s *menuSession) header(icon, title string) {
 }
 
 func (s *menuSession) goodbye() {
-	fmt.Fprintln(s.out, s.th.accent(s.t("goodbye")))
+	fmt.Fprintln(s.out, s.th.good("✓")+" "+s.th.bold(s.t("goodbye")))
 }
 
 // helpScreen: kısayollar + cobra'dan okunan komut listesi.
@@ -691,6 +732,7 @@ func (s *menuSession) helpScreen() {
 		{s.t("help.row.keysKey"), s.t("help.row.keys")},
 		{"n / <", s.t("help.row.nav")},
 		{"l", s.t("help.row.lang")},
+		{s.t("help.row.repeatKey"), s.t("help.row.repeat")},
 		{s.t("help.row.cmdKey"), s.t("help.row.cmd")},
 		{s.t("help.row.cancelKey"), s.t("help.row.cancel")},
 		{"Ctrl+C", s.t("help.row.ctrlC")},
@@ -717,7 +759,7 @@ func (s *menuSession) helpScreen() {
 		}
 	}
 	if n := len(flowTabs); n > 0 {
-		s.println("  " + s.th.muted(s.t("help.tabsNote", flowTabs[0], flowTabs[n-1])))
+		s.println("  " + s.th.muted(s.t("help.tabsNote", strings.Join(flowTabs, ", "))))
 	}
 	if consoleNo > 0 {
 		s.println("  " + s.th.muted(s.t("help.consoleNote", consoleNo)))
@@ -739,7 +781,11 @@ func (s *menuSession) printCommands() {
 				subs = append(subs, sc.Name())
 			}
 		}
-		rows = append(rows, row{c.Name(), c.Short, strings.Join(subs, " · ")})
+		short := c.Short
+		if key := "cmd." + c.Name() + ".short"; msg(s.lang, key) != key {
+			short = msg(s.lang, key)
+		}
+		rows = append(rows, row{c.Name(), short, strings.Join(subs, " · ")})
 		if n := utf8.RuneCountInString(c.Name()); n > nameW {
 			nameW = n
 		}
@@ -762,14 +808,234 @@ func (s *menuSession) printCommands() {
 // Akışlar
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Durum paneli
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (s *menuSession) statusFlow() error {
+	for {
+		s.println()
+		s.header("▣", s.t("status.title"))
+		build := s.t("status.buildStandard")
+		if headless.Supported() {
+			build = s.t("status.buildDeep")
+		}
+		chrome := headless.FindChrome()
+		chromeLabel := s.t("status.chromeNo")
+		if chrome != "" {
+			chromeLabel = truncate(chrome, s.boxWidth()-18)
+		}
+		catalog := s.catalogCount()
+		catalogLabel := s.t("status.unknown")
+		if catalog >= 0 {
+			catalogLabel = fmt.Sprintf("%d %s", catalog, s.t("status.pluginsSuffix"))
+		}
+		proxyLabel := s.t("status.proxyNone")
+		if p := defaultProxyFile(); p != "" {
+			proxyLabel = fmt.Sprintf("%s (%d)", p, countListEntries(p))
+		}
+		reports := latestReportFiles(5)
+		lines := []string{
+			s.kv(s.t("status.build"), build),
+			s.kv(s.t("status.chrome"), chromeLabel),
+			s.kv(s.t("status.go"), runtime.Version()+" · "+runtime.GOOS+"/"+runtime.GOARCH),
+			s.kv(s.t("status.catalog"), catalogLabel),
+			s.kv(s.t("status.proxy"), proxyLabel),
+			s.kv(s.t("status.reports"), fmt.Sprintf("%d", len(reports))),
+		}
+		for _, r := range reports {
+			lines = append(lines, "  "+s.th.muted(truncate(filepath.Base(r), s.boxWidth()-8)))
+		}
+		s.panel(s.th.bold(s.t("status.title")), s.th.accent, lines...)
+		s.println()
+		s.printf("  %s  %s  %s  %s  %s\n",
+			kb(s.th, "r", s.t("status.refresh")),
+			kb(s.th, "o", s.t("status.openReports")),
+			kb(s.th, "v", s.t("status.viewLatest")),
+			kb(s.th, "p", s.t("status.proxyHelp")),
+			kb(s.th, "0", s.t("common.back")))
+		choice, err := s.readLine(s.t("input.selection") + ": ")
+		if err != nil {
+			return err
+		}
+		switch strings.ToLower(strings.TrimSpace(choice)) {
+		case "0", "b", "back", "geri", "iptal", "cancel":
+			return nil
+		case "r", "refresh", "yenile":
+			continue
+		case "o", "open", "aç", "ac":
+			if err := openPath("reports"); err != nil {
+				s.printf("  %s\n", s.th.bad(s.t("status.openFailed", err.Error())))
+			} else {
+				s.printf("  %s\n", s.th.good(s.t("status.opened", "reports")))
+			}
+		case "v", "view", "göster", "goster":
+			s.showLatestReport(reports)
+		case "p", "proxy", "proksi":
+			proxyPath := defaultProxyFile()
+			if proxyPath == "" {
+				proxyPath = filepath.Join(".gash", "proxies", "alive.txt")
+			}
+			script := filepath.Join(".gash", "proxies", "healthcheck.go")
+			if root := menuRepoRoot(); root != "" {
+				script = filepath.Join(root, ".gash", "proxies", "healthcheck.go")
+			}
+			s.println("  " + s.th.muted(fmt.Sprintf(
+				"go run %s -in %s -out %s -workers 64 -timeout 5s", script, proxyPath, proxyPath)))
+		default:
+			s.printf("  %s\n", s.th.bad(s.t("common.invalidChoice", choice)))
+		}
+	}
+}
+
+func (s *menuSession) catalogCount() int {
+	root := menuRepoRoot()
+	if root == "" {
+		root = "."
+	}
+	reg := plugin.NewRegistry()
+	if _, err := loader.Discover([]string{filepath.Join(root, "plugins")}, reg); err != nil {
+		return -1
+	}
+	return len(reg.Snapshot())
+}
+
+// menuRepoRoot walks upward to the module root so the status tab also works
+// when the menu is launched from a subdirectory.
+func menuRepoRoot() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
+func countListEntries(path string) int {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	n := 0
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line != "" && !strings.HasPrefix(line, "#") {
+			n++
+		}
+	}
+	return n
+}
+
+func latestReportFiles(limit int) []string {
+	entries, err := os.ReadDir("reports")
+	if err != nil {
+		return nil
+	}
+	type reportFile struct {
+		path string
+		mod  time.Time
+	}
+	var files []reportFile
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := strings.ToLower(e.Name())
+		if !strings.HasSuffix(name, ".text") && !strings.HasSuffix(name, ".json") && !strings.HasSuffix(name, ".html") {
+			continue
+		}
+		info, ierr := e.Info()
+		if ierr != nil {
+			continue
+		}
+		files = append(files, reportFile{path: filepath.Join("reports", e.Name()), mod: info.ModTime()})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].mod.After(files[j].mod) })
+	if limit > 0 && len(files) > limit {
+		files = files[:limit]
+	}
+	out := make([]string, len(files))
+	for i, f := range files {
+		out[i] = f.path
+	}
+	return out
+}
+
+func (s *menuSession) showLatestReport(reports []string) {
+	if len(reports) == 0 {
+		s.println("  " + s.th.muted(s.t("status.noReports")))
+		return
+	}
+	var path string
+	for _, candidate := range reports {
+		if strings.HasSuffix(strings.ToLower(candidate), ".text") {
+			path = candidate
+			break
+		}
+	}
+	if path == "" {
+		s.println("  " + s.th.muted(s.t("status.noTextReport", filepath.Base(reports[0]))))
+		return
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		s.printf("  %s\n", s.th.bad(err.Error()))
+		return
+	}
+	lines := strings.Split(string(raw), "\n")
+	const maxLines = 80
+	s.println()
+	s.printf("  %s %s\n", s.th.accent(s.t("status.reportHeader")), s.th.bold(truncate(path, s.boxWidth()-20)))
+	s.rule()
+	for i, line := range lines {
+		if i >= maxLines {
+			s.printf("  %s\n", s.th.muted(s.t("status.reportTruncated", len(lines)-maxLines)))
+			break
+		}
+		s.println("  " + truncate(line, s.boxWidth()-2))
+	}
+	s.rule()
+}
+
+func openPath(path string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("explorer", path)
+	case "darwin":
+		cmd = exec.Command("open", path)
+	default:
+		cmd = exec.Command("xdg-open", path)
+	}
+	return cmd.Start()
+}
+
 func (s *menuSession) scanFlow() error {
 	s.header("◎", s.t("scan.title"))
 
-	var target string
+	var target, targetFile string
 	for {
 		raw, err := s.withMemo(s.t("scan.target"), s.memo["target"])
 		if err != nil {
 			return err
+		}
+		// A path to an existing file is treated as a bulk target list; this
+		// avoids a second prompt and keeps the existing single-target flow.
+		candidate := strings.Trim(strings.TrimSpace(raw), `"'`)
+		if st, statErr := os.Stat(candidate); statErr == nil && !st.IsDir() {
+			targetFile = candidate
+			s.printf("  %s\n", s.th.muted(s.t("scan.targetFileDetected", candidate, countListEntries(candidate))))
+			break
 		}
 		t, added, err := normalizeTarget(raw, s.lang)
 		if err != nil {
@@ -783,9 +1049,21 @@ func (s *menuSession) scanFlow() error {
 		break
 	}
 
-	scope, err := s.optional(s.t("scan.scope") + " " + s.th.muted(s.t("scan.scopeEmpty")) + ": ")
-	if err != nil {
-		return err
+	scope := ""
+	if targetFile == "" {
+		var err error
+		scope, err = s.optional(s.t("scan.scope") + " " + s.th.muted(s.t("scan.scopeEmpty")) + ": ")
+		if err != nil {
+			return err
+		}
+		// Menüde scope boş bırakılırsa hedefin kayıtlı domaini (eTLD+1) kullanılır;
+		// dış linkler taranmaz. Kullanıcı açıkça scope yazarsa o kazanır.
+		if strings.TrimSpace(scope) == "" {
+			scope = sameSiteDomain(target)
+			if scope != "" {
+				s.printf("  %s\n", s.th.muted(s.t("scan.scopeAuto", scope)))
+			}
+		}
 	}
 
 	defProfile := s.memo["profile"]
@@ -820,16 +1098,32 @@ func (s *menuSession) scanFlow() error {
 		}
 	}
 
-	output, err := s.optional(s.t("scan.output") + " " + s.th.muted(s.t("scan.outputEmpty")) + ": ")
-	if err != nil {
-		return err
+	output := ""
+	outputDir := "reports"
+	if targetFile == "" {
+		output, err = s.optional(s.t("scan.output") + " " + s.th.muted(s.t("scan.outputEmpty")) + ": ")
+		if err != nil {
+			return err
+		}
+	} else {
+		outputDir, err = s.defaulted(s.dprompt(s.t("scan.outputDir"), "reports"), "reports")
+		if err != nil {
+			return err
+		}
 	}
 
-	var oobServer string
+	var oobServer, oobToken string
 	var browserCrawl bool
 	var infraScan bool
 	var infraDeep bool
 	var customTimeout string
+	proxyMode := "auto"
+	proxySingle := ""
+	allowExternal := false
+	authMode := "none"
+	authCookie, authHeader := "", ""
+	loginURL, loginUser, loginPassEnv, loginVerify := "", "", "", ""
+	resume := false
 	// "HER ŞEY" seçildiyse gelişmiş sorular atlanır: hepsi zaten açık.
 	advanced := everything
 	if !everything {
@@ -847,6 +1141,7 @@ func (s *menuSession) scanFlow() error {
 	} else if advanced {
 		oobChoice, err := s.choose(s.t("scan.oobTitle"), []choice{
 			{"local", "l", "oob.local.label", "oob.local.desc"},
+			{"interactsh", "i", "oob.interactsh.label", "oob.interactsh.desc"},
 			{"custom", "c", "oob.custom.label", "oob.custom.desc"},
 			{"none", "n", "oob.none.label", "oob.none.desc"},
 		}, "local")
@@ -856,14 +1151,112 @@ func (s *menuSession) scanFlow() error {
 		switch oobChoice {
 		case "local":
 			oobServer = "local"
+		case "interactsh":
+			ok, cerr := s.confirm(s.th.warn(s.t("scan.oobInteractshConfirm")), false)
+			if cerr != nil {
+				return cerr
+			}
+			if ok {
+				oobServer = "interactsh"
+			}
 		case "custom":
 			customURL, err := s.withMemo(s.t("scan.oobPrompt")+" "+s.th.muted(s.t("scan.oobExample")), s.memo["oob"])
 			if err != nil {
 				return err
 			}
 			oobServer = customURL
+			// Self-hosted APIs and self-hosted interactsh both accept a token.
+			tok, terr := s.optional(s.t("scan.oobToken") + " " + s.th.muted(s.t("input.emptyHint", "GASH_OOB_TOKEN")) + ": ")
+			if terr != nil {
+				return terr
+			}
+			oobToken = strings.TrimSpace(tok)
 		default:
 			oobServer = ""
+		}
+
+		proxyChoice, err := s.choose(s.t("scan.proxyTitle"), []choice{
+			{"auto", "a", "proxy.auto.label", "proxy.auto.desc"},
+			{"off", "o", "proxy.off.label", "proxy.off.desc"},
+			{"single", "s", "proxy.single.label", "proxy.single.desc"},
+			{"all", "l", "proxy.all.label", "proxy.all.desc"},
+		}, "auto")
+		if err != nil {
+			return err
+		}
+		switch proxyChoice {
+		case "off":
+			proxyMode = "off"
+		case "single":
+			proxyMode = "single"
+			proxySingle, err = s.withMemo(s.t("scan.proxySinglePrompt"), s.memo["proxy"])
+			if err != nil {
+				return err
+			}
+			s.remember("proxy", proxySingle)
+		case "all":
+			proxyMode = "all"
+		default:
+			proxyMode = "auto"
+		}
+
+		authChoice, err := s.choose(s.t("scan.authTitle"), []choice{
+			{"none", "n", "auth.none.label", "auth.none.desc"},
+			{"cookie", "c", "auth.cookie.label", "auth.cookie.desc"},
+			{"header", "h", "auth.header.label", "auth.header.desc"},
+			{"login", "l", "auth.login.label", "auth.login.desc"},
+		}, "none")
+		if err != nil {
+			return err
+		}
+		switch authChoice {
+		case "cookie":
+			authMode = "cookie"
+			s.println("  " + s.th.warn(s.t("scan.authSecretHint")))
+			authCookie, err = s.required(s.t("scan.authCookiePrompt") + ": ")
+			if err != nil {
+				return err
+			}
+		case "header":
+			authMode = "header"
+			s.println("  " + s.th.warn(s.t("scan.authSecretHint")))
+			for {
+				authHeader, err = s.required(s.t("scan.authHeaderPrompt") + ": ")
+				if err != nil {
+					return err
+				}
+				if strings.Contains(authHeader, ":") {
+					break
+				}
+				s.printf("  %s\n", s.th.bad(s.t("scan.authInvalidHeader")))
+			}
+		case "login":
+			authMode = "login"
+			if profile == "safe" {
+				profile = "standard"
+				s.printf("  %s\n", s.th.warn(s.t("scan.loginProfileUpgrade")))
+			}
+			loginURL, err = s.requiredPath(s.t("scan.loginURL")+": ", true)
+			if err != nil {
+				return err
+			}
+			loginUser, err = s.required(s.t("scan.loginUser") + ": ")
+			if err != nil {
+				return err
+			}
+			loginPassEnv, err = s.defaulted(s.dprompt(s.t("scan.loginPassEnv"), "GASH_LOGIN_PASS"), "GASH_LOGIN_PASS")
+			if err != nil {
+				return err
+			}
+			loginVerify, err = s.optional(s.t("scan.loginVerify") + " (" + s.t("scan.outputEmpty") + "): ")
+			if err != nil {
+				return err
+			}
+		}
+
+		allowExternal, err = s.confirm(s.t("scan.allowExternal"), false)
+		if err != nil {
+			return err
 		}
 
 		bc, err := s.confirm(s.t("scan.browserConfirm"), true)
@@ -892,8 +1285,62 @@ func (s *menuSession) scanFlow() error {
 		customTimeout = strings.TrimSpace(to)
 	}
 
-	args := []string{"scan", "--target", target, "--profile", profile}
-	if scope != "" {
+	if targetFile != "" {
+		resume, err = s.confirm(s.t("scan.resume"), false)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Proxy choice: auto uses the detected alive list; all uses the full list;
+	// off is explicit direct traffic; single pins one upstream.
+	proxyFile := ""
+	var proxyLabel string
+	switch proxyMode {
+	case "off":
+		proxyLabel = s.t("scan.proxyDisabled")
+	case "single":
+		proxyLabel = maskURLUser(proxySingle)
+	case "all":
+		allPath := filepath.Join(".gash", "proxies", "all.txt")
+		if st, statErr := os.Stat(allPath); statErr == nil && !st.IsDir() {
+			proxyFile = allPath
+		} else {
+			s.printf("  %s\n", s.th.warn(s.t("scan.proxyAllMissing")))
+			proxyFile = defaultProxyFile()
+		}
+		if proxyFile == "" {
+			proxyLabel = s.t("status.proxyNone")
+		} else {
+			proxyLabel = proxyFile
+			if everything {
+				proxyLabel += " (" + s.t("scan.proxyPerRequest") + ")"
+			} else {
+				proxyLabel += " (" + s.t("scan.proxyAuto") + ")"
+			}
+		}
+	default:
+		proxyFile = defaultProxyFile()
+		if proxyFile == "" {
+			proxyLabel = s.t("status.proxyNone")
+		} else {
+			proxyLabel = proxyFile
+			if everything {
+				proxyLabel += " (" + s.t("scan.proxyPerRequest") + ")"
+			} else {
+				proxyLabel += " (" + s.t("scan.proxyAuto") + ")"
+			}
+		}
+	}
+
+	args := []string{"scan"}
+	if targetFile != "" {
+		args = append(args, "--target-file", targetFile)
+	} else {
+		args = append(args, "--target", target)
+	}
+	args = append(args, "--profile", profile)
+	if scope != "" && targetFile == "" {
 		args = append(args, "--scope", scope)
 	}
 	if profile == "deep" {
@@ -902,11 +1349,47 @@ func (s *menuSession) scanFlow() error {
 	if profile == "aggressive" {
 		args = append(args, "--aggressive")
 	}
+	switch proxyMode {
+	case "off":
+		args = append(args, "--no-proxy")
+	case "single":
+		if proxySingle != "" {
+			args = append(args, "--proxy", proxySingle)
+		}
+	default:
+		if proxyFile != "" {
+			args = append(args, "--proxy-file", proxyFile)
+			if everything {
+				args = append(args, "--proxy-rotate", "per-request", "--proxy-cooldown", "45s")
+			}
+		}
+	}
+	if everything {
+		args = append(args, "--scan-timeout", "45m", "--crawl-timeout", "10m")
+	}
 	if customTimeout != "" {
 		args = append(args, "--plugin-timeout", customTimeout)
 	}
+	switch authMode {
+	case "cookie":
+		args = append(args, "--cookie", authCookie)
+	case "header":
+		args = append(args, "--auth-header", authHeader)
+	case "login":
+		args = append(args, "--login-url", loginURL, "--login-user", loginUser,
+			"--login-pass-env", loginPassEnv, "--active")
+		if strings.TrimSpace(loginVerify) != "" {
+			args = append(args, "--login-verify-url", loginVerify)
+		}
+	}
+	if allowExternal {
+		args = append(args, "--allow-external")
+	}
 	if oobServer != "" {
 		args = append(args, "--oob-server", oobServer, "--active")
+		if oobToken != "" {
+			args = append(args, "--oob-token", oobToken)
+		}
 		s.remember("oob", oobServer)
 	}
 	if browserCrawl {
@@ -918,29 +1401,60 @@ func (s *menuSession) scanFlow() error {
 	if infraDeep {
 		args = append(args, "--ssh-handshake-audit", "--db-unauth")
 	}
-	if output != "" {
-		args = append(args, "--output", output)
+	if targetFile != "" {
+		args = append(args, "--output-dir", outputDir, "--format", "json", "--format", "text", "--report-stamp")
+		if resume {
+			args = append(args, "--resume")
+		}
+	} else if output != "" {
+		args = append(args, "--output", output, "--format", reportFormatForPath(output))
+	} else {
+		// "boş=otomatik": rapor yine diske yazılır (json + text) ve terminal
+		// özeti korunur. --report-stamp aynı hedefin raporunu ezmez.
+		args = append(args, "--output-dir", "reports", "--format", "json", "--format", "text", "--report-stamp")
 	}
 
 	scopeLabel, outLabel := scope, output
+	if targetFile != "" {
+		scopeLabel = s.t("scan.scopeAutoPerTarget")
+		outLabel = outputDir
+	}
 	if scopeLabel == "" {
 		scopeLabel = s.t("common.free")
 	}
 	if outLabel == "" {
-		outLabel = s.t("common.auto")
+		outLabel = s.t("scan.autoReport")
 	}
 	s.println()
 	kvLabelW := 8
+	targetLabel := target
+	targetKey := s.t("kv.target")
+	if targetFile != "" {
+		targetKey = s.t("kv.targetFile")
+		targetLabel = fmt.Sprintf("%s (%d)", targetFile, countListEntries(targetFile))
+	}
 	summaryItems := []string{
-		s.kv(s.t("kv.target"), target),
+		s.kv(targetKey, targetLabel),
 		s.kv(s.t("kv.scope"), scopeLabel),
 		s.th.muted(padVisible(s.t("kv.profile"), kvLabelW)) + s.profileTone(profile),
 		s.kv(s.t("kv.report"), outLabel),
+		s.kv(s.t("kv.proxy"), proxyLabel),
+	}
+	if authMode != "none" {
+		summaryItems = append(summaryItems, s.kv(s.t("kv.auth"), s.t("auth."+authMode+".label")))
+	}
+	if allowExternal {
+		summaryItems = append(summaryItems, s.kv(s.t("kv.external"), s.th.warn(s.t("scan.externalActive"))))
 	}
 	if oobServer != "" {
-		oobLabel := oobServer
-		if oobServer == "local" {
+		var oobLabel string
+		switch oobServer {
+		case "local":
 			oobLabel = s.th.good(s.t("scan.oobLocalLabel"))
+		case "interactsh":
+			oobLabel = s.th.warn(s.t("scan.oobInteractshLabel"))
+		default:
+			oobLabel = oobServer
 		}
 		summaryItems = append(summaryItems, s.kv(s.t("kv.oob"), oobLabel))
 	}
@@ -958,7 +1472,7 @@ func (s *menuSession) scanFlow() error {
 		summaryItems = append(summaryItems, s.kv(s.t("kv.infra"), s.th.good(label)))
 	}
 	s.panel(s.th.bold(s.t("scan.summary")), s.th.accent, summaryItems...)
-	s.printf("  %s %s\n", s.th.muted(s.t("scan.command")), "gash "+shellJoin(args))
+	s.printf("  %s %s\n", s.th.muted(s.t("scan.command")), "gash "+shellJoin(redactCommandArgs(args)))
 	s.println()
 
 	ok, err := s.confirm(s.t("scan.startConfirm"), true)
@@ -970,7 +1484,11 @@ func (s *menuSession) scanFlow() error {
 		return nil
 	}
 
-	s.remember("target", target)
+	if targetFile != "" {
+		s.remember("target", targetFile)
+	} else {
+		s.remember("target", target)
+	}
 	if profile != "aggressive" { // agresif profil asla varsayılan olarak hatırlanmaz
 		s.remember("profile", profile)
 	}
@@ -1058,6 +1576,17 @@ func (s *menuSession) pluginsFlow() error {
 	})
 }
 
+// toolsFlow groups the specialized report/lab utilities so the primary tab
+// bar stays short. Direct b/o/d/x shortcuts still jump straight into a tool.
+func (s *menuSession) toolsFlow() error {
+	return s.submenu(s.t("tab.tools.name"), s.t("common.mainMenu"), []menuItem{
+		{"b", "tab.bench.name", "tab.bench.desc", s.benchFlow},
+		{"o", "tab.openapi.name", "tab.openapi.desc", s.openAPIFlow},
+		{"d", "tab.diff.name", "tab.diff.desc", s.diffFlow},
+		{"x", "tab.suppress.name", "tab.suppress.desc", s.suppressFlow},
+	})
+}
+
 func (s *menuSession) benchFlow() error {
 	const defDataset = "bench/datasets/fixtures.yaml"
 	return s.submenu(s.t("bench.title"), s.t("common.mainMenu"), []menuItem{
@@ -1110,7 +1639,7 @@ func (s *menuSession) benchFlow() error {
 			if err != nil {
 				return err
 			}
-			outPath, err := s.optional(s.t("bench.outFile") + " " + s.th.muted("(boş=stdout)") + ": ")
+			outPath, err := s.optional(s.t("bench.outFile") + " " + s.th.muted(s.t("input.emptyHint", "stdout")) + ": ")
 			if err != nil {
 				return err
 			}
@@ -1219,6 +1748,14 @@ func (s *menuSession) suppressFlow() error {
 			if err != nil {
 				return err
 			}
+			ok, err := s.confirm(s.t("suppress.removeConfirm", id), false)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				s.println("  " + s.t("common.cancelled"))
+				return nil
+			}
 			s.execute("suppress", "remove", id)
 			return nil
 		}},
@@ -1324,7 +1861,7 @@ func (s *menuSession) printHistory() {
 		return
 	}
 	for i, h := range s.history {
-		s.printf("  %s  %s\n", s.th.muted(fmt.Sprintf("%3d", i+1)), h)
+		s.printf("  %s  %s\n", s.th.muted(fmt.Sprintf("%3d", i+1)), redactCommandLine(h))
 	}
 }
 
@@ -1371,7 +1908,7 @@ func (s *menuSession) execute(args ...string) error {
 	stop()
 	cancelled := ctx.Err() != nil
 
-	s.last = lastRun{cmd: strings.Join(args, " "), took: took, failed: err != nil || cancelled, valid: true}
+	s.last = lastRun{cmd: strings.Join(redactCommandArgs(args), " "), raw: append([]string(nil), args...), took: took, failed: err != nil || cancelled, valid: true}
 	t := s.th.muted(" · " + fmtDuration(took))
 	switch {
 	case cancelled:
@@ -1528,7 +2065,7 @@ func (s *menuSession) requiredPath(prompt string, allowURL bool) (string, error)
 // confirm: her iki dildeki evet/hayır sözcüklerini kabul eder (e/h, y/n).
 func (s *menuSession) confirm(question string, def bool) (bool, error) {
 	yes, no := s.t("input.confirmYes"), s.t("input.confirmNo")
-	hint := "[" + strings.ToLower(yes) + "/" + strings.ToLower(no) + "]"
+	var hint string
 	if def {
 		hint = "[" + strings.ToUpper(yes) + "/" + strings.ToLower(no) + "]"
 	} else {
@@ -1566,14 +2103,15 @@ func (s *menuSession) choose(label string, opts []choice, def string) (string, e
 		}
 	}
 	s.println()
-	s.printf("  %s\n", s.th.bold(label))
+	s.println("  " + s.th.accent("◆") + " " + s.th.bold(label))
 	for i, o := range opts {
 		marker := " "
 		if i == defIdx {
 			marker = s.th.accent("›")
 		}
-		s.printf("  %s %s  %s  %s\n", marker, s.keyTag(o.key),
-			padVisible(s.t(o.label), labelW), s.th.muted(s.t(o.desc)))
+		descWidth := s.boxWidth() - 8 - labelW - 2
+		s.printf("  %s %s  %s  %s\n", marker, s.th.keycap(" "+o.key+" "),
+			padVisible(s.t(o.label), labelW), s.th.muted(truncate(s.t(o.desc), descWidth)))
 	}
 	defLabel := s.t(opts[defIdx].label)
 	for {
@@ -1614,15 +2152,19 @@ func (s *menuSession) submenu(title, backLabel string, items []menuItem) error {
 		}
 	}
 	inner := s.boxWidth() - 4
+	s.println()
+	s.lineLR(s.th.brand("GASH")+" "+s.th.muted("›")+" "+s.th.bold(s.t(title)), s.th.muted(s.lang.String()))
+	s.rule()
 	for {
 		s.println()
-		lines := make([]string, 0, len(items)+3)
+		lines := make([]string, 0, len(items)+4)
+		lines = append(lines, "")
 		for _, it := range items {
-			lines = append(lines, s.keyTag(it.key)+"  "+padVisible(s.t(it.label), labelW)+"  "+
-				s.th.muted(truncate(s.t(it.desc), inner-4-labelW-2)))
+			lines = append(lines, s.th.keycap(" "+it.key+" ")+"  "+padVisible(s.t(it.label), labelW)+"  "+
+				s.th.muted(truncate(s.t(it.desc), inner-6-labelW-2)))
 		}
-		lines = append(lines, "", s.th.accent("0")+"  "+backLabel+s.th.muted("   "+s.t("submenu.hint")))
-		s.panel(s.th.bold(title), s.th.accent, lines...)
+		lines = append(lines, "", s.th.keycap(" 0 ")+"  "+backLabel+s.th.muted("   "+s.t("submenu.hint")))
+		s.panel("", s.th.accent, lines...)
 
 		choice, err := s.readLine(s.t("input.selection") + ": ")
 		if err != nil {
@@ -1687,6 +2229,23 @@ func (s *menuSession) stopOn(err error) bool {
 // Saf yardımcılar
 // ─────────────────────────────────────────────────────────────────────────────
 
+// reportFormatForPath keeps a typed report path consistent with its format;
+// otherwise --output report.json would silently receive the default text body.
+func reportFormatForPath(path string) string {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
+	case ".json":
+		return "json"
+	case ".html", ".htm":
+		return "html"
+	case ".sarif":
+		return "sarif"
+	case ".xml":
+		return "junit"
+	default:
+		return "text"
+	}
+}
+
 // normalizeTarget: şema yoksa https:// ekler, host'u doğrular.
 func normalizeTarget(raw string, l uiLang) (target string, schemeAdded bool, err error) {
 	raw = strings.TrimSpace(raw)
@@ -1701,6 +2260,11 @@ func normalizeTarget(raw string, l uiLang) (target string, schemeAdded bool, err
 	if perr != nil || u.Host == "" {
 		return "", false, errors.New(msg(l, "scan.invalidURL", raw))
 	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+	default:
+		return "", false, errors.New(msg(l, "scan.unsupportedScheme", u.Scheme))
+	}
 	return raw, schemeAdded, nil
 }
 
@@ -1709,6 +2273,56 @@ func shellQuote(a string) string {
 		return a
 	}
 	return "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+}
+
+// redactCommandArgs masks credential-bearing flag values in the displayed
+// command and the info bar; the real argv passed to the command is unchanged.
+func redactCommandArgs(args []string) []string {
+	out := append([]string{}, args...)
+	secretFlags := map[string]bool{
+		"--cookie": true, "--auth-header": true, "--oob-token": true,
+		"--login-pass": true, "--basic-auth": true,
+	}
+	for i := 0; i < len(out); i++ {
+		for flag := range secretFlags {
+			if out[i] == flag && i+1 < len(out) {
+				out[i+1] = "[redacted]"
+			}
+			if strings.HasPrefix(out[i], flag+"=") {
+				out[i] = flag + "=[redacted]"
+			}
+		}
+		if out[i] == "--proxy" && i+1 < len(out) {
+			out[i+1] = maskURLUser(out[i+1])
+		}
+		if strings.HasPrefix(out[i], "--proxy=") {
+			out[i] = "--proxy=" + maskURLUser(strings.TrimPrefix(out[i], "--proxy="))
+		}
+	}
+	return out
+}
+
+// maskURLUser keeps host/port visible but hides proxy credentials. The
+// asterisks are inserted after Parse/String so they are not percent-encoded.
+func maskURLUser(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = nil
+	masked := u.String()
+	if i := strings.Index(masked, "://"); i >= 0 {
+		return masked[:i+3] + "***@" + masked[i+3:]
+	}
+	return raw
+}
+
+func redactCommandLine(line string) string {
+	args, err := splitCommandLine(line)
+	if err != nil {
+		return line
+	}
+	return shellJoin(redactCommandArgs(args))
 }
 
 func shellJoin(args []string) string {

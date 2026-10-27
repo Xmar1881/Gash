@@ -62,6 +62,10 @@ type Result struct {
 	PayloadStatus int
 	// ControlStatus is the control navigation's main document status.
 	ControlStatus int
+	// PayloadChallenge marks a WAF/CAPTCHA challenge page on the payload side.
+	PayloadChallenge bool
+	// ControlChallenge marks a WAF/CAPTCHA challenge page on the control side.
+	ControlChallenge bool
 }
 
 // Outcome classifies a browser proof without inflating evidence.
@@ -72,6 +76,8 @@ type Result struct {
 // execution was payload-specific.
 func (r Result) Outcome() Outcome {
 	switch {
+	case r.PayloadChallenge || r.ControlChallenge:
+		return OutcomeBlocked
 	case failedStatus(r.PayloadStatus) || failedStatus(r.ControlStatus):
 		return OutcomeError
 	case blockedStatus(r.PayloadStatus) || blockedStatus(r.ControlStatus):
@@ -116,6 +122,12 @@ func HTTPReason(status int) string {
 // Why: Reports need "payload_forbidden" or "control_rate_limited", not a
 // single vague "blocked" label.
 func (r Result) Reason() string {
+	if r.PayloadChallenge {
+		return "payload_waf_challenge"
+	}
+	if r.ControlChallenge {
+		return "control_waf_challenge"
+	}
 	if reason := HTTPReason(r.PayloadStatus); reason != "" {
 		return "payload_" + reason
 	}

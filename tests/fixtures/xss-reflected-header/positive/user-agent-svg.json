@@ -1,0 +1,10 @@
+{
+  "name": "user-agent reflected into an executable svg handler",
+  "target": "http://example.com/welcome",
+  "status": 200,
+  "headers": {"Content-Type": "text/html"},
+  "body": "<html><body><div class=\"ua\"><svg onload=alert(gash_a1b2c3d4)></div></body></html>",
+  "control_body": "<html><body><div class=\"ua\">Mozilla/5.0</div></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "static-execution-evidence"
+}

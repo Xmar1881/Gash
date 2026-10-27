@@ -3,17 +3,17 @@ SPDX-License-Identifier: AGPL-3.0-only
 Copyright (C) 2026 Xmar1881 / Gash contributors
 Modül: github.com/Xmar1881/Gash
 Bu dosya Gash tasarım dokümanıdır; kod değildir.
-Lisans metni için bkz. COPYING (Faz 2'de eklenecek) ve https://www.gnu.org/licenses/agpl-3.0.html
+Lisans metni için bkz. COPYING (mevcut) ve https://www.gnu.org/licenses/agpl-3.0.html
 -->
 
-# Gash — Mimari Tasarım (Faz 1)
+# Gash — Mimari Tasarım (Faz 1 kararları — güncel uygulama durumu §0.2)
 
-- **Durum:** Faz 1 çıktısı — KOD YOK. Motor kodu, `go.mod`, Go implementasyonu yazılmadı.
+- **Güncel durum (2026-10-27):** Aktif geliştirme, `v0.1.0-dev`. Bu dosyanın §1–§21 arası **Faz 1 tasarım kararlarının tarihsel kaydıdır**; kod, `go.mod`, şema, protobuf ve testler mevcuttur. Güncel sayılar ve doğrulama komutları için §0.2'ye bakın.
 - **Modül yolu (donduruldu):** `github.com/Xmar1881/Gash`
 - **Lisans (donduruldu):** `AGPL-3.0-only` (SPDX). Tüm tasarım artefaktları bu lisansa tabidir.
-- **Toolchain (Faz 0 D1'den devralındı):** `go1.26.8`, `go.mod` dili `go 1.26.0`, CI imajı `golang:1.26.8-bookworm`, `CGO_ENABLED=0`.
+- **Toolchain:** `go 1.26.0` dil alt sınırı; standart build `CGO_ENABLED=0`, deep build `-tags deep` + Chrome/chromedp.
 - **Kaynaklar:** `benioku.txt` (Gash spec) + `docs/design/00-scope.md` (Faz 0 kararları D1–D6, sorular S1–S5).
-- **Faz kapısı:** Bu dosya + `docs/evidence-standard.md` + `proto/gash/v1/plugin.proto` sunulur, **DURULUR, onay beklenir.** Faz 2'ye geçilmez, kod yazılmaz.
+- **Faz terimleri:** "Faz 1/2/3" bu dokümanda tarihsel tasarım kilometre taşlarıdır. "Faz 2'de yapılacak" gibi ifadeler o tarihteki planı anlatır; çoğu bugün uygulanmıştır. Güncel gerçek için §0.2 ve `README.md` esastır.
 - **Faz 0'dan sapma:** YOK. Tüm Faz 0 kararları (D1–D6) korunmuştur. S1–S5 varsayımları bu dosyada karara dönüştürülmüştür (detay §18); sapma değil, Faz 0'ın öngördüğü netleştirmedir. Sapma gerektiği düşünülen tek aday (modül yolundaki büyük harf `Xmar1881/Gash`) kullanıcı onayıyla aynen kabul edilmiştir — gerekçe §1.3'te.
 
 ---
@@ -43,7 +43,19 @@ Lisans metni için bkz. COPYING (Faz 2'de eklenecek) ve https://www.gnu.org/lice
 12. **B1–B11'in Faz 1 karşılığı yazıldı** (§19): her kriter için tasarım karşılığı + Faz 2 doğrulama planı.
 13. **Kanıt standardı ayrı dosyaya çıkarıldı:** `docs/evidence-standard.md` (§3.3'ün genişletilmiş hali). Bu dosya ona referans verir, tekrar etmez.
 
-Kod, `go.mod`, `go.sum`, generated protobuf, JSON Schema dosyası, test — hiçbiri yazılmadı. `.proto` dosyası tasarımdır (IDL), implementasyon değildir.
+Kod, `go.mod`, `go.sum`, generated protobuf, JSON Schema dosyası, test — hiçbiri bu tasarım anında yazılmadı. **Tarihsel not:** Bu satır Faz 1 teslimini anlatır; bugün tüm bu artefaktlar mevcuttur (bkz. §0.2).
+
+### 0.2 Güncel uygulama durumu (2026-10-27)
+
+- **Kod:** Go module mevcut (`go.mod`, `go.sum`); standart build `go build ./...`, browser build `go build -tags deep ./cmd/gash`.
+- **Katalog:** 338 plugin = 275 Tier 1 YAML + 62 Tier 2 JS + 1 Tier 3 native; ayrıca 13 engine-owned detector. Her plugin fixture + `docs/metrics/` raporu taşır (`TestMetricGate`).
+- **Çekirdek:** engine scheduler/bütçe/scan deadline, `PolicySession` (scope, rate, retry, redirect, backpressure), proxy havuzu (rotasyon, cooldown, per-attempt timeout, otomatik yerel liste), Tier 1 YAML loader/exec, Tier 2 goja sandbox + host binding'ler, Tier 3 gRPC + SHA-256 trust, reporter (json/sarif/text/html/junit), diff/suppress, bench + corpus + contract + metric gate'leri.
+- **Oracle'lar:** reflection, stored, differential, error (sqli/path/xpath/deserialization/...), timing, OOB, header, cookie, CORS, redirect, version, execution, upload-served, middleware-bypass ve engine smuggling diferansiyeli.
+- **OOB:** `local`, custom self-hosted API, stdlib **interactsh** istemcisi (`interactsh` public explicit opt-in, `interactsh://host` self-hosted, `--oob-token`/`GASH_OOB_TOKEN`); tarama başına tek oturum, callback decrypt + tek-kullanımlık label.
+- **WAF:** modern challenge tespiti (Cloudflare/Akamai/Imperva/DataDome/PerimeterX/AWS WAF/Sucuri/F5), sınıf-bilinçli semantik bypass (16 varyant; content-type/multipart/path confusion dahil), `waf_challenges` sayacı (host-geneli skip yok), headless challenge → `blocked`.
+- **Discovery:** varsayılan aynı-domain (eTLD+1) scope, JS recon 90s bütçesi, içerik keşfi 8 paralel + 90s/60s tavanları, opsiyonel browser crawl.
+- **Doğrulama:** `gofmt`, `go vet ./...`, `go build ./...`, `go build -tags deep ./cmd/gash`, `go test -count=1 ./...`, `TestMetricGate`, corpus ve contract gate'leri. Güncel sayılar `go run ./cmd/gash plugins list` ile doğrulanır.
+- **Güncel dokümanlar:** `README.md`, `docs/detector-inventory.md`, `docs/plugin-coverage-matrix.md`, `docs/evidence-standard.md`, `docs/known-limits.md`.
 
 ---
 
@@ -79,7 +91,7 @@ Kod, `go.mod`, `go.sum`, generated protobuf, JSON Schema dosyası, test — hiç
 
 ### 1.1 Dizin iskeleti kararı (özet; detay §16)
 
-Faz 0'daki ağaç korunur; tek netleştirme: `proto/gash/v1/plugin.proto` eklenir, `pkg/gashsdk/` AGPL altında planlanır, `schemas/` Faz 2'de üretilir (Faz 1'de yalnızca tasarım notu, dosya YOK).
+Faz 0'daki ağaç korunur; tek netleştirme: `proto/gash/v1/plugin.proto` eklenir, `pkg/gashsdk/` AGPL altında planlanır, `schemas/plugin.schema.json` `internal/plugin/rules.go` ile senkron tutulur. **Güncel durum:** `proto/gash/v1/plugin.proto` ve `schemas/plugin.schema.json` mevcuttur; `schema_test.go` senkronu doğrular.
 
 ### 1.2 Üçüncü parti atıf politikası (tasarım)
 
@@ -447,7 +459,7 @@ Tüm `probe.Send()` bu proxy'den geçer:
 
 ### Karar A-14 — Self-hosted DNS+HTTP, interactsh-uyumlu client, ayrı binary Faz 3+ (S1 kararı)
 
-Faz 0 S1'in Faz 1 karşılığı: **protokol dondurulur, sunucu Faz 3+.** Faz 2'de OOB client, self-hosted `interactsh` (ProjectDiscovery) ile uyumlu çalışır; `cmd/gash-interactsh` ayrı binary'si Faz 3+ iş olarak planlanır (tekerlek icadı yok). Protokol, iki tarafa da uyacak şekilde tanımlanır:
+Faz 0 S1'in Faz 1 karşılığı: **protokol dondurulur.** Güncel uygulama: `internal/oob` local listener, custom self-hosted API ve stdlib **interactsh** istemcisini (public explicit opt-in / `interactsh://host` self-hosted) içerir; ayrı `cmd/gash-interactsh` binary'si yoktur. Protokol, iki tarafa da uyacak şekilde tanımlanır:
 
 #### 9.1 Adresleme ve namespace
 
@@ -641,14 +653,14 @@ PD `goflags` konvansiyonlarıyla uyum (Faz 0 D2 notu): bayrak isimleri Nuclei/ht
 
 ```
 gash/  (module github.com/Xmar1881/Gash, AGPL-3.0-only)
-├── COPYING / NOTICE / REUSE.toml        # Faz 2'de eklenecek (tasarım burada)
+├── COPYING / NOTICE / REUSE.toml        # mevcut
 ├── cmd/
 │   ├── gash/main.go                     # ince entrypoint (Execute only)
-│   └── gash-interactsh/main.go          # Faz 3+ (Faz 2'de YOK; client interactsh-uyumlu)
+│   └── gash-interactsh/main.go          # ayrı binary yok; in-process interactsh client (internal/oob)
 ├── internal/
 │   ├── engine/                          # orchestration, scheduler, correlate.go
 │   ├── baseline/                        # gürültü/WAF/soft-404 modeli
-│   ├── oracle/                          # 9 oracle + Evidence tipi + signatures/
+│   ├── oracle/                          # oracle'lar + Evidence tipi + signatures/
 │   ├── plugin/
 │   │   ├── spec.go                      # PluginSpec IR (A-07)
 │   │   ├── rules.go                     # tek kural kaynağı (A-08)
@@ -656,16 +668,16 @@ gash/  (module github.com/Xmar1881/Gash, AGPL-3.0-only)
 │   │   ├── registry.go / policy.go / toposort.go / errors.go
 │   ├── probe/                           # HTTP client + canary + response store
 │   ├── finding/                         # Finding builder (internal) + fingerprint
-│   ├── reporter/                        # json, sarif, text, html
-│   └── oob/                             # interactsh-uyumlu client + correlation
-├── pkg/gashsdk/                         # Tier 3 public SDK (Go-first, AGPL; Faz 3)
+│   ├── reporter/                        # json, sarif, text, html, junit
+│   └── oob/                             # local + self-hosted + interactsh client
+├── pkg/gashsdk/                         # Tier 3 public SDK (Go-first, AGPL; plan)
 ├── plugins/                             # built-in (embed.FS)
-├── proto/gash/v1/plugin.proto           # DONDURULDU (bu Faz; generated YOK)
-├── schemas/plugin.schema.json           # Faz 2'de rules.go'dan ÜRETİLECEK (bu Faz'da YOK)
-├── tests/corpus/ / tests/fixtures/ / tests/lab/
+├── proto/gash/v1/plugin.proto           # mevcut; generated code internal/proto
+├── schemas/plugin.schema.json           # mevcut; rules.go ile senkron
+├── tests/corpus/ / tests/fixtures/ / tests/plugins/
 ├── docs/architecture.md (bu dosya) / docs/evidence-standard.md
 ├── docker-compose.lab.yml               # S4 pinleri (§16.3)
-└── .golangci.yml / .github/workflows/   # Faz 2'de (lint+vet+bench+corpus kapıları)
+└── .golangci.yml / .github/workflows/   # mevcut (lint+vet+bench+corpus kapıları)
 ```
 
 - **Config dosyası:** `gash.yaml` (viper, opsiyonel; flag > env > config > default). Lazy-load: yalnızca `scan`/`plugins` okur (Faz 0 D2). Secret'lar config'e yazılmaz (token env'den).
@@ -676,7 +688,7 @@ gash/  (module github.com/Xmar1881/Gash, AGPL-3.0-only)
 
 `docker-compose.lab.yml` localhost-only, izole network; sürümler Faz 1'de pinlenir:
 
-- `DVWA:2.0` (damn-vulnerable), `JuiceShop:17.1.0`, `WebGoat:2023.8`. İmaj digest'leri Faz 2'de `docker-compose.lab.yml`'e yazılır (bu Faz'da tasarım kararı; dosya Faz 2'de).
+- `DVWA:2.0` (damn-vulnerable), `JuiceShop:17.1.0`, `WebGoat:2023.8`. `docker-compose.lab.yml` mevcuttur; imaj digest pinleme lab prosedüründe korunur.
 - `gash bench lab` precision/recall raporu üretir (`docs/metrics/` altında saklanır; düşüş = CI fail — P6).
 
 **Reddedilen:** `latest` tag (tekrar üretilemezlik). Uzak lab (egress + determinizm kaybı).
@@ -723,9 +735,9 @@ gash/  (module github.com/Xmar1881/Gash, AGPL-3.0-only)
 
 ---
 
-## 19. B1–B11 durumu (Faz 1)
+## 19. B1–B11 durumu (Faz 1 tasarımı, güncel doğrulama)
 
-Faz 1'de kod/test olmadığı için tamamı "tasarım karşılığı donduruldu / doğrulama Faz 2+" durumundadır.
+Bu tablo Faz 1 tasarım anındaki karşılıkları kaydeder. **Güncel durum:** B1–B11 kodda uygulanmış ve testlerle doğrulanmıştır; güncel özet §0.2'de, ayrıntılı testler `tests/contract`, `tests/corpus`, `tests/plugins` ve `internal/*` testlerindedir.
 
 | # | Kriter | Faz 1 tasarım karşılığı | Doğrulama planı (Faz 2, aksi belirtilmedikçe) |
 |---|---|---|---|
@@ -768,10 +780,9 @@ Küçük varsayımlar (bayrak default'ları, eşikler, `order` aralığı, suppr
 
 ---
 
-## 21. Faz kapısı
+## 21. Faz kapısı (tarihsel)
 
-- **Çıktılar:** bu dosya + `docs/evidence-standard.md` + `proto/gash/v1/plugin.proto`. Kod, `go.mod`, generated kod, schema dosyası yazılmadı.
-- **Onay için sorulan:** A-01–A-21 kararları + Q1–Q5 varsayımları kabul ediliyor mu? Red/görüş varsa hangi karar maddesine (A-01..A-21) itiraz ediliyor?
-- **Onay sonrası:** Faz 2 (test-first çekirdek altyapı; henüz zafiyet plugin'i yok).
+- **Tarihsel çıktılar:** bu dosya + `docs/evidence-standard.md` + `proto/gash/v1/plugin.proto`. Bu kapı onaylanmış; kod, `go.mod`, generated kod ve schema dosyası mevcuttur.
+- **Güncel doğrulama:** `gofmt`, `go vet ./...`, `go build ./...`, `go build -tags deep ./cmd/gash`, `go test -count=1 ./...`; katalog sayısı `go run ./cmd/gash plugins list` ile doğrulanır. Güncel durum §0.2.
 
 *Teslim formatı uyumu: (1) §0.1, (2) §17 (+ §1–§16'daki Karar kutuları), (3) §19, (4) §20.*

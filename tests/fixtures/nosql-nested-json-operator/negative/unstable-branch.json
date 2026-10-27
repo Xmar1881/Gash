@@ -1,0 +1,12 @@
+{
+  "name": "unstable nested operator branch is not proof",
+  "target": "http://example.com/api/users",
+  "status": 200,
+  "headers": {"Content-Type": "application/json"},
+  "body": "{\"items\":[]}",
+  "control_body": "{\"items\":[]}",
+  "control_status": 200,
+  "true_bodies": ["{\"items\":[{\"user\":\"admin\"}]}", "{\"items\":[]}", "{\"items\":[{\"user\":\"admin\"}]}"],
+  "false_bodies": ["{\"items\":[]}", "{\"items\":[]}", "{\"items\":[]}"],
+  "expected_verdict": "reject"
+}

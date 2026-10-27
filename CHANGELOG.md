@@ -18,6 +18,65 @@ Dates are UTC.
 
 ### Added
 
+- Interactive menu overhaul (`gash menu`): new `status` tab (build tags,
+  headless/Chrome, Go runtime, catalog count, auto proxy list, latest reports
+  with open/view actions), bulk target-file scans with per-target same-site
+  scope and resume/output-directory prompts, explicit proxy modes
+  (`auto`/`off`/`single`/`all`), auth modes (`cookie`/`header`/`login` with
+  profile upgrade), `--allow-external` toggle, secret redaction in the command
+  preview/history, and `r` to repeat the last scan. Non-http(s) targets and
+  header injection are validated before running.
+- Menu information architecture simplified from nine tabs to six (Scan,
+  Plugins, Tools, Console, Status, Help). Benchmark, OpenAPI, diff, and
+  suppress now live under Tools while `b`/`o`/`d`/`x` still jump directly into
+  the requested tool. Also removed unused color constants, resolved the proxy
+  health-check path against the repo root, made the status viewer prefer text
+  reports instead of dumping HTML/JSON, asked for OOB tokens on all custom
+  providers, and added a confirmation before removing a suppression.
+- Menu chrome modernized: compact brand/version header, persistent breadcrumb
+  with language and tab position, numbered segmented tabs with an active pill,
+  keycap action hints, aligned footer, and a prompt that turns green/red with
+  the last command result. The six-line ASCII banner and boxed legal notice
+  were replaced by a compact hero and a wrapped warning line; all new chrome
+  stays on the TR/EN locale keys and the width-aware plain-text fallback.
+- Documentation landing page rewritten around the actual operator experience:
+  new SVG banner, a first-class interactive-menu section with the tab/shortcut
+  table, a dedicated `docs/menu.md`, a compact coverage section, and corrected
+  default-profile/scope statements (CLI default is `standard`; `safe` is the
+  passive profile, and same-site scope is the default).
+- Live phase detail in menus and CLI: each completed scan phase now keeps its
+  final summary and duration while the active phase updates in place. The
+  engine reports crawl pages/surface/requests, JS files/endpoints/secrets, SPA
+  state/dev-build counts, content requests/findings, fuzz points/requests,
+  plugin completed/partial/error counts, browser-verify upgrades, and
+  deduplicated finding totals; skipped phases include their reason. Progress is
+  fully keyed and localized: the engine emits stable `progress.*` keys plus
+  arguments, and the TR/EN menu catalogs render every phase, detail, hint, and
+  completion line. The text report now classifies connection failures as
+  `network` instead of `policy`.
+- Core hardening batch: removed the unused probe response store that retained
+  every body until the scan ended; made the scope DNS cache thread-safe;
+  isolated engine-owned detector and plugin-dispatch panics so one faulty unit
+  cannot kill a scan; capped crawl body retention (64 MiB) and discovered URLs
+  (`max(1000, 20 × MaxPages)`) with `crawl_stored_bytes`,
+  `crawl_urls_dropped`, and `crawl_bodies_dropped` report stats; bounded
+  response headers at 1 MiB; and serialized `Engine.Run` per instance to keep
+  per-target auth/tech state from racing.
+- Engine per-run state isolation: bulk scans that reuse one engine no longer
+  carry login-derived cookies or the `requires_auth` gate into the next target;
+  the declared auth context is cloned for the run and restored afterwards.
+- Report phase timings now cover form fuzz, flow replay, BOLA matrix, request
+  smuggling, and browser verification (`form_fuzz_ms`, `flow_ms`, `matrix_ms`,
+  `smuggle_ms`, `browser_verify_ms`). New `surface_points` and `crawl_failed`
+  stats plus a crawl-failure note make limited plugin surfaces explicit instead
+  of silently probing only the root page.
+- Modern WAF bypass pack (aggressive-only, 24 bounded variants): benign-first
+  HPP differentials, JSON escaped keys (`\u0069d`) alongside duplicate keys,
+  JSON bodies with no `Content-Type`, malformed multipart field names (NUL
+  suffix/filename), 8 KiB inspection-window padding, `..;/` path confusion,
+  decimal/hex/octal/IPv6 payload-IP spellings, symbolic SQL boolean operators,
+  and modern SVG/MathML/media XSS tags plus backtick/computed `alert` calls.
+  Every variant still needs two stable application responses; no stealth claim.
 - Context-aware XSS reflection evidence: JavaScript strings/comments and inert
   JSON blocks no longer look executable; allowed contexts, execution payloads,
   clean controls, and CSP are enforced.
@@ -32,6 +91,71 @@ Dates are UTC.
 - Upstream HTTP interception proxy support (`--proxy <url>`): full Burp Suite /
   OWASP ZAP integration wired to `probe.Client.Transport` with fail-closed
   preflight `--scope` firewall enforcement.
+- Rotating proxy pools for timeout/IP-block failover: `--proxy-file` (one URL
+  per line), `--proxy-rotate per-host|per-request`, and `--proxy-cooldown`.
+  Timeouts and 403/407/429 responses retry through the next healthy proxy,
+  failing proxies cool down, and a per-attempt request timeout keeps one hanging
+  proxy from consuming the whole plugin budget. Request bodies are replayed on
+  retry.
+- Ten new Tier 2 reference plugins: XML/SOAP SQLi (`sqli-xml-body-error`),
+  multipart-form SQLi (`sqli-multipart-error`), XML-body XPath injection
+  (`xpath-xml-body-error`), raw XML/SOAP XXE (`xxe-xml-body-oob`), SVG-upload
+  XXE (`xxe-svg-upload-oob`), path-segment XSS (`xss-path-segment`), reflected
+  header XSS (`xss-reflected-header`), path parser-confusion open redirect
+  (`open-redirect-path-parser`), nested-JSON NoSQL operator injection
+  (`nosql-nested-json-operator`), and encoded path traversal
+  (`path-traversal-encoding-bypass`). Each ships fixtures, a metrics report,
+  an E2E test, and no new sandbox surface.
+- Automatic local proxy discovery: with no `--proxy`/`--proxy-file`, scans load
+  `.gash/proxies/alive.txt` (then `all.txt`) or `GASH_PROXY_FILE`; `--no-proxy`
+  disables it. The menu's "everything" preset now adds the detected pool with
+  `per-request` rotation and a 45s cooldown.
+- Same-site scans by default: without `--scope`, the target's registrable
+  domain (eTLD+1) becomes the allowlist, so crawls no longer follow external
+  links (Google, CDNs, social embeds) until the deadline. `--allow-external`
+  restores open mode. New `--scan-timeout` (30m, menu everything 45m) and
+  `--proxy-timeout` (8s per proxy attempt) keep 338-plugin scans from ending in
+  "context deadline exceeded" skips.
+- JS recon is capped at 90s of follow-up crawl/source-map time
+  (`js_recon_budget_exhausted` stat) so a slow proxy pool cannot spend the scan
+  deadline there. The report now carries phase timings (`crawl_ms`,
+  `js_recon_ms`, `spa_crawl_ms`, `content_discovery_ms`, `fuzz_ms`,
+  `plugins_ms`, `total_ms`) and per-phase progress labels, so a long scan shows
+  exactly where the time went.
+- Content discovery probes now run 8-way parallel instead of one-by-one, with a
+  90s wordlist cap and a 60s cap on the follow-up mini-crawl. The spinner shows
+  `N/80` progress, and the report exposes `content_budget_exhausted` /
+  `content_follow_budget_exhausted` so a dead proxy pool no longer leaves the
+  phase hanging.
+- Discovery gets a `--crawl-timeout` budget (5m default, menu everything 10m) so
+  a slow proxy pool cannot consume the scan deadline; partial crawl results are
+  kept (`crawl_budget_exhausted`, `crawl_incomplete`). After six consecutive
+  proxy failures for one host the pool switches that host to direct traffic
+  (`proxy_direct_fallbacks`). Configuration/profile exclusions (auth, OOB not
+  configured, untrusted Tier 3, profile-disabled detectors) are grouped as
+  "not applicable" instead of "skipped" in the text report.
+- HTTPS scans now fail fast once on an unverifiable target certificate instead
+  of emitting the same TLS error for every plugin; install the issuing CA via
+  `SSL_CERT_FILE` or fix the certificate. Runtime errors are grouped separately
+  from skipped/not-applicable entries in the text report.
+- Plug-and-play OOB via a stdlib interactsh client: `--oob-server interactsh`
+  (public fleet, explicit third-party opt-in), `interactsh://host`
+  (self-hosted), `--oob-token` / `GASH_OOB_TOKEN`, one session per scan. The
+  local listener and custom self-hosted API keep working; no public service is
+  ever selected by default.
+- Modern WAF handling: Cloudflare/Akamai/Imperva/DataDome/PerimeterX/AWS
+  WAF/Sucuri/F5/Kasada challenge pages are classified as untrusted even on
+  200. Aggressive mode now tries up to 16 class-aware variants (SQLi comments
+  and HEX/CHAR/CHR closures, percent/GBK quote and whitespace differentials,
+  alternative XSS tags plus entity/Unicode forms that preserve the canary,
+  shell `${IFS}`, encoded traversal, parser-confusion URLs), content-type
+  switching (JSON under text/plain/vendor types, form under multipart),
+  JSON/multipart parser differentials (duplicate keys, `\uXXXX` escapes,
+  multipart duplicate fields), path-normalization confusion, and IP-spoofing
+  headers, and requires two stable application responses. Challenge/429
+  responses are counted as `waf_challenges` without a host-wide plugin skip;
+  headless Chrome returns `payload_waf_challenge` / `control_waf_challenge`
+  instead of treating challenge DOM as target evidence.
 - Stored XSS two-step verification oracle (`internal/oracle/stored.go`) with
   isolated injection and rendering phases.
 - Smart Content & Directory Discovery (`internal/discovery/content-discovery.go`):
@@ -250,9 +374,19 @@ Dates are UTC.
 - Live crawl progress: the `Sayfa & Yüzey Keşfi` phase now reports
   `done/total sayfa · host/path` for every crawl attempt, so a long crawl
   (aggressive profile allows up to 500 pages) no longer looks frozen.
+- Honest plugin-status reporting: a plugin that stopped at its declared
+  `max_requests`/rate ceiling is reported as `partial` (`StatusPartial`) with a
+  separate `partial plugins` group and `partial_plugins` stat instead of being
+  merged into `skipped`, which made it look like the plugin never ran.
 
 ### Fixed
 
+- Interactive scan flow now honours its own "empty = automatic" report label:
+  leaving the report field empty writes `reports/<target>.json` and `.text`
+  (with the terminal summary kept), instead of producing no file at all. The
+  menu also passes the new `--report-stamp`, so repeated scans of one target
+  keep their own timestamped report instead of overwriting the previous one;
+  the flag stays opt-in on the CLI to keep deterministic names for CI diffing.
 - Benchmark `injectParam` fallback was nondeterministic because it selected the
   first key from a Go map; keys are now sorted, fixing the flaky
   `TestInjectParamFallbacks`.

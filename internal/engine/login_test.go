@@ -333,3 +333,55 @@ func TestEngineLoginExplicitAuthWins(t *testing.T) {
 		}
 	}
 }
+
+// TestEngineLoginDoesNotLeakAcrossRuns: bulk scans reuse one Engine, so a
+// login-derived session must stay inside its own Run. The declared auth
+// context and the requires_auth gate are restored afterwards.
+func TestEngineLoginDoesNotLeakAcrossRuns(t *testing.T) {
+	s := &loginTargetServer{}
+	srv := httptest.NewServer(s.handler(t))
+	defer srv.Close()
+
+	reg := newLoginTestRegistry(t)
+	declared := auth.New()
+	if err := declared.ParseCookie("theme=base"); err != nil {
+		t.Fatal(err)
+	}
+	cfg := DefaultConfig()
+	cfg.Active = true
+	cfg.Auth = declared
+	cfg.Login = &auth.LoginOptions{
+		LoginURL: srv.URL + "/login",
+		User:     "admin",
+		Pass:     "S3cretVer!li",
+	}
+	e := New(reg, cfg)
+	if _, err := e.Run(context.Background(), srv.URL); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if e.cfg.Auth != declared {
+		t.Fatal("Run declared auth pointer'ını geri yüklemeli")
+	}
+	if _, ok := declared.Cookies["sid"]; ok {
+		t.Fatalf("login cookie'si çağıranın bağlamına sızdı: %+v", declared.Cookies)
+	}
+	if declared.Cookies["theme"] != "base" {
+		t.Fatalf("açık cookie korunmalı: %+v", declared.Cookies)
+	}
+	if !e.cfg.HasAuth {
+		t.Fatal("açık kimlik varken HasAuth kapısı açık kalmalı")
+	}
+
+	// No declared auth: after a successful login run the engine must not keep
+	// either the derived context or the gate for the next target.
+	cfg2 := DefaultConfig()
+	cfg2.Active = true
+	cfg2.Login = cfg.Login
+	e2 := New(newLoginTestRegistry(t), cfg2)
+	if _, err := e2.Run(context.Background(), srv.URL); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if e2.cfg.Auth != nil || e2.cfg.HasAuth {
+		t.Fatalf("login türevi sonraki Run'a sızdı: auth=%v hasAuth=%v", e2.cfg.Auth, e2.cfg.HasAuth)
+	}
+}

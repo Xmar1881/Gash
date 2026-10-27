@@ -1,0 +1,9 @@
+{
+  "name": "file-access error also present for the neutral value",
+  "target": "http://example.com/download?file=..%2f..%2fetc%2fpasswd",
+  "status": 500,
+  "headers": {"Content-Type": "text/html"},
+  "body": "<html><body>Warning: fopen(readme.txt): No such file or directory</body></html>",
+  "control_body": "<html><body>Warning: fopen(readme.txt): No such file or directory</body></html>",
+  "expected_verdict": "reject"
+}

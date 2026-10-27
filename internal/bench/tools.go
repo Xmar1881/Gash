@@ -82,7 +82,9 @@ func RunGash(ctx context.Context, bin, repoDir, target, auth string, args []stri
 	// candidates stay unscored unless the dataset explicitly opts in with
 	// --show-tentative. The total (firm+tentative) is still recorded.
 	outPath := filepath.Join(tmpDir, fmt.Sprintf("gash-%s.json", sanitize(target+auth)))
-	cmdArgs := []string{"scan", "--target", target, "--format", "json", "--output", outPath}
+	// Local fixture lab: never route benchmark traffic through the operator's
+	// auto-detected proxy pool, which would make localhost unreachable.
+	cmdArgs := []string{"scan", "--target", target, "--format", "json", "--output", outPath, "--no-proxy"}
 	cmdArgs = append(cmdArgs, args...)
 	run.Command = redactedCommand(bin, cmdArgs)
 

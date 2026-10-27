@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/Xmar1881/Gash/internal/detector"
 	"github.com/Xmar1881/Gash/internal/discovery"
@@ -50,6 +51,11 @@ const (
 	// jsMaxSourceMapFetch tarama başına çekilecek kaynak haritası tavanı.
 	jsMaxSourceMapFetch = 5
 )
+
+// jsReconBudget caps the follow-up crawl and source-map fetches so a slow or
+// blocked proxy pool cannot spend the whole scan deadline in JS recon.
+// Variable (not const) so tests can shorten it.
+var jsReconBudget = 90 * time.Second
 
 // JSRecon analyzes the crawler's JavaScript inventory.
 // What: GASH-067 detector: masked secret findings plus harvested surface.
@@ -92,6 +98,8 @@ func (JSRecon) Run(ctx context.Context, env *detector.Env) (detector.Result, err
 	if env == nil || env.Probe == nil {
 		return res, nil
 	}
+	reconCtx, cancel := context.WithTimeout(ctx, jsReconBudget)
+	defer cancel()
 	stats["js_files_fetched"] = env.Crawl.JSFilesFetched
 	targetParsed, err := url.Parse(strings.TrimSpace(env.Target))
 	if err != nil || targetParsed.Host == "" {
@@ -127,7 +135,7 @@ func (JSRecon) Run(ctx context.Context, env *detector.Env) (detector.Result, err
 	}
 
 	for _, src := range env.Crawl.JSSources {
-		if ctx.Err() != nil {
+		if reconCtx.Err() != nil {
 			break
 		}
 		rep := discovery.AnalyzeJS(src.URL, src.Body)
@@ -183,7 +191,7 @@ func (JSRecon) Run(ctx context.Context, env *detector.Env) (detector.Result, err
 			// 1 sayfa, derinlik 0: endpoint'in kendisi taranır, yeni BFS YOK;
 			// JS recon tekrarlanmaz — çift istek/çift bulgu olmaz. Sınır ve
 			// kapsam kararı motorun (FollowCrawl) sorumluluğundadır.
-			points, ferr := env.FollowCrawl(ctx, ep.Resolved)
+			points, ferr := env.FollowCrawl(reconCtx, ep.Resolved)
 			if ferr != nil || len(points) == 0 {
 				continue
 			}
@@ -193,13 +201,13 @@ func (JSRecon) Run(ctx context.Context, env *detector.Env) (detector.Result, err
 		}
 
 		for _, mapURL := range rep.SourceMaps {
-			if mapsFetched >= jsMaxSourceMapFetch || ctx.Err() != nil {
+			if mapsFetched >= jsMaxSourceMapFetch || reconCtx.Err() != nil {
 				break
 			}
 			if !allowed(mapURL) {
 				continue
 			}
-			pctx := plugin.WithPlugin(ctx, PluginIDJSRecon, true, nil)
+			pctx := plugin.WithPlugin(reconCtx, PluginIDJSRecon, true, nil)
 			resp, rerr := env.Probe.Send(pctx, http.MethodGet, mapURL, nil, nil)
 			if rerr != nil {
 				if errors.Is(rerr, plugin.ErrBudgetExceeded) {
@@ -216,6 +224,9 @@ func (JSRecon) Run(ctx context.Context, env *detector.Env) (detector.Result, err
 				addSecret(s)
 			}
 		}
+	}
+	if errors.Is(reconCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+		stats["js_recon_budget_exhausted"] = 1
 	}
 	stats["js_secrets_found"] = len(res.Findings)
 	return res, nil

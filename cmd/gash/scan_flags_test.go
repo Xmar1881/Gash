@@ -431,3 +431,36 @@ func TestWriteScanReportsOutputDir(t *testing.T) {
 		t.Fatalf("html report not written: %v", err)
 	}
 }
+
+// TestWriteScanReportsReportStamp: --report-stamp ile rapor adı zaman damgalı
+// olur; aynı hedefin ikinci taraması ilk raporu ezmez.
+// What: Sabit adlı dosya yazılmamalı, damgalı tek dosya oluşmalı.
+// Why: Ruthinpanto koşusunda ikinci tarama ilk raporu ezmişti.
+func TestWriteScanReportsReportStamp(t *testing.T) {
+	tmpDir := t.TempDir()
+	rep := &engine.Report{Target: "http://example.com", ScanID: "test_scan"}
+	opts := reporter.Options{Target: "http://example.com"}
+
+	cmd, _, err := newRoot().Find([]string{"scan"})
+	if err != nil {
+		t.Fatalf("scan komutu bulunamadı: %v", err)
+	}
+	if err := cmd.Flags().Set("report-stamp", "true"); err != nil {
+		t.Fatalf("report-stamp ayarlanamadı: %v", err)
+	}
+	if err := writeScanReports(cmd, rep, []string{"json", "text"}, opts, "", tmpDir); err != nil {
+		t.Fatalf("writeScanReports failed: %v", err)
+	}
+
+	base := targetReportBaseName("http://example.com")
+	if _, err := os.Stat(filepath.Join(tmpDir, base+".json")); err == nil {
+		t.Fatalf("damgalı modda sabit adlı rapor yazılmamalı: %s.json", base)
+	}
+	matches, err := filepath.Glob(filepath.Join(tmpDir, base+"-*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("tek zaman damgalı rapor bekleniyordu, bulunan: %v", matches)
+	}
+}

@@ -1,0 +1,10 @@
+{
+  "name": "path segment reflected into an event handler attribute",
+  "target": "http://example.com/profile/gash_a1b2c3d4",
+  "status": 200,
+  "headers": {"Content-Type": "text/html"},
+  "body": "<html><body><img src=x onerror=alert(gash_a1b2c3d4)></body></html>",
+  "control_body": "<html><body><p>no profile</p></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "static-execution-evidence"
+}

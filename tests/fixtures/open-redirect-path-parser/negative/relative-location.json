@@ -1,0 +1,10 @@
+{
+  "name": "relative location is not an open redirect",
+  "target": "http://example.com//gash-a1b2c3d4.example/",
+  "status": 302,
+  "headers": {"Content-Type": "text/html", "Location": "/login"},
+  "payload_host": "gash-a1b2c3d4.example",
+  "control_status": 200,
+  "control_body": "<html><body>home</body></html>",
+  "expected_verdict": "reject"
+}

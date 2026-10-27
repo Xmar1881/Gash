@@ -37,6 +37,11 @@ func TestResultOutcome(t *testing.T) {
 			want: OutcomeBlocked,
 		},
 		{
+			name: "200 challenge page is blocked",
+			res:  Result{Triggered: false, ControlClean: true, PayloadStatus: 200, ControlStatus: 200, PayloadChallenge: true},
+			want: OutcomeBlocked,
+		},
+		{
 			name: "throttle is blocked",
 			res:  Result{Triggered: false, ControlClean: true, PayloadStatus: 200, ControlStatus: 429},
 			want: OutcomeBlocked,
@@ -119,6 +124,15 @@ func TestResultReasonAndVerifyError(t *testing.T) {
 	clean := Result{ControlClean: true, PayloadStatus: 200, ControlStatus: 200}
 	if err := clean.VerifyError(); err != nil {
 		t.Fatalf("VerifyError() on clean proof = %v, want nil", err)
+	}
+}
+
+func TestChallengeReason(t *testing.T) {
+	if got := (Result{PayloadChallenge: true}).Reason(); got != "payload_waf_challenge" {
+		t.Fatalf("payload challenge reason = %q", got)
+	}
+	if got := (Result{ControlChallenge: true}).Reason(); got != "control_waf_challenge" {
+		t.Fatalf("control challenge reason = %q", got)
 	}
 }
 

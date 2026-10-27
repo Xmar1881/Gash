@@ -1,11 +1,11 @@
 SPDX-License-Identifier: AGPL-3.0-only | Copyright (C) 2026 Xmar1881 / GASH contributors | Modul: github.com/Xmar1881/Gash
 
-# Gash - Kanit Standardi (Faz 1, refreshed 2026-10-18)
+# Gash - Kanit Standardi (guncel, 2026-10-27)
 
-- Durum: Faz 1 temel dokuman, kod mevcut (283 dedektor, GASH-001..072 + 100 rare exposure plugin + engine-owned flow screen GASH-068). benioku.txt 3.3 tablosunun genisletilmis hali.
+- Durum: `v0.1.0-dev`; kod mevcut (338 plugin: 275 Tier 1 YAML + 62 Tier 2 JS + 1 Tier 3 native; 13 engine detector). Bu dokuman Faz 1'de dondurulan kanit standardini korur; guncel uygulama durumu README ve docs/architecture.md §0.2'dedir.
 - Modul: github.com/Xmar1881/Gash. Lisans: AGPL-3.0-only.
 - Es dosya: docs/architecture.md (oracle arayuzleri bolum 6, Finding semasi bolum 10, OOB protokolu bolum 9).
-- Faz kapisi: Onay beklenir. Faz 2'ye gecilmez, kod yazilmaz.
+- Faz kapisi: tarihsel; onay verildi, kod ve testler mevcut. Guncel dogrulama: gofmt, go vet, go build, go test -count=1 ./...
 - Faz 0'dan sapma: YOK.
 
 ## 0. Teslim formati haritasi

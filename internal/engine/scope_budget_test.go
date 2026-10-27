@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Xmar1881/Gash/internal/plugin"
@@ -23,6 +24,32 @@ func mustURL(t *testing.T, raw string) *url.URL {
 		t.Fatalf("parse %q: %v", raw, err)
 	}
 	return u
+}
+
+func TestScopeManagerConcurrentCIDR(t *testing.T) {
+	sm := NewScopeManager([]string{"127.0.0.0/8"})
+	urls := make([]*url.URL, 0, 32)
+	for i := 1; i <= 32; i++ {
+		u, err := url.Parse(fmt.Sprintf("http://127.0.0.%d/", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		urls = append(urls, u)
+	}
+	var wg sync.WaitGroup
+	for _, u := range urls {
+		wg.Add(1)
+		go func(target *url.URL) {
+			defer wg.Done()
+			for i := 0; i < 20; i++ {
+				if err := sm.CheckScope(context.Background(), target); err != nil {
+					t.Errorf("in-scope CIDR host rejected: %v", err)
+					return
+				}
+			}
+		}(u)
+	}
+	wg.Wait()
 }
 
 func TestParseEntryMatrix(t *testing.T) {

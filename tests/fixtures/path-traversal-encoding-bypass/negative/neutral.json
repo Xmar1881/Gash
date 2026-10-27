@@ -1,0 +1,9 @@
+{
+  "name": "neutral value is served normally",
+  "target": "http://example.com/download?file=readme.txt",
+  "status": 200,
+  "headers": {"Content-Type": "text/html"},
+  "body": "<html><body>Welcome</body></html>",
+  "control_body": "<html><body>Welcome</body></html>",
+  "expected_verdict": "reject"
+}

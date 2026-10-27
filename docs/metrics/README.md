@@ -221,6 +221,16 @@ The gate is enforced by `TestMetricGate` in `tests/plugins`, not by review conve
 | caa-dns-check (proto GASH-027, unit-scoped) | [caa-dns-check.md](caa-dns-check.md) |
 | content-discovery (engine-recon GASH-028, mock-fixture scoped) | [content-discovery-2026-10-16.md](content-discovery-2026-10-16.md) |
 | smuggle-differential (engine-recon GASH-033, mock-fixture scoped) | [smuggle-differential.md](smuggle-differential.md) |
+| sqli-xml-body-error | [sqli-xml-body-error.md](sqli-xml-body-error.md) |
+| xpath-xml-body-error | [xpath-xml-body-error.md](xpath-xml-body-error.md) |
+| sqli-multipart-error | [sqli-multipart-error.md](sqli-multipart-error.md) |
+| xxe-xml-body-oob | [xxe-xml-body-oob.md](xxe-xml-body-oob.md) |
+| xxe-svg-upload-oob | [xxe-svg-upload-oob.md](xxe-svg-upload-oob.md) |
+| xss-path-segment | [xss-path-segment.md](xss-path-segment.md) |
+| xss-reflected-header | [xss-reflected-header.md](xss-reflected-header.md) |
+| open-redirect-path-parser | [open-redirect-path-parser.md](open-redirect-path-parser.md) |
+| nosql-nested-json-operator | [nosql-nested-json-operator.md](nosql-nested-json-operator.md) |
+| path-traversal-encoding-bypass | [path-traversal-encoding-bypass.md](path-traversal-encoding-bypass.md) |
 
 ## Lab Reports
 

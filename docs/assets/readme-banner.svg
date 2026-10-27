@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-label="Gash — evidence-first web security scanning">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <!-- Copyright (C) 2026 Xmar1881 / GASH contributors -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="0.55" stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#34d399"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.82" cy="0.25" r="0.55">
+      <stop offset="0" stop-color="#10b981" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#10b981" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#1f2937" stroke-width="0.6"/>
+    </pattern>
+  </defs>
+
+  <rect width="1280" height="320" fill="url(#bg)"/>
+  <rect width="1280" height="320" fill="url(#grid)" opacity="0.55"/>
+  <rect width="1280" height="320" fill="url(#glow)"/>
+
+  <circle cx="1120" cy="74" r="150" fill="none" stroke="#1f2937" stroke-width="1.5" opacity="0.7"/>
+  <circle cx="1120" cy="74" r="108" fill="none" stroke="#1f2937" stroke-width="1.5" opacity="0.8"/>
+  <circle cx="1120" cy="74" r="66" fill="none" stroke="url(#accent)" stroke-width="2" opacity="0.55"/>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace">
+    <text x="72" y="136" font-size="86" font-weight="800" fill="#f9fafb" letter-spacing="6">GASH</text>
+    <text x="76" y="180" font-size="25" fill="#34d399" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif">Evidence-first web security scanning</text>
+    <text x="76" y="214" font-size="17" fill="#94a3b8" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif">Plugins propose. Engine-owned oracles decide. Findings you can defend.</text>
+  </g>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15">
+    <rect x="76" y="244" width="108" height="34" rx="17" fill="#0f2a22" stroke="#14532d"/>
+    <text x="130" y="266" fill="#6ee7b7" text-anchor="middle">Go 1.26+</text>
+    <rect x="196" y="244" width="134" height="34" rx="17" fill="#0b2230" stroke="#164e63"/>
+    <text x="263" y="266" fill="#67e8f9" text-anchor="middle">338 plugins</text>
+    <rect x="342" y="244" width="152" height="34" rx="17" fill="#1e1b4b" stroke="#312e81"/>
+    <text x="418" y="266" fill="#c7d2fe" text-anchor="middle">AGPL-3.0-only</text>
+  </g>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" fill="#cbd5e1">
+    <line x1="852" y1="86" x2="852" y2="242" stroke="#334155" stroke-width="2" stroke-dasharray="4 6"/>
+    <circle cx="852" cy="86" r="8" fill="#34d399"/>
+    <text x="878" y="91">Candidate</text>
+    <circle cx="852" cy="138" r="8" fill="#22d3ee"/>
+    <text x="878" y="143">Oracle</text>
+    <circle cx="852" cy="190" r="8" fill="#818cf8"/>
+    <text x="878" y="195">Evidence</text>
+    <circle cx="852" cy="242" r="8" fill="#fbbf24"/>
+    <text x="878" y="247">Finding</text>
+  </g>
+</svg>
