@@ -164,7 +164,7 @@ name: My XSS Check
 description: Detects reflected XSS in search parameter
 severity: high
 tags: [xss, reflected]
-safe: true                # passive by default
+safe: true                # passive plugin (no state change)
 deep: false               # not browser-dependent
 active: false             # no state-changing requests
 phase: probe              # probe | active | exploit

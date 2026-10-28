@@ -275,3 +275,18 @@ func TestFullRunIncludesProtoFindings(t *testing.T) {
 		t.Fatalf("Run raporu GASH-024 içermeli: %+v", rep.Findings)
 	}
 }
+
+// TestTLSFailClosedPreflightReusesTechGet proves the certificate verdict comes
+// from the runtime preflight (no duplicate request) and still fails closed.
+func TestTLSFailClosedPreflightReusesTechGet(t *testing.T) {
+	srv := startShortLivedTLSServer(t)
+	dir := writeE2EPlugin(t)
+	reg := plugin.NewRegistry()
+	if _, err := loader.Discover([]string{dir}, reg); err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	e := New(reg, DefaultConfig())
+	if _, err := e.Run(context.Background(), srv.URL); err == nil || !strings.Contains(err.Error(), "TLS certificate verification failed") {
+		t.Fatalf("self-signed TLS target must fail closed, got %v", err)
+	}
+}

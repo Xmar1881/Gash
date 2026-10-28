@@ -1,0 +1,11 @@
+{
+  "name": "Dolibarr Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body><link rel=\"stylesheet\" href=\"/theme/eldy/style.css\"></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

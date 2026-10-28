@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/products/gocd-version-disclosure.yaml
+# What: GoCD Fingerprint Disclosure (banner-only fingerprint).
+# Why: Banner-only product fingerprint; tentative evidence, never version-exploit proof.
+
+id: gocd-version-disclosure
+name: GoCD Fingerprint Disclosure
+description: Detects the GoCD build_number field on the public version API; banner-only fingerprint, tentative confidence.
+author: GASH contributors
+severity: low
+tags: [version, fingerprint, disclosure, gocd]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: discovery
+order: 282
+api_version: "1.0"
+tests: tests/fixtures/gocd-version-disclosure/
+request:
+  method: GET
+  paths:
+    - "/go/api/version"
+oracle:
+  name: version
+  params:
+    mode: banner
+    banner_regex: "(?is)\\\"build_number\\\"\\s*:"

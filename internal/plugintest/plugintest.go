@@ -201,17 +201,18 @@ func Evaluate(ctx context.Context, oracleName string, f Fixture, oobEnabled bool
 			}
 		}
 		return o.Verify(ctx, cls, false, oracle.HeaderParams{
-			Headers:         toHeader(f.Headers),
-			Mode:            mode,
-			RequestHeaders:  reqHeaders,
-			Body:            f.Body,
-			Status:          f.Status,
-			CanaryHost:      getStringParam(oracleParams, "canary_host", canary),
-			ControlBody:     f.ControlBody,
-			HeaderName:      getStringParam(oracleParams, "header_name", ""),
-			Policy:          getStringParam(oracleParams, "policy", ""),
-			RequiredTokens:  getStringSliceParam(oracleParams, "required_tokens"),
-			ForbiddenTokens: getStringSliceParam(oracleParams, "forbidden_tokens"),
+			Headers:             toHeader(f.Headers),
+			Mode:                mode,
+			RequestHeaders:      reqHeaders,
+			Body:                f.Body,
+			Status:              f.Status,
+			CanaryHost:          getStringParam(oracleParams, "canary_host", canary),
+			ControlBody:         f.ControlBody,
+			HeaderName:          getStringParam(oracleParams, "header_name", ""),
+			Policy:              getStringParam(oracleParams, "policy", ""),
+			RequiredTokens:      getStringSliceParam(oracleParams, "required_tokens"),
+			ForbiddenTokens:     getStringSliceParam(oracleParams, "forbidden_tokens"),
+			SkipIfHeaderMissing: getBoolParam(oracleParams, "skip_if_header_missing", false),
 		})
 	case "redirect":
 		var o oracle.RedirectOracle
@@ -425,6 +426,18 @@ func getStringSliceParam(params map[string]any, key string) []string {
 		}
 	}
 	return nil
+}
+
+func getBoolParam(params map[string]any, key string, defaultVal bool) bool {
+	if params == nil {
+		return defaultVal
+	}
+	if v, ok := params[key]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return defaultVal
 }
 
 func getFloat64Param(params map[string]any, key string, defaultVal float64) float64 {

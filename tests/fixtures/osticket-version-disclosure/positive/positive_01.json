@@ -1,0 +1,11 @@
+{
+  "name": "osTicket Fingerprint Disclosure marker",
+  "target": "http://example.com/scp/login.php",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><head><title>osTicket</title></head><body>staff login</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

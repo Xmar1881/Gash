@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/permissions-policy-geolocation-missing.yaml
+# What: Permissions-Policy geolocation restriction check.
+# Why: Feature policy should explicitly gate sensitive browser APIs; presence policy owns missing headers.
+
+id: permissions-policy-geolocation-missing
+name: Permissions-Policy Geolocation Missing
+description: Detects an existing Permissions-Policy that does not restrict geolocation access.
+author: GASH contributors
+severity: low
+tags: [headers, permissions-policy, privacy, hardening, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 214
+api_version: "1.0"
+tests: tests/fixtures/permissions-policy-geolocation-missing/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: Permissions-Policy
+    policy: required
+    required_tokens: [geolocation]
+    skip_if_header_missing: true

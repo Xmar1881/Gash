@@ -1,0 +1,11 @@
+{
+  "name": "Gerrit Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body><a href=\"/gerrit/\">Gerrit Code Review</a></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

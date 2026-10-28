@@ -28,6 +28,12 @@ func TestNewClientBoundsResponseHeaders(t *testing.T) {
 	if got := c.Transport().MaxResponseHeaderBytes; got != 1<<20 {
 		t.Fatalf("default response header limit = %d, want 1MiB", got)
 	}
+	if got := c.Transport().MaxIdleConnsPerHost; got < 32 {
+		t.Fatalf("idle pool per host = %d, want >= 32", got)
+	}
+	if got := c.Transport().MaxIdleConns; got < 200 {
+		t.Fatalf("idle pool = %d, want >= 200", got)
+	}
 	custom := &http.Transport{MaxResponseHeaderBytes: 4096}
 	c2 := NewClient(Options{Transport: custom})
 	if got := c2.Transport().MaxResponseHeaderBytes; got != 4096 {

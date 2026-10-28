@@ -23,7 +23,7 @@ import (
 // MaxAttemptsForPlugin is the total variant ceiling, including the generic
 // header/HPP/encoding attempts and the modern parser-discrepancy slots.
 // Aggressive-only and still bounded by the scan request budget.
-const MaxAttemptsForPlugin = 24
+const MaxAttemptsForPlugin = 28
 
 var (
 	xssCallRe   = regexp.MustCompile(`(?i)[A-Za-z_$][A-Za-z0-9_$]*\s*\([^)]*\)`)
@@ -82,6 +82,15 @@ func BuildAttemptsForPlugin(rawURL string, headers map[string]string, body []byt
 	}
 	if mp := multipartModernAttempts(rawURL, baseHeaders, body); len(mp) > 0 {
 		extra = append(extra, mp...)
+	}
+	if hdr := headerValueAttempts(rawURL, baseHeaders, body, class, mutate); len(hdr) > 0 {
+		extra = append(extra, hdr...)
+	}
+	if gz := gzipAttempt(rawURL, baseHeaders, body); len(gz) > 0 {
+		extra = append(extra, gz...)
+	}
+	if ck := cookieVersionAttempt(rawURL, baseHeaders, body); len(ck) > 0 {
+		extra = append(extra, ck...)
 	}
 	if pad := paddingAttempt(rawURL, baseHeaders, body); len(pad) > 0 {
 		extra = append(extra, pad...)

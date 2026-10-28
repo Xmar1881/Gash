@@ -148,8 +148,9 @@ green builds.
 
 - Always pass `--scope` for non-local targets; external targets without
   scope only warn (they still scan — scope is your allowlist proof).
-- Keep `--safe` (default) unless the pipeline explicitly approves active
-  payloads; `--active`/`--deep`/`--oob-server` are opt-in.
+- Keep `--profile safe` (passive-only) unless the pipeline explicitly approves
+  active payloads. The CLI default is `standard` (controlled active);
+  `--active`/`--deep`/`--oob-server` remain explicit opt-ins.
 - Authenticated scans need `--auth-header`/`--cookie`/`--basic-auth`
   (see `docs/auth.md`); secrets must come from CI secret storage, never
   from the repository. Values never appear in reports (redacted summaries only).

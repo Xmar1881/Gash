@@ -1,0 +1,10 @@
+{
+  "name": "no CSP header at all",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body>hello</body></html>",
+  "expected_verdict": "reject"
+}

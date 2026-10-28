@@ -17,6 +17,17 @@ import (
 func runMenu(t *testing.T, input string) (string, error) {
 	t.Helper()
 	t.Setenv("GASH_LANG", "tr")
+	t.Setenv("GASH_MENU_SETTINGS", filepath.Join(t.TempDir(), "menu-settings.json"))
+	var out bytes.Buffer
+	err := runInteractiveMenu(strings.NewReader(input), &out)
+	return out.String(), err
+}
+
+// runMenuWithSettings keeps one settings file across multiple menu sessions.
+func runMenuWithSettings(t *testing.T, settingsPath, input string) (string, error) {
+	t.Helper()
+	t.Setenv("GASH_LANG", "tr")
+	t.Setenv("GASH_MENU_SETTINGS", settingsPath)
 	var out bytes.Buffer
 	err := runInteractiveMenu(strings.NewReader(input), &out)
 	return out.String(), err
@@ -25,6 +36,7 @@ func runMenu(t *testing.T, input string) (string, error) {
 // runMenuLang: menüyü --lang bayrağıyla belirtilen dilde çalıştırır.
 func runMenuLang(t *testing.T, langFlag, input string) (string, error) {
 	t.Helper()
+	t.Setenv("GASH_MENU_SETTINGS", filepath.Join(t.TempDir(), "menu-settings.json"))
 	var out bytes.Buffer
 	err := runInteractiveMenuLang(strings.NewReader(input), &out, langFlag)
 	return out.String(), err
@@ -50,6 +62,156 @@ func TestMenuExit(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestMenuShowsLogo pins the main-menu wordmark so a chrome refactor cannot
+// silently drop it.
+func TestMenuShowsLogo(t *testing.T) {
+	out, err := runMenu(t, "q\n")
+	if err != nil {
+		t.Fatalf("menu logo: %v", err)
+	}
+	if !strings.Contains(out, "██████╗") || !strings.Contains(out, "GASH") {
+		t.Fatalf("main menu must show the GASH wordmark:\n%s", out)
+	}
+}
+
+// TestMenuSettingsDefaultProfileProxy: persisted defaults are offered by the
+// scan flow without extra prompts and reach the command preview.
+func TestMenuSettingsDefaultProfileProxy(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "menu-settings.json")
+	if err := os.WriteFile(settingsPath, []byte(`{"profile":"safe","proxy_mode":"off"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runMenuWithSettings(t, settingsPath, "1\nhttp://127.0.0.1\n\n\n\n\nh\nq\n")
+	if err != nil {
+		t.Fatalf("scan with settings defaults: %v", err)
+	}
+	for _, want := range []string{"--profile safe", "--no-proxy"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("scan preview missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestMenuSelectionPersistsAndScanUsesIt: the Plugins tab editor writes the
+// only-list to disk and the next scan flow adds --only-plugin.
+func TestMenuSelectionPersistsAndScanUsesIt(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "menu-settings.json")
+	out, err := runMenuWithSettings(t, settingsPath, "2\ns\na\nmissing-security-headers\n0\n0\nq\n")
+	if err != nil {
+		t.Fatalf("selection editor: %v", err)
+	}
+	if !strings.Contains(out, "1 plugin eklendi") {
+		t.Fatalf("selection add acknowledgement missing:\n%s", out)
+	}
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved menuSettings
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.PluginOnly) != 1 || saved.PluginOnly[0] != "missing-security-headers" {
+		t.Fatalf("saved only list = %+v", saved.PluginOnly)
+	}
+
+	out, err = runMenuWithSettings(t, settingsPath, "1\nhttp://127.0.0.1\n\nt\n\n\n\nh\nq\n")
+	if err != nil {
+		t.Fatalf("scan with selection: %v", err)
+	}
+	if !strings.Contains(out, "--only-plugin missing-security-headers") {
+		t.Fatalf("scan command must include --only-plugin:\n%s", out)
+	}
+	if !strings.Contains(out, "1 seçili") {
+		t.Fatalf("scan summary must show the selection:\n%s", out)
+	}
+}
+
+// TestMenuSettingsPersistLogo: the Settings screen toggles the persisted logo
+// and the next session starts without the wordmark.
+func TestMenuSettingsPersistLogo(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "menu-settings.json")
+	out, err := runMenuWithSettings(t, settingsPath, "2\ng\ng\n0\n0\nq\n")
+	if err != nil {
+		t.Fatalf("settings flow: %v", err)
+	}
+	if !strings.Contains(out, "Ayar kaydedildi") {
+		t.Fatalf("settings save acknowledgement missing:\n%s", out)
+	}
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved menuSettings
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.ShowLogo == nil || *saved.ShowLogo {
+		t.Fatalf("show_logo must persist as false: %+v", saved.ShowLogo)
+	}
+	out, err = runMenuWithSettings(t, settingsPath, "q\n")
+	if err != nil {
+		t.Fatalf("menu with logo off: %v", err)
+	}
+	if strings.Contains(out, "██████╗") {
+		t.Fatalf("logo must be hidden when show_logo=false:\n%s", out)
+	}
+}
+
+// TestMenuLogoAnimationGuard keeps animation out of pipes, tests, and the
+// explicit opt-out while leaving it on for interactive color terminals.
+func TestMenuLogoAnimationGuard(t *testing.T) {
+	t.Setenv("GASH_NO_ANIMATION", "")
+	s := &menuSession{th: theme{tty: true, color: true}}
+	if !s.logoAnimationEnabled() {
+		t.Fatal("interactive color terminal must animate")
+	}
+	s.th = theme{tty: true, color: false}
+	if s.logoAnimationEnabled() {
+		t.Fatal("NO_COLOR/dumb terminal must stay static")
+	}
+	s.th = theme{tty: false, color: true}
+	if s.logoAnimationEnabled() {
+		t.Fatal("piped output must stay static")
+	}
+	t.Setenv("GASH_NO_ANIMATION", "1")
+	s.th = theme{tty: true, color: true}
+	if s.logoAnimationEnabled() {
+		t.Fatal("GASH_NO_ANIMATION=1 must disable animation")
+	}
+}
+
+func TestMenuLogoHighlightFrame(t *testing.T) {
+	s := &menuSession{th: theme{color: true, truecolor: true}}
+	base := s.logoLine(0, gashLogoLines[0], false)
+	if !strings.Contains(base, "139;92;246") {
+		t.Fatalf("base frame must use the brand gradient: %q", base)
+	}
+	hot := s.logoLine(0, gashLogoLines[0], true)
+	if !strings.Contains(hot, "236;254;255") {
+		t.Fatalf("highlight frame must use the bright sweep color: %q", hot)
+	}
+}
+
+// TestPrintLogoAnimatesOnTTY exercises the real animation path once and pins
+// the in-place repaint escape plus the final static frame.
+func TestPrintLogoAnimatesOnTTY(t *testing.T) {
+	t.Setenv("GASH_NO_ANIMATION", "")
+	var out bytes.Buffer
+	s := &menuSession{out: &out, th: theme{tty: true, color: true, truecolor: true}}
+	s.printLogo()
+	got := out.String()
+	if !strings.Contains(got, "\033[6A") {
+		t.Fatalf("animated logo must repaint in place:\n%q", got)
+	}
+	if !strings.Contains(got, "236;254;255") {
+		t.Fatalf("animated logo must contain the bright sweep frame:\n%q", got)
+	}
+	if !strings.Contains(got, "139;92;246") {
+		t.Fatalf("animated logo must settle on the static gradient:\n%q", got)
 	}
 }
 
@@ -426,6 +588,33 @@ func TestMenuScanAutoReport(t *testing.T) {
 	}
 }
 
+// TestMenuScanSummaryShowsProfileBudget: the pre-scan summary must state the
+// limits the engine will enforce, read from the same config profiles.
+func TestMenuScanSummaryShowsProfileBudget(t *testing.T) {
+	out, err := runMenu(t, "1\nhttp://127.0.0.1\n\nt\n\n\nh\nq\n")
+	if err != nil {
+		t.Fatalf("menu scan budget summary: %v", err)
+	}
+	if !strings.Contains(out, "Bütçe") {
+		t.Fatalf("summary must label the budget line:\n%s", out)
+	}
+	if !strings.Contains(out, "2000/hedef · 10 istek/sn · 50 sayfa · derinlik 3") {
+		t.Fatalf("summary must show the standard profile limits:\n%s", out)
+	}
+}
+
+// TestMenuStatusShowsEngineTuning: the status tab surfaces engine defaults
+// (request budget and WAF mutation ceiling) instead of hiding them in docs.
+func TestMenuStatusShowsEngineTuning(t *testing.T) {
+	out, err := runMenu(t, "5\n0\nq\n")
+	if err != nil {
+		t.Fatalf("menu status engine line: %v", err)
+	}
+	if !strings.Contains(out, "Motor") || !strings.Contains(out, "WAF 28 varyant") {
+		t.Fatalf("status must show engine tuning:\n%s", out)
+	}
+}
+
 // TestMenuScanOutputFormat: a typed report path selects the matching writer
 // instead of writing the default text body into report.json.
 func TestMenuScanOutputFormat(t *testing.T) {
@@ -441,6 +630,7 @@ func TestMenuScanOutputFormat(t *testing.T) {
 // TestMenuStatusViewerRefusesNonText ensures the "view latest" action never
 // dumps raw JSON/HTML into the terminal; it names the file instead.
 func TestMenuStatusViewerRefusesNonText(t *testing.T) {
+	t.Setenv("GASH_MENU_SETTINGS", filepath.Join(t.TempDir(), "menu-settings.json"))
 	dir := t.TempDir()
 	jsonPath := filepath.Join(dir, "report.json")
 	if err := os.WriteFile(jsonPath, []byte(`{"findings":[]}`), 0o644); err != nil {

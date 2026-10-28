@@ -1,0 +1,10 @@
+{
+  "name": "header absent; presence check owns the finding",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body>hello</body></html>",
+  "expected_verdict": "reject"
+}

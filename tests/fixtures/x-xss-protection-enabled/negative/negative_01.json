@@ -1,0 +1,11 @@
+{
+  "name": "compliant policy for x-xss-protection-enabled",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html",
+    "X-XSS-Protection": "0"
+  },
+  "body": "<html><body><h1>Welcome</h1><p>Static page.</p></body></html>",
+  "expected_verdict": "reject"
+}

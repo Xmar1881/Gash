@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/x-rack-cache-disclosure.yaml
+# What: Rails cache status disclosure header check.
+# Why: Cache-state metadata supports cache-behavior probing; deterministic header presence.
+
+id: x-rack-cache-disclosure
+name: X-Rack-Cache Disclosure
+description: Detects an X-Rack-Cache response header exposing Rails cache behavior.
+author: GASH contributors
+severity: info
+tags: [headers, disclosure, rails, cache, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 227
+api_version: "1.0"
+tests: tests/fixtures/x-rack-cache-disclosure/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: X-Rack-Cache
+    policy: forbidden

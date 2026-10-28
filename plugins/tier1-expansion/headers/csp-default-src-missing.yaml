@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/csp-default-src-missing.yaml
+# What: CSP fallback-directive hardening check (GASH-019 family).
+# Why: A CSP without default-src leaves unlisted fetch directives unrestricted;
+#   the presence check owns the missing-header finding, so this check only
+#   evaluates an existing policy.
+
+id: csp-default-src-missing
+name: CSP default-src Missing
+description: Detects an existing Content-Security-Policy that omits the default-src fallback directive, leaving unlisted fetch directives unrestricted.
+author: GASH contributors
+severity: low
+tags: [headers, csp, hardening, misconfig, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 201
+api_version: "1.0"
+tests: tests/fixtures/csp-default-src-missing/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: Content-Security-Policy
+    policy: required
+    required_tokens: [default-src]
+    skip_if_header_missing: true

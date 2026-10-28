@@ -1,0 +1,11 @@
+{
+  "name": "NATS Fingerprint Disclosure marker",
+  "target": "http://example.com/varz",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "{\"server_id\":\"abc\",\"server_name\":\"nats-1\",\"version\":\"2.10.14\",\"host\":\"0.0.0.0\"}",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

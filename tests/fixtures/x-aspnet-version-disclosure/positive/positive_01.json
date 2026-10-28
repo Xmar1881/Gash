@@ -1,0 +1,12 @@
+{
+  "name": "policy violation for x-aspnet-version-disclosure",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html",
+    "X-AspNet-Version": "4.0.30319"
+  },
+  "body": "<html><body><h1>Welcome</h1><p>Static page.</p></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

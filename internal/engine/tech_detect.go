@@ -19,15 +19,18 @@ import (
 // What: Header, cookie-name, body-marker, and favicon-hash fingerprint.
 // Why: Chain gating needs runtime context; both fetches use the same policy,
 // auth context, scope, budget, redirect, and outer scan deadline as plugins.
-func (e *Engine) detectRuntimeTech(ctx context.Context, target string, client *probe.Client) {
+// The first GET doubles as the target preflight: a transport/scope failure is
+// returned so Run can fail fast instead of scheduling every plugin against an
+// unreachable target. A favicon failure is optional context and is ignored.
+func (e *Engine) detectRuntimeTech(ctx context.Context, target string, client *probe.Client) error {
 	e.detectedTech = map[string]bool{}
 	e.detectedCaps = map[string]bool{}
 	if client == nil {
-		return
+		return nil
 	}
 	u, err := url.Parse(target)
 	if err != nil || u.Host == "" {
-		return
+		return nil
 	}
 	detectCtx := plugin.WithPlugin(ctx, "engine-tech-detect", true, nil)
 	detectCtx = probe.WithNoWAFBypass(detectCtx)
@@ -35,7 +38,7 @@ func (e *Engine) detectRuntimeTech(ctx context.Context, target string, client *p
 		"User-Agent": "Gash-techfp/1.0",
 	}, nil)
 	if err != nil {
-		return
+		return err
 	}
 	body := resp.Body
 	if len(body) > 512*1024 {
@@ -52,11 +55,11 @@ func (e *Engine) detectRuntimeTech(ctx context.Context, target string, client *p
 	// Favicon: only when the page references it (one extra same-host GET).
 	if strings.Contains(strings.ToLower(string(body)), "favicon") {
 		favURL := (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: "/favicon.ico"}).String()
-		fresp, err := client.Send(detectCtx, http.MethodGet, favURL, map[string]string{
+		fresp, ferr := client.Send(detectCtx, http.MethodGet, favURL, map[string]string{
 			"User-Agent": "Gash-techfp/1.0",
 		}, nil)
-		if err != nil {
-			return
+		if ferr != nil {
+			return nil
 		}
 		fdata := fresp.Body
 		if len(fdata) > 64*1024 {
@@ -66,6 +69,7 @@ func (e *Engine) detectRuntimeTech(ctx context.Context, target string, client *p
 			e.detectedCaps["favicon:"+h[:16]] = true
 		}
 	}
+	return nil
 }
 
 // mergeSurfaceTech folds the runLive surface response into the same sets.

@@ -36,7 +36,7 @@ Oracle `redirect` against clean, SPA, WAF, encoded, and dynamic bodies.
 ## Lab Result
 
 Procedure: use the Juice Shop redirect endpoint from `docker-compose.lab.yml`,
-scan with default safe policy, expect the redirect parameter to confirm.
+scan with `--profile safe`, expect the redirect parameter to confirm.
 Status: pending manual run. Expected Precision 100 percent on this endpoint.
 
 ## Precision

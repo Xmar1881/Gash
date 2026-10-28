@@ -1,0 +1,11 @@
+{
+  "name": "CloudBeaver Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><head><title>CloudBeaver</title></head><body>login</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

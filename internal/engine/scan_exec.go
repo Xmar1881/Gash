@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -102,6 +103,14 @@ func ruleAndCWE(oracleName string) (string, string) {
 		return "GASH-025", "CWE-693"
 	case "tcp":
 		return "GASH-026", "CWE-200"
+	case "version":
+		return "GASH-021", "CWE-200"
+	case "verb-tamper":
+		return "GASH-036", "CWE-650"
+	case "upload-served":
+		return "GASH-038", "CWE-434"
+	case "middleware-bypass":
+		return "GASH-069", "CWE-288"
 	case "smuggle", "smuggling-differential", "smugglingdifferential":
 		return "GASH-033", "CWE-444"
 	default:
@@ -116,6 +125,45 @@ func ruleAndCWE(oracleName string) (string, string) {
 // documented evidence standards (docs/metrics/ssrf-blind-oob.md,
 // docs/metrics/idor-differential.md).
 func ruleForPlugin(pluginID, oracleName string) (string, string) {
+	return ruleForPluginMode(pluginID, oracleName, "")
+}
+
+// ruleForCandidate uses the candidate's oracle mode so error-oracle families
+// keep their documented rule IDs (path traversal, XPath, backup, exposure).
+func ruleForCandidate(pluginID string, cand plugin.Candidate, ev *oracle.Evidence) (string, string) {
+	mode := ""
+	if cand.OracleParams != nil {
+		mode = strings.ToLower(strings.TrimSpace(cand.OracleParams["mode"]))
+	}
+	if mode == "" && ev != nil && ev.Artifacts != nil {
+		mode = strings.ToLower(strings.TrimSpace(ev.Artifacts["mode"]))
+	}
+	return ruleForPluginMode(pluginID, cand.OracleName, mode)
+}
+
+func ruleForPluginMode(pluginID, oracleName, mode string) (string, string) {
+	// The shared error oracle exposes several distinct evidence families. The
+	// mode is authoritative before the plugin-ID heuristics.
+	switch mode {
+	case "path_traversal", "unix_passwd", "windows_ini", "include_error":
+		return "GASH-017", "CWE-22"
+	case "xpath":
+		return "GASH-034", "CWE-643"
+	case "backup_file":
+		return "GASH-037", "CWE-538"
+	case "phpinfo":
+		return "GASH-057", "CWE-200"
+	case "management_endpoint":
+		return "GASH-058", "CWE-200"
+	case "directory_listing":
+		return "GASH-059", "CWE-548"
+	case "ssi":
+		return "GASH-064", "CWE-97"
+	case "source_map":
+		return "GASH-066", "CWE-540"
+	case "critical_exposure", "content":
+		return "GASH-028", "CWE-200"
+	}
 	id := strings.ToLower(strings.TrimSpace(pluginID))
 	switch {
 	// Framework-specific detectors (GASH-069/070) must precede the generic
@@ -248,22 +296,16 @@ func (e *Engine) proxyConfig() ([]*url.URL, proxypool.Strategy, time.Duration, e
 // Why: Single live path serves CLI scans and engine e2e tests identically.
 // policy/client Run tarafından kurulur (login aynı hattı paylaşır); login
 // sonucu istatistik ve skip izi olarak rapora girer.
-func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.PluginSpec, skipped []plugin.SkippedPlugin, policy *plugin.PolicySession, client *probe.Client, login loginOutcome) (*Report, error) {
+func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.PluginSpec, skipped []plugin.SkippedPlugin, policy *plugin.PolicySession, client *probe.Client, login loginOutcome, preflightErr error) (*Report, error) {
 	runStart := time.Now()
 	var crawlMs, jsReconMs, spaCrawlMs, contentMs, fuzzMs int
 	var formFuzzMs, flowMs, matrixMs, smuggleMs, browserVerifyMs, pluginsMs int
 	// Fail closed once, not 196 times: an HTTPS target with an unverifiable
-	// certificate cannot produce trustworthy evidence. A per-plugin error for
-	// every request is noise; stop with one actionable message.
-	if !e.cfg.SkipTLSFailFast {
-		if u, uerr := url.Parse(target); uerr == nil && strings.EqualFold(u.Scheme, "https") {
-			preCtx, preCancel := context.WithTimeout(ctx, 10*time.Second)
-			_, preErr := client.Send(plugin.WithPlugin(preCtx, "target-preflight", true, nil), http.MethodGet, target, nil, nil)
-			preCancel()
-			if preErr != nil && isTLSCertError(preErr) {
-				return nil, fmt.Errorf("target TLS certificate verification failed: %w (install the issuing CA via SSL_CERT_FILE or use --no-proxy; TLS is fail-closed)", preErr)
-			}
-		}
+	// certificate cannot produce trustworthy evidence. The runtime tech GET
+	// already observed this, so reuse its verdict instead of a second request;
+	// SkipTLSFailFast stays the test seam.
+	if preflightErr != nil && isTLSCertError(preflightErr) && !e.cfg.SkipTLSFailFast {
+		return nil, fmt.Errorf("target TLS certificate verification failed: %w (install the issuing CA via SSL_CERT_FILE or use --no-proxy; TLS is fail-closed)", preflightErr)
 	}
 	timeoutMs := e.cfg.PluginTimeoutMs
 	if timeoutMs <= 0 {
@@ -815,6 +857,14 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 	if policy != nil {
 		proxyStats = policy.ProxyPool().Stats()
 	}
+	retryBudgetExhausted := 0
+	if policy != nil {
+		retryBudgetExhausted = int(policy.RetryBudgetExhausted())
+	}
+	cacheHits, cacheFetches := int64(0), int64(0)
+	if e.passiveCache != nil {
+		cacheHits, cacheFetches = e.passiveCache.Stats()
+	}
 	rep := &Report{
 		Target:   target,
 		Findings: deduped,
@@ -825,10 +875,21 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 			"partial_plugins": partialCount,
 			"findings":        len(deduped),
 			"errors":          errorCount,
-			"http_requests":   int(httpRequests),
-			"waf_detected":    int(wafDet),
-			"waf_bypassed":    int(wafByp),
-			"waf_challenges":  int(wafChallenges),
+			// Effective engine limits make a report explain its own stopping
+			// point (budget/rate/page caps) without re-reading the CLI flags.
+			"request_budget_target": int(e.cfg.MaxRequestsPerTarget),
+			"request_budget_total":  int(e.cfg.MaxRequestsTotal),
+			"rate_limit_per_second": int(math.Round(e.cfg.RatePerSecond)),
+			"max_pages":             e.cfg.MaxPages,
+			"crawl_depth":           e.cfg.Depth,
+			"plugin_selection":      len(e.cfg.OnlyPlugins),
+			"plugin_exclusions":     len(e.cfg.IgnorePlugins),
+			"http_requests":         int(httpRequests),
+			"passive_cache_hits":    int(cacheHits),
+			"passive_cache_fetches": int(cacheFetches),
+			"waf_detected":          int(wafDet),
+			"waf_bypassed":          int(wafByp),
+			"waf_challenges":        int(wafChallenges),
 			// Phase timings (ms) so a long scan shows where the time went.
 			"crawl_ms":               crawlMs,
 			"crawl_budget_exhausted": crawlBudgetExhausted,
@@ -856,6 +917,7 @@ func (e *Engine) runLive(ctx context.Context, target string, ordered []plugin.Pl
 			"proxy_rotations":                 int(proxyStats.Rotations),
 			"proxy_failures":                  int(proxyStats.Failures),
 			"proxy_direct_fallbacks":          int(proxyStats.DirectFallbacks),
+			"retry_budget_exhausted":          retryBudgetExhausted,
 			"fuzz_requests":                   int(fuzzRequests),
 			"form_requests":                   int(formRequests),
 			"matrix_requests":                 int(matrixRequests),
@@ -1034,7 +1096,25 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 			if strings.EqualFold(file.Oracle.Name, "redirect") {
 				pluginCtx = plugin.WithNoRedirect(pluginCtx)
 			}
+			// Passive read-only oracles share identical static GET responses.
+			// Active/timing/redirect flows keep their own exchange. The shared
+			// fetch runs on the scan context (not the first caller's plugin
+			// timeout) but keeps the first plugin's quota attribution, so one
+			// slow plugin cannot poison waiters and per-plugin caps still hold.
+			cacheable := e.passiveCache != nil && tier1PassiveCacheEligible(file)
+			fetchCtx := plugin.WithPlugin(parent, spec.ID, spec.Safe, spec.MaxRequests)
 			sender := func(c context.Context, method, rawURL string, reqHeaders map[string]string, reqBody []byte) (int, http.Header, string, error) {
+				if cacheable {
+					if key, ok := passiveCacheKey(method, rawURL, reqHeaders, reqBody); ok {
+						resp, err := e.passiveCache.GetOrFetch(c, key, func() (*probe.Response, error) {
+							return client.Send(fetchCtx, method, rawURL, reqHeaders, reqBody)
+						})
+						if err != nil {
+							return 0, nil, "", err
+						}
+						return resp.Status, resp.Headers, string(resp.Body), nil
+					}
+				}
 				resp, err := client.Send(c, method, rawURL, reqHeaders, reqBody)
 				if err != nil {
 					return 0, nil, "", err
@@ -1061,7 +1141,7 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 				}
 			}
 			for _, r := range results {
-				rule, cwe := ruleForPlugin(spec.ID, r.Candidate.OracleName)
+				rule, cwe := ruleForCandidate(spec.ID, r.Candidate, r.Evidence)
 				f, err := finding.Build(spec, r.Candidate, r.Evidence, rule, cwe, "", "")
 				if err != nil || f == nil {
 					continue
@@ -1090,7 +1170,7 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 				return nil, err
 			}
 			for _, jc := range got {
-				rule, cwe := ruleForPlugin(spec.ID, jc.Candidate.OracleName)
+				rule, cwe := ruleForCandidate(spec.ID, jc.Candidate, jc.Evidence)
 				f, err := finding.Build(spec, jc.Candidate, jc.Evidence, rule, cwe, "", "")
 				if err != nil || f == nil {
 					continue
@@ -1133,7 +1213,7 @@ func (e *Engine) executeOne(parent context.Context, spec plugin.PluginSpec, targ
 				if cand.Target == "" {
 					cand.Target = target
 				}
-				rule, cwe := ruleForPlugin(spec.ID, cand.OracleName)
+				rule, cwe := ruleForCandidate(spec.ID, cand, ev)
 				f, err := finding.Build(spec, cand, ev, rule, cwe, "", "")
 				if err != nil || f == nil {
 					continue

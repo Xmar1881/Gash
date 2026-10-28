@@ -258,6 +258,13 @@ type PolicySession struct {
 	// Proxy pool (optional) and per-attempt timeout for retry/failover.
 	proxyPool      *proxypool.Pool
 	attemptTimeout atomic.Int64
+
+	// Retry amplification guard: correlated target/WAF failures must not turn
+	// every request into four attempts. The budget grows with observed
+	// responses but keeps an initial allowance for proxy failover.
+	retrySpent     atomic.Int64
+	responses      atomic.Int64
+	retryExhausted atomic.Int64
 }
 
 // NewPolicySession proxy'yi kurar (base nil ise http.DefaultTransport).
@@ -890,6 +897,71 @@ func (p *PolicySession) AttemptTimeout() time.Duration {
 	return time.Duration(p.attemptTimeout.Load())
 }
 
+// allowRetry applies a global retry budget: at least 32 retries are available
+// for startup/proxy failover, then the budget grows with responses at 20%.
+// Under a correlated outage this stops retry amplification early.
+func (p *PolicySession) allowRetry() bool {
+	if p == nil {
+		return true
+	}
+	for {
+		spent := p.retrySpent.Load()
+		limit := p.responses.Load() / 5
+		if limit < 32 {
+			limit = 32
+		}
+		if spent >= limit {
+			p.retryExhausted.Add(1)
+			return false
+		}
+		if p.retrySpent.CompareAndSwap(spent, spent+1) {
+			return true
+		}
+	}
+}
+
+// RetryBudgetExhausted reports how many retries were suppressed by the budget.
+func (p *PolicySession) RetryBudgetExhausted() int64 {
+	if p == nil {
+		return 0
+	}
+	return p.retryExhausted.Load()
+}
+
+// isIdempotentMethod reports whether a server-side failure can be retried
+// without risking a duplicate state change. 5xx errors are ambiguous; POST and
+// PATCH are not replayed, while 429/proxy rotations remain method-agnostic.
+func isIdempotentMethod(method string) bool {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case "", http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodPut, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
+// retryAfterDelay parses Retry-After seconds or an HTTP date.
+func retryAfterDelay(header http.Header, now time.Time) (time.Duration, bool) {
+	raw := strings.TrimSpace(header.Get("Retry-After"))
+	if raw == "" {
+		return 0, false
+	}
+	if secs, err := strconv.Atoi(raw); err == nil {
+		if secs < 0 {
+			return 0, false
+		}
+		return time.Duration(secs) * time.Second, true
+	}
+	if at, err := http.ParseTime(raw); err == nil {
+		d := at.Sub(now)
+		if d < 0 {
+			d = 0
+		}
+		return d, true
+	}
+	return 0, false
+}
+
 // ProxyPool returns the rotating proxy pool, or nil for direct traffic.
 func (p *PolicySession) ProxyPool() *proxypool.Pool {
 	if p == nil {
@@ -1079,6 +1151,9 @@ func (p *PolicySession) RoundTripWithRetry(req *http.Request) (*http.Response, e
 
 			// Check if retryable
 			if attempt < p.cfg.RetryConfig.MaxRetries && IsRetryable(class, 0, p.cfg.RetryConfig.RetryableStatus) {
+				if !p.allowRetry() {
+					return nil, fmt.Errorf("policy retry budget exhausted: %w", err)
+				}
 				if rotator != nil {
 					rotator.Rotate(currentReq)
 				}
@@ -1092,6 +1167,7 @@ func (p *PolicySession) RoundTripWithRetry(req *http.Request) (*http.Response, e
 		if cancel != nil {
 			resp.Body = &cancelReadCloser{ReadCloser: resp.Body, cancel: cancel}
 		}
+		p.responses.Add(1)
 
 		// Response size limit check
 		if p.cfg.MaxResponseBytes > 0 && resp.ContentLength > p.cfg.MaxResponseBytes {
@@ -1185,6 +1261,9 @@ func (p *PolicySession) RoundTripWithRetry(req *http.Request) (*http.Response, e
 		if rotator != nil && attempt < p.cfg.RetryConfig.MaxRetries &&
 			proxyRotations < maxProxyRotations &&
 			isRetryableStatus(resp.StatusCode, proxyRetryStatuses) {
+			if !p.allowRetry() {
+				return resp, nil
+			}
 			resp.Body.Close()
 			rotator.Rotate(currentReq)
 			proxyRotations++
@@ -1194,10 +1273,26 @@ func (p *PolicySession) RoundTripWithRetry(req *http.Request) (*http.Response, e
 			continue
 		}
 
-		// Check for retryable server status codes
-		if attempt < p.cfg.RetryConfig.MaxRetries && isRetryableStatus(resp.StatusCode, p.cfg.RetryConfig.RetryableStatus) {
+		// Check for retryable server status codes. A 429 means the request was
+		// rejected, so it is safe to retry for any method; ambiguous 5xx
+		// statuses are only replayed for idempotent methods.
+		if attempt < p.cfg.RetryConfig.MaxRetries &&
+			isRetryableStatus(resp.StatusCode, p.cfg.RetryConfig.RetryableStatus) &&
+			(isIdempotentMethod(currentReq.Method) || resp.StatusCode == http.StatusTooManyRequests) {
+			wait := p.backoffDelay(attempt)
+			if ra, ok := retryAfterDelay(resp.Header, time.Now()); ok {
+				if ra > p.cfg.RetryConfig.MaxDelay {
+					return resp, nil
+				}
+				if ra > wait {
+					wait = ra
+				}
+			}
+			if !p.allowRetry() {
+				return resp, nil
+			}
 			resp.Body.Close()
-			if !p.waitRetry(currentReq.Context(), p.backoffDelay(attempt)) {
+			if !p.waitRetry(currentReq.Context(), wait) {
 				return nil, currentReq.Context().Err()
 			}
 			continue

@@ -40,6 +40,10 @@ func filter(rep *engine.Report, opts Options) (visible []*findingView, suppresse
 			Severity: string(f.Severity), Confidence: string(f.Confidence),
 			Target: f.Target, PluginID: f.PluginID, Fingerprint: f.Fingerprint,
 			EvidenceType: evidenceTypeFor(f), Evidence: f.Evidence,
+			OracleName: f.OracleName, Method: f.Method,
+			InjectionPoint: f.InjectionPoint, VerificationMethod: f.VerificationMethod,
+			Note: f.Note, DetectorVersion: f.DetectorVersion,
+			References: f.References, Remediation: f.Remediation, Masked: f.Masked,
 		})
 	}
 	sort.Slice(visible, func(i, j int) bool {
@@ -64,8 +68,17 @@ type findingView struct {
 	// EvidenceType is the §8 evidence discriminator: static-execution-evidence
 	// for parser-recognized payloads without a browser run, browser-confirmed
 	// only after a controlled headless execution, otherwise the confidence.
-	EvidenceType string            `json:"evidence_type,omitempty"`
-	Evidence     map[string]string `json:"evidence,omitempty"`
+	EvidenceType       string                `json:"evidence_type,omitempty"`
+	OracleName         string                `json:"oracle_name,omitempty"`
+	Method             string                `json:"method,omitempty"`
+	InjectionPoint     plugin.InjectionPoint `json:"injection_point"`
+	VerificationMethod string                `json:"verification_method,omitempty"`
+	Note               string                `json:"note,omitempty"`
+	DetectorVersion    string                `json:"detector_version,omitempty"`
+	References         []string              `json:"references,omitempty"`
+	Remediation        string                `json:"remediation,omitempty"`
+	Masked             []string              `json:"masked,omitempty"`
+	Evidence           map[string]string     `json:"evidence,omitempty"`
 }
 
 // evidenceTypeFor derives the report-level evidence discriminator from the
@@ -86,15 +99,48 @@ func evidenceTypeFor(f *finding.Finding) string {
 	return string(f.Confidence)
 }
 
-// WriteJSON tam Finding[] + scan_meta + skipped + stats (deterministik sıralı).
+// reportStats returns a copy of engine stats with counts that always agree
+// with the findings array written by this reporter.
+func reportStats(rep *engine.Report, visible, suppressed int) map[string]int {
+	stats := make(map[string]int, len(rep.Stats)+4)
+	for k, v := range rep.Stats {
+		stats[k] = v
+	}
+	total := len(rep.Findings)
+	hidden := total - visible - suppressed
+	if hidden < 0 {
+		hidden = 0
+	}
+	stats["findings"] = visible
+	stats["findings_total"] = total
+	stats["findings_visible"] = visible
+	stats["findings_tentative_hidden"] = hidden
+	stats["findings_suppressed"] = suppressed
+	return stats
+}
+
+// WriteJSON tam Finding[] + scan_id + skipped + stats (deterministik sıralı).
 func WriteJSON(w io.Writer, rep *engine.Report, opts Options) error {
 	vis, supp := filter(rep, opts)
+	// Empty reports must still serialize as arrays; consumers should not have
+	// to special-case null for findings/skipped.
+	if vis == nil {
+		vis = []*findingView{}
+	}
+	skipped := rep.Skipped
+	if skipped == nil {
+		skipped = []plugin.SkippedPlugin{}
+	}
 	out := map[string]any{
 		"target":     rep.Target,
+		"scan_id":    rep.ScanID,
 		"findings":   vis,
-		"skipped":    rep.Skipped,
+		"skipped":    skipped,
 		"suppressed": supp,
-		"stats":      rep.Stats,
+		"stats":      reportStats(rep, len(vis), supp),
+	}
+	if len(rep.NoisyNote) > 0 {
+		out["noisy_notes"] = rep.NoisyNote
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
@@ -108,7 +154,17 @@ func WriteJSON(w io.Writer, rep *engine.Report, opts Options) error {
 // WriteText insan-okunur terminal çıktısıdır (tentative gizli).
 func WriteText(w io.Writer, rep *engine.Report, opts Options) error {
 	vis, supp := filter(rep, opts)
-	if _, err := fmt.Fprintf(w, "GASH scan: %s — %d findings (%d suppressed)\n", rep.Target, len(vis), supp); err != nil {
+	hidden := len(rep.Findings) - len(vis) - supp
+	if hidden < 0 {
+		hidden = 0
+	}
+	if hidden > 0 {
+		if _, err := fmt.Fprintf(w, "GASH scan: %s — %d findings (%d tentative hidden, %d suppressed)\n",
+			rep.Target, len(vis), hidden, supp); err != nil {
+			return fmt.Errorf("reporter text: %w", err)
+		}
+	} else if _, err := fmt.Fprintf(w, "GASH scan: %s — %d findings (%d suppressed)\n",
+		rep.Target, len(vis), supp); err != nil {
 		return fmt.Errorf("reporter text: %w", err)
 	}
 	for _, f := range vis {
@@ -159,7 +215,54 @@ func WriteText(w io.Writer, rep *engine.Report, opts Options) error {
 		}
 		printSkippedDetails(w, partials)
 	}
+	if err := writeTextSummary(w, rep.Stats); err != nil {
+		return fmt.Errorf("reporter text: %w", err)
+	}
 	return nil
+}
+
+// writeTextSummary adds one compact engine line so terminal/text readers can
+// see request volume, cache savings, and partial/error counts without opening
+// the JSON report.
+func writeTextSummary(w io.Writer, st map[string]int) error {
+	if len(st) == 0 {
+		return nil
+	}
+	var parts []string
+	if n, ok := st["http_requests"]; ok {
+		part := fmt.Sprintf("%d requests", n)
+		if hits := st["passive_cache_hits"]; hits > 0 {
+			part += fmt.Sprintf(" (%d cached)", hits)
+		}
+		parts = append(parts, part)
+	}
+	if n, ok := st["scheduled"]; ok {
+		parts = append(parts, fmt.Sprintf("%d scheduled", n))
+	}
+	if n := st["plugin_selection"]; n > 0 {
+		parts = append(parts, fmt.Sprintf("%d selected", n))
+	}
+	if n := st["plugin_exclusions"]; n > 0 {
+		parts = append(parts, fmt.Sprintf("%d excluded", n))
+	}
+	if n, ok := st["partial_plugins"]; ok && n > 0 {
+		parts = append(parts, fmt.Sprintf("%d partial", n))
+	}
+	if n, ok := st["errors"]; ok && n > 0 {
+		if n == 1 {
+			parts = append(parts, "1 error")
+		} else {
+			parts = append(parts, fmt.Sprintf("%d errors", n))
+		}
+	}
+	if ms, ok := st["total_ms"]; ok && ms > 0 {
+		parts = append(parts, fmt.Sprintf("%.1fs", float64(ms)/1000))
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	_, err := fmt.Fprintf(w, "summary: %s\n", strings.Join(parts, " · "))
+	return err
 }
 
 func printSkippedDetails(w io.Writer, skips []plugin.SkippedPlugin) {
@@ -360,7 +463,15 @@ func WriteHTML(w io.Writer, rep *engine.Report, opts Options) error {
 	sb.WriteString("<style>body{font-family:sans-serif;margin:2em}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:.4em}</style></head><body>")
 	sb.WriteString("<h1>Gash report</h1>")
 	sb.WriteString("<p>Target: " + html.EscapeString(rep.Target) + "</p>")
-	_, _ = fmt.Fprintf(&sb, "<p>%d findings (%d suppressed)</p>", len(vis), supp)
+	hidden := len(rep.Findings) - len(vis) - supp
+	if hidden < 0 {
+		hidden = 0
+	}
+	if hidden > 0 {
+		_, _ = fmt.Fprintf(&sb, "<p>%d findings (%d tentative hidden, %d suppressed)</p>", len(vis), hidden, supp)
+	} else {
+		_, _ = fmt.Fprintf(&sb, "<p>%d findings (%d suppressed)</p>", len(vis), supp)
+	}
 	sb.WriteString("<table><tr><th>Severity</th><th>Confidence</th><th>Title</th><th>Rule</th><th>Target</th></tr>")
 	for _, f := range vis {
 		sb.WriteString("<tr><td>" + html.EscapeString(f.Severity) + "</td><td>" + html.EscapeString(f.Confidence) +

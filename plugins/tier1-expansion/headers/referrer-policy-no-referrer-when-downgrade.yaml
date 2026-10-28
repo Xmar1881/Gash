@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/referrer-policy-no-referrer-when-downgrade.yaml
+# What: Legacy weak Referrer-Policy value check.
+# Why: The legacy default sends full referrers; deterministic header logic.
+
+id: referrer-policy-no-referrer-when-downgrade
+name: Referrer-Policy no-referrer-when-downgrade
+description: Detects the legacy no-referrer-when-downgrade Referrer-Policy, which sends full URLs on same-scheme requests.
+author: GASH contributors
+severity: info
+tags: [headers, referrer-policy, privacy, misconfig, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 209
+api_version: "1.0"
+tests: tests/fixtures/referrer-policy-no-referrer-when-downgrade/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: Referrer-Policy
+    policy: forbidden_tokens
+    forbidden_tokens: [no-referrer-when-downgrade]

@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/coop-unsafe-none.yaml
+# What: Explicit weak COOP value check.
+# Why: unsafe-none is the no-protection value; the presence check alone would miss it.
+
+id: coop-unsafe-none
+name: COOP unsafe-none
+description: Detects an explicit Cross-Origin-Opener-Policy unsafe-none that disables cross-origin isolation.
+author: GASH contributors
+severity: low
+tags: [headers, isolation, coop, misconfig, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 212
+api_version: "1.0"
+tests: tests/fixtures/coop-unsafe-none/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: Cross-Origin-Opener-Policy
+    policy: forbidden_tokens
+    forbidden_tokens: [unsafe-none]

@@ -77,6 +77,12 @@ for a controlled headless browser result.
 | `execution` | DOM XSS (Deep) | 3 | tentative → firm → confirmed | Yes (for confirmed) | Yes (headless) | No | GASH-003: headless-enabled build-tag `deep` |
 | `oob` | Blind SSRF/SQLi/RCE | 1/2/3 | confirmed only | No | Yes (OOB payload) | **Required** | GASH-008/010/012/013: single cryptographically-random callback match; `ssrf-blind-oob` live corpus adds scheme/parser-confusion/redirect-echo/numeric-host variants under one shared window, best-effort when the server indexes path tokens only |
 
+Shared error-oracle modes keep their own rule IDs: `path_traversal` GASH-017,
+`xpath` GASH-034, `backup_file` GASH-037, `phpinfo` GASH-057,
+`management_endpoint` GASH-058, `directory_listing` GASH-059, `ssi` GASH-064,
+`source_map` GASH-066, and `critical_exposure`/`content` GASH-028. GASH-004 is
+reserved for SQLi and generic error signatures.
+
 ## Reference Plugins (Tier 2 JS)
 
 | Plugin ID | Oracle | Phase | Safe | Active | Deep | Severity | Tags | Fixture Path |
@@ -209,9 +215,9 @@ or external lab bypass rate is measured in this repository; such results stay
 
 | Profile | Active Detectors | Request Types | Budget |
 |---------|------------------|---------------|--------|
-| Safe | header, redirect, cors, cookie, version, tls, dns, crlf-header-injection, error-message-disclosure, jwt-token-exposure, graphql-endpoint-discovery, jwt-alg-confusion, csrf-token-absence, clickjacking-frameable, cve-dependency-scan, oauth-open-redirect, webdav-enabled | GET/HEAD/OPTIONS only | Low (100 req/target) |
-| Standard | Safe + tcp, reflection, error, differential, path-traversal-error, file-upload-unrestricted, template-injection-reflection, idor-differential, xss-stored-basic, xxe-reflected-basic, hpp-parameter-pollution, insecure-deserialization-error, subdomain-takeover-basic, mass-assignment-basic, missing-rate-limit, phpinfo-exposure, management-endpoint-exposure, directory-listing, expression-language-injection, jsonp-callback-injection, ssi-injection, source-map-exposure, ssh, db | GET/POST + params | Medium (500 req/target) |
-| Deep | Standard + execution (headless), timing, oob, xxe-oob, command-injection-timing, log4shell-jndi | All + browser | High (2000 req/target) |
+| Safe | header, redirect, cors, cookie, version, tls, dns, crlf-header-injection, error-message-disclosure, jwt-token-exposure, graphql-endpoint-discovery, jwt-alg-confusion, csrf-token-absence, clickjacking-frameable, cve-dependency-scan, oauth-open-redirect, webdav-enabled | GET/HEAD/OPTIONS only | Low (250 req/target) |
+| Standard | Safe + tcp, reflection, error, differential, path-traversal-error, file-upload-unrestricted, template-injection-reflection, idor-differential, xss-stored-basic, xss-stored-two-step, file-upload-served, xxe-reflected-basic, hpp-parameter-pollution, insecure-deserialization-error, subdomain-takeover-basic, mass-assignment-basic, missing-rate-limit, phpinfo-exposure, management-endpoint-exposure, directory-listing, expression-language-injection, jsonp-callback-injection, ssi-injection, source-map-exposure, ssh, db | GET/POST + params | Medium (2,000 req/target) |
+| Deep | Standard + execution (headless), timing, oob, xxe-oob, command-injection-timing, log4shell-jndi | All + browser | High (8,000 req/target) |
 
 Note: the `ssh` and `db` detector names gate `engine.runInfraRecon` and only
 act when `--ssh-audit` / `--db-port-scan` (Phase 0) or

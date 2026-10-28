@@ -1,0 +1,10 @@
+{
+  "name": "generic page without vikunja-version-disclosure marker",
+  "target": "http://example.com/api/v1/info",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body><h1>Welcome</h1><p>Static page.</p></body></html>",
+  "expected_verdict": "reject"
+}

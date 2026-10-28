@@ -48,11 +48,11 @@ Kod, `go.mod`, `go.sum`, generated protobuf, JSON Schema dosyası, test — hiç
 ### 0.2 Güncel uygulama durumu (2026-10-27)
 
 - **Kod:** Go module mevcut (`go.mod`, `go.sum`); standart build `go build ./...`, browser build `go build -tags deep ./cmd/gash`.
-- **Katalog:** 338 plugin = 275 Tier 1 YAML + 62 Tier 2 JS + 1 Tier 3 native; ayrıca 13 engine-owned detector. Her plugin fixture + `docs/metrics/` raporu taşır (`TestMetricGate`).
-- **Çekirdek:** engine scheduler/bütçe/scan deadline, `PolicySession` (scope, rate, retry, redirect, backpressure), proxy havuzu (rotasyon, cooldown, per-attempt timeout, otomatik yerel liste), Tier 1 YAML loader/exec, Tier 2 goja sandbox + host binding'ler, Tier 3 gRPC + SHA-256 trust, reporter (json/sarif/text/html/junit), diff/suppress, bench + corpus + contract + metric gate'leri.
+- **Katalog:** 438 plugin = 375 Tier 1 YAML + 62 Tier 2 JS + 1 Tier 3 native; ayrıca 13 engine-owned detector. Her plugin fixture + `docs/metrics/` raporu taşır (`TestMetricGate`).
+- **Çekirdek:** engine scheduler/bütçe/scan deadline, `PolicySession` (scope, rate, retry bütçesi, redirect, backpressure), proxy havuzu (rotasyon, cooldown, per-attempt timeout, otomatik yerel liste), 32 idle bağlantı/host transport ayarı, Tier 1 YAML loader/exec, Tier 2 goja sandbox + host binding'ler, Tier 3 gRPC + SHA-256 trust, reporter (json/sarif/text/html/junit), diff/suppress, bench + corpus + contract + metric gate'leri.
 - **Oracle'lar:** reflection, stored, differential, error (sqli/path/xpath/deserialization/...), timing, OOB, header, cookie, CORS, redirect, version, execution, upload-served, middleware-bypass ve engine smuggling diferansiyeli.
 - **OOB:** `local`, custom self-hosted API, stdlib **interactsh** istemcisi (`interactsh` public explicit opt-in, `interactsh://host` self-hosted, `--oob-token`/`GASH_OOB_TOKEN`); tarama başına tek oturum, callback decrypt + tek-kullanımlık label.
-- **WAF:** modern challenge tespiti (Cloudflare/Akamai/Imperva/DataDome/PerimeterX/AWS WAF/Sucuri/F5), sınıf-bilinçli semantik bypass (16 varyant; content-type/multipart/path confusion dahil), `waf_challenges` sayacı (host-geneli skip yok), headless challenge → `blocked`.
+- **WAF:** modern challenge tespiti (Cloudflare/Akamai/Imperva/DataDome/PerimeterX/AWS WAF/Sucuri/F5), sınıf-bilinçli semantik bypass (28 varyant; content-type/multipart/path confusion/HPP/JSON parser/header/gzip/cookie differential dahil), `waf_challenges` sayacı (host-geneli skip yok), headless challenge → `blocked`.
 - **Discovery:** varsayılan aynı-domain (eTLD+1) scope, JS recon 90s bütçesi, içerik keşfi 8 paralel + 90s/60s tavanları, opsiyonel browser crawl.
 - **Doğrulama:** `gofmt`, `go vet ./...`, `go build ./...`, `go build -tags deep ./cmd/gash`, `go test -count=1 ./...`, `TestMetricGate`, corpus ve contract gate'leri. Güncel sayılar `go run ./cmd/gash plugins list` ile doğrulanır.
 - **Güncel dokümanlar:** `README.md`, `docs/detector-inventory.md`, `docs/plugin-coverage-matrix.md`, `docs/evidence-standard.md`, `docs/known-limits.md`.
@@ -65,7 +65,7 @@ Kod, `go.mod`, `go.sum`, generated protobuf, JSON Schema dosyası, test — hiç
 
 - **Modül:** `module github.com/Xmar1881/Gash` (büyük/küçük harf aynen; import örneklerinde hep bu yazım kullanılır).
 - **Lisans:** `AGPL-3.0-only`. SPDX tanımlayıcı tüm dosyalarda: `SPDX-License-Identifier: AGPL-3.0-only`.
-- **Go sürümü:** `go1.26.8` toolchain, `go 1.26.0` dil alt sınırı (Faz 0 D1 aynen).
+- **Go sürümü:** `go.mod` dil alt sınırı `go 1.26.0`, pinlenen toolchain `go1.27.3`.
 - **Dosya header konvansiyonu (Faz 2'den itibaren zorunlu, CI grep kapısı):**
   - `.go` dosyaları: `// SPDX-License-Identifier: AGPL-3.0-only` + `// Copyright (C) 2026 Xmar1881 / GASH contributors` + `// Modül: github.com/Xmar1881/Gash`.
   - `.proto`, `.yaml`, `.js`, `.md` tasarım artefaktları: eşdeğer blok yorum (bu dosyanın başındaki HTML yorum gibi).
@@ -188,6 +188,9 @@ Engine hardening notes:
 - Engine-created `PolicySession` starts from `DefaultPolicyConfig`; scan-specific limits override only their own fields, so retry, redirect, body-size, backpressure, and scan-deadline protections remain active.
 - Redirect URLs resolve from the current hop. Authentication, cookie, API-key, and CSRF headers are removed when scheme, host, or effective port changes; ordinary tracing headers may continue.
 - Runtime technology detection uses the same policy-backed probe client as plugins, so its auth, scope, budget, redirect, and cancellation behavior is auditable in the scan report.
+- Profile detector gating uses the oracle recorded at discovery time. Tag-name heuristics are only a fallback, so a product-tagged exposure plugin cannot bypass a detector disabled by the profile (the passive smoke scan dropped from 146 to 2 partial plugins at the same budget).
+- Passive response cache: static GET/HEAD responses for read-only Tier 1 oracles are singleflight-coalesced per Run (60 s TTL, 512 entries, 32 MiB cap). Active, timing, differential, OOB, redirect, reflection, rate-limit, and host-header flows always fetch their own exchange. Cached hits skip network and budget accounting; reports expose `passive_cache_hits` / `passive_cache_fetches`.
+- The first passive GET doubles as the target preflight. If it fails at the transport, scope, or budget layer and the schedule is non-empty, `Run` aborts immediately with a hint (target, scope, proxy pool, `--no-proxy`) instead of spending every plugin timeout on a dead target. An empty schedule still returns a valid empty report.
 
 ### 3.1 Scheduler lifecycle (tasarım, implementasyon değil)
 
@@ -596,14 +599,14 @@ gash
 
 | Bayrak | Komut | Default | Açıklama |
 |---|---|---|---|
-| `--safe/--no-safe` | scan | `true` | Varsayılan safe; kapatmak açık opt-out (uyarı basılır). |
+| `--profile safe` | scan | `standard` | Pasif tarama için `safe`; CLI varsayılanı kontrollü aktif `standard`. |
 | `--deep` | scan | `false` | Deep faz + ExecutionOracle kapısı. |
 | `--active` | scan | `false` | State-changing/OOB payload kapısı. |
 | `--auth-session <file>` | scan | — | Cookie/header jar; `requires_auth` plugin'ler için zorunlu. |
 | `--scope <cidr/domain,...>` | scan | — | Opsiyonel opt-in sıkı allowlist; verilmezse open mod (host engeli yok, operatör sorumluluğu; redirect/crawl any-host izlenir). |
 | (`--scope` verilince strict) | scan | — | Allowlist + DNS-rebinding reddi; http→https upgrade izinli, https→http downgrade asla, kapsam-dışı subdomain/registrable-domain reddi. Gerekçe/etki: strict modda upgrade gizliliği korunur, downgrade MITM'e açacağı için yasak; open modda hiçbiri bloklanmaz. |
-| `--max-requests-per-target` | scan | 1000 | Per-target bütçe. |
-| `--max-requests-total` | scan | 10000 | Global bütçe. |
+| `--max-requests-per-target` | scan | 2000 | Per-target bütçe; profil değeri aksi belirtilmedikçe geçerlidir. |
+| `--max-requests-total` | scan | 15000 | Global bütçe; profil değeri aksi belirtilmedikçe geçerlidir. |
 | `--plugin-timeout` | scan | 30s | Per-plugin timeout (Tier 2 Interrupt, Tier 3 kill). |
 | `--request-timeout` | scan | 15s | Per-request timeout. |
 | `--max-response-bytes` | scan | 5MB | Response cap (zip-bomb engeli). |
@@ -621,6 +624,7 @@ gash
 | `--strict-plugins` | scan | `false` | Yalnızca trust'lı Tier 3 (kurumsal/CI önerilir). |
 | `--tier <yaml|js|native>` | plugins new | `yaml` | İskelet tipi. |
 | `--ignore-plugin <id,...>` | scan | — | Döngü kırma / gürültü susturma (rapora işlenir). |
+| `--only-plugin <id,...>` | scan | — | Pozitif seçim: yalnızca bu ID'ler planlanır; seçilmeyenler skip duvarı üretmez. |
 
 PD `goflags` konvansiyonlarıyla uyum (Faz 0 D2 notu): bayrak isimleri Nuclei/httpx kullanıcılarına tanıdık (`-target`, `-o`, `-silent` alias'ları cobra'da shim olarak tanımlanır; birincil isimler yukarıdakilerdir).
 

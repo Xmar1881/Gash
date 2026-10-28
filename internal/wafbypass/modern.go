@@ -10,8 +10,11 @@ package wafbypass
 // probe.VerifyApplicationBehavior must confirm a stable application response.
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -228,6 +231,128 @@ func paddingAttempt(rawURL string, headers map[string]string, body []byte) []Att
 
 func bytesTrimSpace(b []byte) []byte {
 	return []byte(strings.TrimSpace(string(b)))
+}
+
+// headerValueAttempts mutates payload-bearing request headers such as
+// Referer, User-Agent, Origin, and path-override headers. Query/body-only
+// bypasses leave header injection points fully exposed to signature rules.
+func headerValueAttempts(rawURL string, headers map[string]string, body []byte, class string, mutate func(string) []string) []Attempt {
+	var names []string
+	for name, value := range headers {
+		lname := strings.ToLower(name)
+		switch lname {
+		case "content-type", "content-length", "host", "cookie", "authorization":
+			continue
+		}
+		if headerPayloadLike(value, class) {
+			names = append(names, name)
+		}
+	}
+	sortStrings(names)
+	var out []Attempt
+	for _, name := range names {
+		for i, variant := range mutate(headers[name]) {
+			if variant == "" || variant == headers[name] {
+				continue
+			}
+			h := cloneStrMap(headers)
+			setHeader(h, name, variant)
+			out = append(out, Attempt{
+				Name:    "header-" + class + "-" + sanitizeTechnique(strings.ToLower(name)) + "-" + strconv.Itoa(i),
+				URL:     rawURL,
+				Headers: h,
+				Body:    body,
+			})
+			if len(out) == 2 {
+				return out
+			}
+		}
+	}
+	return out
+}
+
+func headerPayloadLike(value, class string) bool {
+	lower := strings.ToLower(value)
+	switch class {
+	case "xss":
+		return strings.Contains(lower, "<") || strings.Contains(lower, "alert(") ||
+			strings.Contains(lower, "onerror") || strings.Contains(lower, "javascript:")
+	case "sql":
+		return strings.ContainsAny(value, `'"`) || strings.Contains(lower, "select") ||
+			strings.Contains(lower, "union") || strings.Contains(lower, " or ") ||
+			strings.Contains(lower, "sleep")
+	case "cmd":
+		return strings.ContainsAny(value, ";|&$`") || strings.Contains(lower, "sleep") ||
+			strings.Contains(lower, "ping")
+	case "path":
+		return strings.Contains(lower, "..") || strings.Contains(lower, "etc/") ||
+			strings.Contains(lower, "win.ini")
+	case "url":
+		return strings.Contains(lower, "://") || strings.HasPrefix(value, "//")
+	default:
+		return len(value) >= 8 && strings.ContainsAny(value, "<'\"`;|")
+	}
+}
+
+func setHeader(m map[string]string, name, value string) {
+	for k := range m {
+		if strings.EqualFold(k, name) {
+			delete(m, k)
+		}
+	}
+	m[name] = value
+}
+
+// gzipAttempt sends the same body compressed. Some WAFs inspect the encoded
+// bytes while the application still decompresses a normal gzip body.
+func gzipAttempt(rawURL string, headers map[string]string, body []byte) []Attempt {
+	if len(body) == 0 || len(body) > 32*1024 {
+		return nil
+	}
+	for k := range headers {
+		if strings.EqualFold(k, "Content-Encoding") {
+			return nil
+		}
+	}
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(body); err != nil {
+		return nil
+	}
+	if err := zw.Close(); err != nil {
+		return nil
+	}
+	h := cloneStrMap(headers)
+	h["Content-Encoding"] = "gzip"
+	return []Attempt{{
+		Name:    "gzip-body",
+		URL:     rawURL,
+		Headers: h,
+		Body:    buf.Bytes(),
+	}}
+}
+
+// cookieVersionAttempt prefixes the Cookie header with the legacy $Version
+// attribute. Cookie parsers disagree about it; an app that ignores it keeps
+// its session while a WAF parser may stop inspecting the following pairs.
+func cookieVersionAttempt(rawURL string, headers map[string]string, body []byte) []Attempt {
+	for name, value := range headers {
+		if !strings.EqualFold(name, "Cookie") || strings.TrimSpace(value) == "" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(value), "$version") {
+			return nil
+		}
+		h := cloneStrMap(headers)
+		setHeader(h, "Cookie", "$Version=1; "+value)
+		return []Attempt{{
+			Name:    "cookie-version",
+			URL:     rawURL,
+			Headers: h,
+			Body:    body,
+		}}
+	}
+	return nil
 }
 
 func sortStrings(s []string) {

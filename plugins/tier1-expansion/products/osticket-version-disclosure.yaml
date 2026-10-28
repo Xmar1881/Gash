@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/products/osticket-version-disclosure.yaml
+# What: osTicket Fingerprint Disclosure (banner-only fingerprint).
+# Why: Banner-only product fingerprint; tentative evidence, never version-exploit proof.
+
+id: osticket-version-disclosure
+name: osTicket Fingerprint Disclosure
+description: Detects osTicket markers on the staff login path; banner-only fingerprint, tentative confidence.
+author: GASH contributors
+severity: low
+tags: [version, fingerprint, disclosure, osticket]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: discovery
+order: 267
+api_version: "1.0"
+tests: tests/fixtures/osticket-version-disclosure/
+request:
+  method: GET
+  paths:
+    - "/scp/login.php"
+oracle:
+  name: version
+  params:
+    mode: banner
+    banner_regex: "(?i)(osTicket|osticket)"

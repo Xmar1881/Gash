@@ -1,0 +1,11 @@
+{
+  "name": "OpenSearch Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "{\"name\":\"node-1\",\"cluster_name\":\"logs\",\"version\":{\"distribution\":\"opensearch\",\"number\":\"2.15.0\"},\"tagline\":\"The OpenSearch Project\"}",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

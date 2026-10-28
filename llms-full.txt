@@ -37,9 +37,9 @@ competes on verification discipline, not on library size or maturity.
 
 ## Verified catalog facts
 
-- 328 plugins in the reference catalog:
-  - 275 Tier 1 YAML plugins,
-  - 52 Tier 2 sandboxed JavaScript plugins,
+- 438 plugins in the reference catalog:
+  - 375 Tier 1 YAML plugins,
+  - 62 Tier 2 sandboxed JavaScript plugins,
   - 1 Tier 3 native gRPC PoC.
 - Plus 13 engine-owned detectors that ship behind a detector port
   (`internal/detector`) rather than as plugin files, because their transport or
@@ -156,10 +156,11 @@ Other entry points: `gash menu` (interactive console), `gash bench run`
   domain (eTLD+1); `--allow-external` restores open mode. `--scope` pins an
   explicit CIDR/domain allowlist, blocks out-of-scope redirects, and pins DNS
   (rebinding protection).
-- The interactive menu (`gash menu`, TR/EN) exposes the same controls: tabbed
-  scan/plugin/bench/OpenAPI/diff/suppress/console/status/help screens, bulk
-  target files, proxy modes, auth modes, redacted command preview, and repeat
-  last command.
+- The interactive menu (`gash menu`, TR/EN) exposes the same controls: six
+  tabs (Scan, Plugins, Tools, Console, Status, Help), bulk target files, proxy
+  modes, auth modes, redacted command preview, and repeat last command.
+  Benchmark/OpenAPI/diff/suppress live under Tools; `b`/`o`/`d`/`x` jump
+  directly into them.
 - Scan only systems you own or have written permission to test.
 
 ## Quality gates enforced in CI

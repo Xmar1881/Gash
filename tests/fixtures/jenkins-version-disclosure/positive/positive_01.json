@@ -1,0 +1,12 @@
+{
+  "name": "Jenkins Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html",
+    "X-Jenkins": "2.452.1"
+  },
+  "body": "<html><body>Jenkins</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

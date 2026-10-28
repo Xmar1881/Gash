@@ -1,0 +1,11 @@
+{
+  "name": "OpenTSDB Fingerprint Disclosure marker",
+  "target": "http://example.com/api/version",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "{\"version\":\"2.4.1\",\"short_revision\":\"abc1234\",\"full_revision\":\"abcdef\",\"timestamp\":\"2024-01-01\"}",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

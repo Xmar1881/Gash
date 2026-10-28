@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/x-aspnetmvc-version-disclosure.yaml
+# What: ASP.NET MVC version disclosure header check.
+# Why: Version metadata aids targeted exploit selection; deterministic header presence.
+
+id: x-aspnetmvc-version-disclosure
+name: ASP.NET MVC Version Disclosure
+description: Detects the X-AspNetMvc-Version response header exposing the ASP.NET MVC version.
+author: GASH contributors
+severity: info
+tags: [headers, disclosure, fingerprinting, aspnet, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 221
+api_version: "1.0"
+tests: tests/fixtures/x-aspnetmvc-version-disclosure/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: X-AspNetMvc-Version
+    policy: forbidden

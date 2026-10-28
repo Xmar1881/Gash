@@ -4,11 +4,12 @@ Copyright (C) 2026 Xmar1881 / GASH contributors
 Module: github.com/Xmar1881/Gash
 -->
 
-# Interactive menu
+# Interactive menu (TR/EN)
 
 The menu is the default operator surface for Gash. It wraps every command in a
 guided flow, keeps a live status panel next to the scan controls, and can run
-any CLI command without leaving the terminal.
+any CLI command without leaving the terminal. This guide is in English; the
+Turkish-language operator guide is [user-guide-tr.md](user-guide-tr.md).
 
 ```sh
 gash menu
@@ -24,29 +25,39 @@ current session.
 The main screen uses a compact operator chrome:
 
 ```text
-  ◆ GASH  v0.1.0-dev                                   TR · 6 sekme
-  hibrit plugin güvenlik tarayıcısı
-  ⚠ Yasal uyarı · Yalnızca sahibi olduğunuz veya yazılı izin
-    aldığınız hedeflerde kullanın.
+  ██████╗  █████╗ ███████╗██╗  ██╗
+ ██╔════╝ ██╔══██╗██╔════╝██║  ██║
+ ██║  ███╗███████║███████╗███████║
+ ██║   ██║██╔══██║╚════██║██╔══██║
+ ╚██████╔╝██║  ██║███████║██║  ██║
+  ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
+  GASH  v0.1.0-dev                                    EN · 6 tabs
+  hybrid plugin security scanner
+  ⚠ Legal notice · Use only against targets you own or have written
+    permission to test.
 
-  GASH › ◎ Tarama                                           TR · 1/6
+  GASH › ◎ Scan                                             EN · 1/6
   ──────────────────────────────────────────────────────────────
-   ▸ 1 Tarama   2 Pluginler   3 Araçlar   4 Konsol   5 Durum   6 Yardım
+   ▸ 1 Scan   2 Plugins   3 Tools   4 Console   5 Status   6 Help
 
-  ╭─ ◎ Tarama ──────────────────────────────────────────────────╮
-  │ Hedef URL tarama ve profil seçimi                           │
-  │                                                             │
-  │ › Profiller: safe · standard · deep · aggressive · HER ŞEY  │
-  │ › HER ŞEY: agresif + tarayıcı + altyapı + OOB tek seçimde   │
-  │                                                             │
-  │  Enter ↵  ile aç  ·  sekme numarası veya kısayol harfi       │
-  ╰─────────────────────────────────────────────────────────────╯
+  ╭─ ◎ Scan ────────────────────────────────────────────────────╮
+  │ Scan a target URL and pick a profile                         │
+  │                                                              │
+  │ › Profiles: safe · standard · deep · aggressive · EVERYTHING │
+  │ › EVERYTHING: aggressive + browser + infra + OOB            │
+  │                                                              │
+  │  Enter ↵ to open  ·  tab number or shortcut key              │
+  ╰──────────────────────────────────────────────────────────────╯
   ──────────────────────────────────────────────────────────────
-  [1-6] sekme · Enter aç · n/< gezin · l dil · :komut · h yardım · q çıkış
-  gash menü ❯
+  [1-6] tab · Enter open · n/< move · l language · :command · h help · q quit
+  gash menu ❯
 ```
 
-- The top bar keeps the brand, build, language, and tab position visible.
+- The top bar shows the purple-to-cyan GASH wordmark, build, language, and tab
+  position. On an interactive color terminal the wordmark plays a short
+  two-pass highlight sweep at startup; piped output, `NO_COLOR`, `TERM=dumb`,
+  and `GASH_NO_ANIMATION=1` keep it static. The wordmark is branding only; all
+  operator copy stays on TR/EN locale keys.
 - Tabs are numbered segments; the active tab is highlighted and every tab also
   has a single-letter alias (`s`, `p`, `t`, `c`, `u`, `h`). The specialized
   tools live under **Tools**: `b` benchmark, `o` OpenAPI, `d` diff, `x`
@@ -81,10 +92,10 @@ their Turkish equivalents open the same screens. During any prompt, type
 | Tab | Shortcut | What it does |
 |---|---|---|
 | Tarama / Scan | `s`, `1` | Guided single-target or bulk scan, profile, proxy, auth, OOB, output |
-| Pluginler / Plugins | `p`, `2` | List, inspect, validate, test, scaffold, and trust plugins |
+| Pluginler / Plugins | `p`, `2` | List, inspect, validate, test, scaffold, trust, select, and configure plugins |
 | Araçlar / Tools | `t`, `3` | Benchmark, OpenAPI plan, report diff, suppressions (`b` `o` `d` `x`) |
 | Konsol / Console | `c`, `4` | Full command console with history and `!!` replay |
-| Durum / Status | `u`, `5` | Build, Chrome, Go, catalog, proxy list, and recent reports |
+| Durum / Status | `u`, `5` | Build, engine defaults, Chrome, Go, catalog, proxy list, and recent reports |
 | Yardım / Help | `h`, `6` | Keyboard shortcuts and the live Cobra command list |
 
 ## Scan tab
@@ -107,8 +118,38 @@ The scan tab asks only for what the selected profile needs:
   variable and never echoed.
 - **OOB**: local listener, self-hosted interactsh, or a custom API. Public
   interactsh is never selected implicitly.
+- **Plugin selection**: if the Plugins tab saved an only/exclude set, the scan
+  asks whether to apply it. Accepted sets become `--only-plugin` and
+  `--ignore-plugin` in the preview; the summary shows the selected/excluded
+  counts, and the report stats record `plugin_selection` /
+  `plugin_exclusions`.
 
-Before execution the menu prints a summary and the equivalent command. Secret
+## Plugin selection and menu settings
+
+The Plugins tab adds two persistent controls; both write
+`.gash/menu-settings.json` (override the path with `GASH_MENU_SETTINGS`):
+
+- **Scan plugin selection** (`s`): add IDs to the **only** list, add them to
+  the **excluded** list, remove either, clear both, print the full lists, or
+  search the catalog by ID/name. Adding to one list removes the same ID from
+  the other; IDs are validated against the discovered catalog before saving.
+  An empty only list means the whole catalog; the excluded list maps to
+  `--ignore-plugin`.
+- **Menu settings** (`g`): default profile, logo visibility, and default proxy
+  mode (`auto`/`off`/`all`). These become the defaults in new scan flows and
+  survive restarts; explicit answers still win for the current run.
+
+Selection filters the plugin schedule only. Engine-owned discovery and
+detectors (crawl, JS recon, protocol/TLS, smuggle) still run because they own
+their surfaces and evidence; only selected plugins receive plugin work.
+
+All labels, prompts, acknowledgements, and error messages come from the TR/EN
+locale catalogs; no menu copy is hardcoded.
+
+Before execution the menu prints a summary and the equivalent command. The
+summary includes the profile's effective budget line (request budget per
+target, rate, page cap, crawl depth) read from the same `internal/config`
+profile the engine enforces, so the preview cannot drift from the run. Secret
 flags (`--cookie`, `--auth-header`, `--oob-token`, `--login-pass`,
 `--basic-auth`) and proxy credentials are masked in both the preview and the
 last-command history.
@@ -122,10 +163,10 @@ for minutes:
 
 ```text
 ✔ [Teknoloji Analizi] parmak izi tamam · 3 teknoloji · 5 yetenek (412ms)
-✔ [Planlama] 338 plugin planlandı · 0 atlandı (1ms)
+✔ [Planlama] 438 plugin planlandı · 0 atlandı (1ms)
 ✔ [Protokol Denetimi] TLS/DNS tamam · 2 bulgu · 0 atlanan (1.4s)
 ✔ [Sayfa & Yüzey Keşfi] tamam · 50 sayfa · 140 yüzey · 52 istek · 3200 ms (3.2s)
-⠹ [Güvenlik Testleri] 128/338 (xss-reflected-basic) (03:12)
+⠹ [Güvenlik Testleri] 128/438 (xss-reflected-basic) (03:12)
 ```
 
 The phase details come from the engine, not the menu: crawl gives page/surface
@@ -139,17 +180,18 @@ translated: switching to EN also switches the scan progress.
 
 ## Status tab
 
-`u` (or `8`) shows the effective runtime state:
+`u` (or `5`) shows the effective runtime state:
 
 ```text
-╭─ Sistem durumu ─────────────────────────────────────────────╮
-│ Build          deep (chromedp)                              │
-│ Chrome         C:\Program Files\Google\Chrome\...\chrome.exe│
-│ Go             go1.27.3 · windows/amd64                     │
-│ Katalog        338 plugin                                   │
-│ Proxy          ...\.gash\proxies\alive.txt (101)            │
-│ Raporlar       5                                            │
-╰─────────────────────────────────────────────────────────────╯
+╭─ System status ─────────────────────────────────────────────────────╮
+│ Build          deep (chromedp)                                      │
+│ Engine         standard profile · 2000 req/target · WAF 28 variants │
+│ Chrome         C:\Program Files\Google\Chrome\...\chrome.exe        │
+│ Go             go1.27.3 · windows/amd64                             │
+│ Catalog        438 plugins                                          │
+│ Proxy          ...\.gash\proxies\alive.txt (certified)              │
+│ Reports        5                                                    │
+╰─────────────────────────────────────────────────────────────────────╯
 ```
 
 Actions: `r` refresh, `o` open the reports directory, `v` view the latest text

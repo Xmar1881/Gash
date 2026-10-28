@@ -89,10 +89,20 @@ func TestScanE2EHeaderFinding(t *testing.T) {
 		"surface_points", "crawl_failed", "form_fuzz_ms", "flow_ms",
 		"matrix_ms", "smuggle_ms", "browser_verify_ms",
 		"crawl_stored_bytes", "crawl_urls_dropped", "crawl_bodies_dropped",
+		"retry_budget_exhausted",
+		"request_budget_target", "request_budget_total", "rate_limit_per_second",
+		"max_pages", "crawl_depth", "passive_cache_hits", "passive_cache_fetches",
 	} {
 		if _, ok := rep.Stats[key]; !ok {
 			t.Fatalf("stats[%s] missing from live report", key)
 		}
+	}
+	if rep.Stats["request_budget_target"] != int(cfg.MaxRequestsPerTarget) ||
+		rep.Stats["request_budget_total"] != int(cfg.MaxRequestsTotal) ||
+		rep.Stats["max_pages"] != cfg.MaxPages ||
+		rep.Stats["crawl_depth"] != cfg.Depth ||
+		rep.Stats["rate_limit_per_second"] != int(cfg.RatePerSecond) {
+		t.Fatalf("effective engine limits must be reported: %+v", rep.Stats)
 	}
 	if rep.Stats["surface_points"] < 1 {
 		t.Fatalf("surface_points must count discovered points: %+v", rep.Stats)

@@ -14,28 +14,21 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Xmar1881/Gash/internal/plugin"
 )
 
 // KnownOracles lists oracle names the JS inference may return, most specific first.
 // What: Ordered oracle vocabulary shared by inference and validation.
-// Why: One list prevents the CLI and the gate tests from drifting apart.
-var KnownOracles = []string{
-	"stored", "reflection", "differential", "error", "timing",
-	"oob", "header", "redirect", "version", "execution",
-	"cookie", "cors", "uploadserved",
-}
+// Why: One shared list (plugin.KnownOracles) prevents discovery, the CLI, and
+// the gate tests from drifting apart.
+var KnownOracles = plugin.KnownOracles
 
 // InferJSOracle returns the first known oracle referenced by a Tier 2 source.
 // What: Static oracle detection for `gash plugins test`.
 // Why: The fixture runner needs an oracle name without executing the script.
 func InferJSOracle(source string) string {
-	lower := strings.ToLower(source)
-	for _, name := range KnownOracles {
-		if strings.Contains(lower, "host.oracles."+name) {
-			return name
-		}
-	}
-	return ""
+	return plugin.InferOracleFromSource(source)
 }
 
 // ResolveFixtureRoot turns a spec Tests field into an existing directory.

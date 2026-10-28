@@ -9,11 +9,12 @@ Why: One coherent entry point: product, menu, install, quickstart, evidence
      model, coverage, reports, limits, and license.
 -->
 
-<p align="center">
-  <img src="docs/assets/readme-banner.svg" alt="Gash — evidence-first web security scanning" width="100%">
-</p>
+<h1 align="center">Gash</h1>
 
-# Gash
+<p align="center">
+  <b>Evidence-first web security scanning</b><br>
+  <sub>Plugins propose. Engine-owned oracles decide. Findings you can defend.</sub>
+</p>
 
 <p align="center">
   <a href="https://github.com/Xmar1881/Gash/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Xmar1881/Gash/actions/workflows/ci.yml/badge.svg?branch=main"></a>
@@ -24,7 +25,6 @@ Why: One coherent entry point: product, menu, install, quickstart, evidence
 </p>
 
 <p align="center">
-  <b>Plugins propose. Engine-owned oracles decide. Findings you can defend.</b><br>
   A Go-native, oracle-gated web security scanner for CI pipelines, authorized
   assessments, and teams that need auditable evidence instead of alert volume.
 </p>
@@ -50,7 +50,7 @@ check emits a candidate, and an engine-owned oracle compares it against a
 control, a baseline, or a callback before confidence is assigned. The result is
 a smaller set of findings you can explain line by line.
 
-- **Reference catalog**: 338 plugins — 275 Tier 1 YAML, 62 sandboxed Tier 2
+- **Reference catalog**: 438 plugins — 375 Tier 1 YAML, 62 sandboxed Tier 2
   JavaScript, 1 trusted Tier 3 native PoC — plus 13 engine-owned detectors.
 - **Evidence first**: `Candidate → Oracle → Evidence → Finding`, with explicit
   `tentative`, `firm`, `static-execution-evidence`, and `confirmed` levels.
@@ -71,20 +71,23 @@ gash menu --lang en
 ```
 
 ```text
-  GASH › ◎ Tarama                                      TR · 1/6
+  GASH › ◎ Scan                                        EN · 1/6
   ─────────────────────────────────────────────────────────────
-   ▸ 1 Tarama   2 Pluginler   3 Araçlar   4 Konsol   5 Durum   6 Yardım
-  ╭─ ◎ Tarama ─────────────────────────────────────────────────╮
-  │ Profiller: safe · standard · deep · aggressive · HER ŞEY    │
+   1 Scan   2 Plugins   3 Tools   4 Console   5 Status   6 Help
+  ╭─ ◎ Scan ───────────────────────────────────────────────────╮
+  │ Profiles: safe · standard · deep · aggressive · EVERYTHING │
   ╰────────────────────────────────────────────────────────────╯
-  [1-6] sekme · Enter aç · n/< gezin · l dil · :komut · h yardım · q çıkış
-  gash menü ❯
+  [1-6] tab · Enter open · n/< move · l language · :command · h help · q quit
+  gash menu ❯
 ```
+
+The interface starts in Turkish by default. Use `--lang en`, `GASH_LANG=en`,
+or press `l` to switch; the tab table below shows the English surface.
 
 | Tab | Key | Purpose |
 |---|---|---|
 | Scan | `s` / `1` | Target or bulk target file, profile, scope, proxy, auth, OOB, output |
-| Plugins | `p` / `2` | List, inspect, validate, test, scaffold, and trust plugins |
+| Plugins | `p` / `2` | List, inspect, validate, test, scaffold, trust, select, and configure plugins |
 | Tools | `t` / `3` | Benchmark, OpenAPI plan, report diff, and suppressions; `b` `o` `d` `x` jump straight in |
 | Console | `c` / `4` | Run any Gash command with history and `!!` replay |
 | Status | `u` / `5` | Build, Chrome, Go, catalog count, proxy list, latest reports |
@@ -106,8 +109,7 @@ Highlights that are menu-only conveniences:
   endpoints, requests, findings, plugin counts); skipped phases state why, and
   every label/detail follows the TR/EN selection.
 
-Full walkthrough: [docs/menu.md](docs/menu.md) · Turkish guide:
-[docs/user-guide-tr.md](docs/user-guide-tr.md).
+Full walkthrough: [docs/menu.md](docs/menu.md).
 
 ## Installation
 
@@ -171,9 +173,9 @@ strictly passive run; `deep` and `aggressive` are explicit offensive modes.
 
 | Profile | Active | Budget / target | Rate | Methods | Crawl |
 |---|---|---:|---:|---|---|
-| `safe` | no | 100 | 5 rps | GET/HEAD/OPTIONS | 20 pages, depth 2 |
-| `standard` | yes | 500 | 10 rps | + POST | 50 pages, depth 3 |
-| `deep` | yes + browser | 2,000 | 20 rps | + PUT/DELETE/PATCH | 200 pages, depth 5 |
+| `safe` | no | 250 | 5 rps | GET/HEAD/OPTIONS | 20 pages, depth 2 |
+| `standard` | yes | 2,000 | 10 rps | + POST | 50 pages, depth 3 |
+| `deep` | yes + browser | 8,000 | 20 rps | + PUT/DELETE/PATCH | 200 pages, depth 5 |
 | `aggressive` | full offensive | 50,000 | 100 rps | all methods | 500 pages, depth 10 |
 
 Profiles set defaults; explicit flags win. Scope is independent of the profile:
@@ -215,7 +217,7 @@ on the clean corpus fails the build.
 | Protocol and config | TLS/DNS/SSH/DB recon, security headers, cookies, CORS, JWT, host header |
 | API and SPA | OpenAPI-driven surface, GraphQL, SPA state secrets, dev-build markers, browser crawl |
 
-338 reference plugins and 13 engine detectors ship today. The full, auditable
+438 reference plugins and 13 engine detectors ship today. The full, auditable
 list is in [docs/detector-inventory.md](docs/detector-inventory.md) and
 [plugins/README.md](plugins/README.md). Run `gash plugins list` for the live
 count in your checkout.
@@ -270,6 +272,7 @@ browser constraints, and the benchmark scope are tracked in
 | [docs/architecture.md](docs/architecture.md) | Engine design and current implementation status |
 | [docs/report-formats.md](docs/report-formats.md) | JSON/SARIF/text/HTML/JUnit contracts |
 | [docs/known-limits.md](docs/known-limits.md) | Gaps, limits, and measurement scope |
+| [docs/user-guide-tr.md](docs/user-guide-tr.md) | Turkish-language operator guide |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 
 For AI agents and answer engines: [llms.txt](llms.txt) is the curated map,

@@ -449,6 +449,121 @@ section of `docs/detector-inventory.md`.
 
 ---
 
+## 24. Tier 1 Expansion Pack (100)
+
+Passive expansion batch: 28 header hardening/policy checks and 72 banner-only
+product fingerprints. All are safe, GET-only, fixture-backed, and verified by
+`TestMetricGate`; fingerprints stay tentative and header policies stay
+firm/confirmed. Files live under `plugins/tier1-expansion/`.
+
+| Plugin ID | Tier | Oracle | Phase | Safe | Active | Confidence Ceiling | OOB | Fixtures | Status | Notes |
+|-----------|------|--------|-------|------|--------|-------------------|-----|----------|--------|-------|
+| `coep-unsafe-none` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects an explicit Cross-Origin-Embedder-Policy unsafe-none that disables embedder isolation. |
+| `coop-unsafe-none` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects an explicit Cross-Origin-Opener-Policy unsafe-none that disables cross-origin isolation. |
+| `csp-base-uri-missing` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects an existing Content-Security-Policy that omits base-uri, leaving relative URL resolution unconstrained. |
+| `csp-default-src-missing` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects an existing Content-Security-Policy that omits the default-src fallback directive, leaving unlisted fetch directives unrestricted. |
+| `csp-form-action-missing` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects an existing Content-Security-Policy that omits form-action, allowing form submissions to any origin. |
+| `permissions-policy-payment-missing` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects an existing Permissions-Policy that does not restrict the Payment Request API. |
+| `csp-require-trusted-types-missing` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects an existing Content-Security-Policy that omits require-trusted-types-for, leaving DOM sink hardening disabled. |
+| `csp-upgrade-insecure-requests-missing` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects an existing Content-Security-Policy that omits upgrade-insecure-requests, leaving mixed-content fetches possible. |
+| `feature-policy-deprecated` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects the deprecated Feature-Policy response header that is superseded by Permissions-Policy. |
+| `hsts-preload-missing` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects an existing Strict-Transport-Security policy that omits the preload directive. |
+| `permissions-policy-camera-missing` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects an existing Permissions-Policy that does not restrict camera access. |
+| `permissions-policy-geolocation-missing` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects an existing Permissions-Policy that does not restrict geolocation access. |
+| `permissions-policy-microphone-missing` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects an existing Permissions-Policy that does not restrict microphone access. |
+| `referrer-policy-no-referrer-when-downgrade` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects the legacy no-referrer-when-downgrade Referrer-Policy, which sends full URLs on same-scheme requests. |
+| `referrer-policy-unsafe-url` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects a Referrer-Policy set to unsafe-url, which leaks full URLs to cross-origin destinations. |
+| `x-application-context-disclosure` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects a Spring Boot X-Application-Context header exposing the application name and active profile. |
+| `x-aspnet-version-disclosure` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects the X-AspNet-Version response header exposing the ASP.NET runtime version. |
+| `x-aspnetmvc-version-disclosure` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects the X-AspNetMvc-Version response header exposing the ASP.NET MVC version. |
+| `x-debug-token-disclosure` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects an X-Debug-Token response header used by Symfony profiler debug tooling. |
+| `x-debug-token-link-disclosure` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects an X-Debug-Token-Link response header pointing at a profiler endpoint. |
+| `x-download-options-missing` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects a missing X-Download-Options header that prevents legacy Internet Explorer from opening downloads in-site. |
+| `x-frame-options-allow-from` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects the obsolete X-Frame-Options ALLOW-FROM directive that modern browsers ignore. |
+| `x-generator-disclosure` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects an X-Generator response header that fingerprints the CMS or site generator. |
+| `x-permitted-cross-domain-policies-missing` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects a missing X-Permitted-Cross-Domain-Policies header that lets legacy Adobe clients load cross-domain policy files. |
+| `x-rack-cache-disclosure` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects an X-Rack-Cache response header exposing Rails cache behavior. |
+| `x-runtime-disclosure` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects an X-Runtime response header exposing per-request execution timing. |
+| `x-varnish-disclosure` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects an X-Varnish response header exposing Varnish cache transaction IDs. |
+| `x-xss-protection-enabled` | YAML | header (policy) | probe | true | false | firm/confirmed (policy) | none | ✓ | Complete | Detects the legacy X-XSS-Protection filter enabled, which can introduce side-channel and content-injection risks. |
+
+| Plugin ID | Tier | Oracle | Phase | Safe | Active | Confidence Ceiling | OOB | Fixtures | Status | Notes |
+|-----------|------|--------|-------|------|--------|-------------------|-----|----------|--------|-------|
+| `alertmanager-version-disclosure` | YAML | version (banner) | discovery | true | false | tentative (banner) | none | ✓ | Complete | Detects the Alertmanager versionInfo field on the public status API; banner-only fingerprint, tentative confidence. |
+| `arangodb-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects ArangoDB markers or system database paths; banner-only fingerprint, tentative confidence. |
+| `authelia-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Authelia markers on public login pages; banner-only fingerprint, tentative confidence. |
+| `authentik-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects authentik markers on public login pages; banner-only fingerprint, tentative confidence. |
+| `bitrix-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Bitrix markers or core asset paths; banner-only fingerprint, tentative confidence. |
+| `bookstack-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects BookStack markers in public responses; banner-only fingerprint, tentative confidence. |
+| `bugzilla-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Bugzilla markers or buglist.cgi endpoints; banner-only fingerprint, tentative confidence. |
+| `casdoor-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Casdoor markers on public login pages; banner-only fingerprint, tentative confidence. |
+| `cgit-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects cgit version footers or cgit stylesheet markers; banner-only fingerprint, tentative confidence. |
+| `cloudbeaver-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects CloudBeaver markers or DBeaver asset paths; banner-only fingerprint, tentative confidence. |
+| `cloudreve-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Cloudreve markers or site-config API paths; banner-only fingerprint, tentative confidence. |
+| `concourse-version-disclosure` | YAML | version (banner) | discovery | true | false | tentative (banner) | none | ✓ | Complete | Detects the Concourse worker_version field on the public info API; banner-only fingerprint, tentative confidence. |
+| `confluence-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects the Confluence ajs-version-number metadata field; banner-only fingerprint, tentative confidence. |
+| `craft-cms-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Craft CMS response headers or body markers; banner-only fingerprint, tentative confidence. |
+| `dokuwiki-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects DokuWiki markers or lib/exe asset paths; banner-only fingerprint, tentative confidence. |
+| `dolibarr-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Dolibarr markers or theme asset paths; banner-only fingerprint, tentative confidence. |
+| `druid-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Apache Druid markers or unified-console paths; banner-only fingerprint, tentative confidence. |
+| `drupal-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Drupal script settings or core asset paths in public responses; banner-only fingerprint, tentative confidence. |
+| `erpnext-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Frappe/ERPNext asset paths or markers; banner-only fingerprint, tentative confidence. |
+| `espocrm-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects EspoCRM markers or client library paths; banner-only fingerprint, tentative confidence. |
+| `flarum-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Flarum forum asset markers; banner-only fingerprint, tentative confidence. |
+| `flink-ui-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Apache Flink dashboard markers; banner-only fingerprint, tentative confidence. |
+| `focalboard-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Focalboard markers or workspace API paths; banner-only fingerprint, tentative confidence. |
+| `gerrit-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Gerrit Code Review markers or /gerrit/ paths; banner-only fingerprint, tentative confidence. |
+| `gitlab-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects GitLab markers on public login pages; banner-only fingerprint, tentative confidence. |
+| `glpi-version-disclosure` | YAML | version (banner) | discovery | true | false | tentative (banner) | none | ✓ | Complete | Detects GLPI markers or front-controller paths; banner-only fingerprint, tentative confidence. |
+| `gocd-version-disclosure` | YAML | version (banner) | discovery | true | false | tentative (banner) | none | ✓ | Complete | Detects the GoCD build_number field on the public version API; banner-only fingerprint, tentative confidence. |
+| `invision-community-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Invision Community Suite markers or interface asset paths; banner-only fingerprint, tentative confidence. |
+| `jenkins-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects the Jenkins version response header on public Jenkins roots; banner-only fingerprint, tentative confidence. |
+| `jira-version-disclosure` | YAML | version (banner) | discovery | true | false | tentative (banner) | none | ✓ | Complete | Detects the Jira serverInfo response marker; banner-only fingerprint, tentative confidence. |
+| `joomla-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Joomla generator metadata or core asset paths; banner-only fingerprint, tentative confidence. |
+| `kanboard-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Kanboard markers or app asset paths; banner-only fingerprint, tentative confidence. |
+| `kodbox-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects KodBox/KodExplorer markers or user route paths; banner-only fingerprint, tentative confidence. |
+| `magento-version-disclosure` | YAML | version (banner) | discovery | true | false | tentative (banner) | none | ✓ | Complete | Detects the Magento version endpoint or static version asset paths; banner-only fingerprint, tentative confidence. |
+| `matomo-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Matomo markers or tracking script paths; banner-only fingerprint, tentative confidence. |
+| `mediawiki-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects MediaWiki generator metadata or load.php module paths; banner-only fingerprint, tentative confidence. |
+| `meilisearch-version-disclosure` | YAML | version (banner) | discovery | true | false | tentative (banner) | none | ✓ | Complete | Detects the Meilisearch pkgVersion field on the public version API; banner-only fingerprint, tentative confidence. |
+| `mongo-express-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Mongo Express markers on the admin UI; banner-only fingerprint, tentative confidence. |
+| `mybb-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects MyBB footer or jscripts asset paths; banner-only fingerprint, tentative confidence. |
+| `nats-version-disclosure` | YAML | version (banner) | discovery | true | false | tentative (banner) | none | ✓ | Complete | Detects the NATS server_name field on the monitoring varz endpoint; banner-only fingerprint, tentative confidence. |
+| `nodebb-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects NodeBB client asset markers; banner-only fingerprint, tentative confidence. |
+| `odoo-version-disclosure` | YAML | version (banner) | discovery | true | false | tentative (banner) | none | ✓ | Complete | Detects the Odoo version_info server_version field; banner-only fingerprint, tentative confidence. |
+| `opencart-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects OpenCart route parameters or theme asset paths; banner-only fingerprint, tentative confidence. |
+| `opensearch-version-disclosure` | YAML | version (banner) | discovery | true | false | tentative (banner) | none | ✓ | Complete | Detects the OpenSearch distribution field on the public root API; banner-only fingerprint, tentative confidence. |
+| `opentsdb-version-disclosure` | YAML | version (banner) | discovery | true | false | tentative (banner) | none | ✓ | Complete | Detects the OpenTSDB short_revision field on the public version API; banner-only fingerprint, tentative confidence. |
+| `orientdb-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects OrientDB markers or studio paths; banner-only fingerprint, tentative confidence. |
+| `osticket-version-disclosure` | YAML | version (banner) | discovery | true | false | tentative (banner) | none | ✓ | Complete | Detects osTicket markers on the staff login path; banner-only fingerprint, tentative confidence. |
+| `phpbb-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects phpBB footer or core stylesheet markers; banner-only fingerprint, tentative confidence. |
+| `phpldapadmin-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects phpLDAPadmin markers or template asset paths; banner-only fingerprint, tentative confidence. |
+| `prestashop-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects PrestaShop generator metadata in public responses; banner-only fingerprint, tentative confidence. |
+| `pydio-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Pydio markers or /pydio/ paths; banner-only fingerprint, tentative confidence. |
+| `redis-commander-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Redis Commander markers on the admin UI; banner-only fingerprint, tentative confidence. |
+| `shopware-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Shopware markers or shopware asset paths; banner-only fingerprint, tentative confidence. |
+| `sitecore-version-disclosure` | YAML | version (banner) | discovery | true | false | tentative (banner) | none | ✓ | Complete | Detects Sitecore paths or analytics cookie markers; banner-only fingerprint, tentative confidence. |
+| `spark-ui-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Spark Master/UI markers on the public dashboard; banner-only fingerprint, tentative confidence. |
+| `storm-ui-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Storm UI markers or cluster-summary API paths; banner-only fingerprint, tentative confidence. |
+| `suitecrm-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects SuiteCRM markers or theme cache paths; banner-only fingerprint, tentative confidence. |
+| `thanos-version-disclosure` | YAML | version (banner) | discovery | true | false | tentative (banner) | none | ✓ | Complete | Detects the Thanos buildUser field on the public buildinfo API; banner-only fingerprint, tentative confidence. |
+| `trac-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Trac generator metadata or /trac/ paths; banner-only fingerprint, tentative confidence. |
+| `typo3-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects TYPO3 generator metadata or typo3temp/typo3conf asset paths; banner-only fingerprint, tentative confidence. |
+| `umbraco-version-disclosure` | YAML | version (banner) | discovery | true | false | tentative (banner) | none | ✓ | Complete | Detects Umbraco admin paths or XSRF cookie markers; banner-only fingerprint, tentative confidence. |
+| `uptime-kuma-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Uptime Kuma markers or application asset paths; banner-only fingerprint, tentative confidence. |
+| `vbulletin-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects vBulletin client-script asset paths; banner-only fingerprint, tentative confidence. |
+| `vikunja-version-disclosure` | YAML | version (banner) | discovery | true | false | tentative (banner) | none | ✓ | Complete | Detects the Vikunja frontend_url field on the public info API; banner-only fingerprint, tentative confidence. |
+| `vtiger-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Vtiger markers or vlayout asset paths; banner-only fingerprint, tentative confidence. |
+| `wekan-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Wekan markers or board asset paths; banner-only fingerprint, tentative confidence. |
+| `wikijs-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Wiki.js markers in public responses; banner-only fingerprint, tentative confidence. |
+| `woocommerce-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects WooCommerce asset paths or WC-AJAX endpoints; banner-only fingerprint, tentative confidence. |
+| `wordpress-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects WordPress asset paths (wp-content themes/plugins or wp-includes) in public responses; banner-only fingerprint, tentative confidence. |
+| `xenforo-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects XenForo script assets or data-xf attributes; banner-only fingerprint, tentative confidence. |
+| `xwiki-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects XWiki markers or /xwiki/bin/ paths; banner-only fingerprint, tentative confidence. |
+| `zammad-version-disclosure` | YAML | version (banner) | probe | true | false | tentative (banner) | none | ✓ | Complete | Detects Zammad markers or client asset paths; banner-only fingerprint, tentative confidence. |
+
+---
+
 ## Duplicate / Overlapping Plugins
 
 | Plugin Group | Issue |
@@ -486,10 +601,11 @@ section of `docs/detector-inventory.md`.
 | Cache Poisoning | 5 | 5 | 0 | Vary header, further unkeyed headers |
 | HPP | 5 | 5 | 0 | — |
 | Infrastructure | N/A | N/A | N/A | Engine-owned, no plugins needed |
+| Header Hardening (expansion) | 28 | 28 | 0 | Directive policies; presence checks stay separate |
+| Product Fingerprints (expansion) | 72 | 72 | 0 | Banner-only, tentative by design |
 
-**Total Plugins**: ~105 (excluding engine-owned recon)
-**Complete**: ~90
-**Partial**: ~10
+**Reference catalog**: 438 plugins (375 Tier 1 YAML, 62 Tier 2 JS, 1 Tier 3 native). This page enumerates the class-level detector subset; the 180 critical/control-plane and rare-product exposure plugins plus this 100-plugin Tier 1 expansion pack are indexed in `plugins/README.md` and `docs/detector-inventory.md`, so the row counts below are not the full catalog.
+**Listed rows**: class-level plugins only; complete/partial counts apply only to those rows.
 **Significant Gaps**: 15+ classes with missing coverage
 
 ---

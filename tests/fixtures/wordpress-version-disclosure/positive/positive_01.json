@@ -1,0 +1,11 @@
+{
+  "name": "WordPress Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><head><link rel=\"stylesheet\" href=\"/wp-content/themes/twentytwentyfive/style.css\"></head><body>site</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

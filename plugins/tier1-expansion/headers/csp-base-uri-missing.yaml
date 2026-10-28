@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/csp-base-uri-missing.yaml
+# What: CSP base-uri directive hardening check.
+# Why: An attacker-injected base tag can redirect relative scripts when base-uri is absent.
+
+id: csp-base-uri-missing
+name: CSP base-uri Missing
+description: Detects an existing Content-Security-Policy that omits base-uri, leaving relative URL resolution unconstrained.
+author: GASH contributors
+severity: low
+tags: [headers, csp, hardening, misconfig, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 203
+api_version: "1.0"
+tests: tests/fixtures/csp-base-uri-missing/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: Content-Security-Policy
+    policy: required
+    required_tokens: [base-uri]
+    skip_if_header_missing: true

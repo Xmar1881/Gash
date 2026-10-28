@@ -20,10 +20,10 @@ The engine discovers this tree automatically; no `--load-plugin` flag exists.
 
 | Tier | Count | Auto-discovered | Trust Required |
 |------|------:|:---------------:|:--------------:|
-| Tier 1 (YAML) | 275 | ✅ | ❌ |
+| Tier 1 (YAML) | 375 | ✅ | ❌ |
 | Tier 2 (JS) | 62 | ✅ | ❌ |
 | Tier 3 (Native) | 1 | ❌ | ✅ `gash plugins trust` |
-| **Total** | **338** | | |
+| **Total** | **438** | | |
 
 ---
 
@@ -49,6 +49,8 @@ The engine discovers this tree automatically; no `--load-plugin` flag exists.
 | **Critical Control-Plane / Secret Exposure** | 80 | 1 | `error` (`critical_exposure`) | ✅ `aws-credentials-exposure` |
 | **Rare Product / Admin Exposure** | 100 | 1 | `error` (`critical_exposure`) | — |
 | **Native PoC** | 1 | 3 | `header` | — |
+| **Header Hardening Expansion** | 28 | 1 | `header` (`policy`) | — |
+| **Product Fingerprint Expansion** | 72 | 1 | `version` (`banner`) | — |
 
 ---
 
@@ -64,6 +66,129 @@ Every plugin points to the shared `tests/fixtures/rare-critical-exposure/`
 corpus and has an individual report under `docs/metrics/`. Examples include
 `n8n-editor`, `ray-dashboard`, `couchdb-admin`, `mailhog-ui`, `graylog-api`,
 `gitea-admin`, `rancher-api`, and `openfga-api`.
+
+## Tier 1 Expansion Pack (100)
+
+Second expansion batch: 28 passive header-policy/hardening checks and 72
+banner-only product fingerprints. Every plugin is GET-only, `safe: true`, and
+ships positive/negative fixtures plus an individual metrics report. Header
+policies are deterministic (firm/confirmed); product fingerprints are
+`tentative` and never claim version-specific exploitation.
+
+Budget note: the engine's passive response cache coalesces identical static
+GET/HEAD requests for read-only oracles, so the pack normally costs far fewer
+than 100 network requests. Raise `--max-requests-per-target` when running a
+large active scan.
+
+### Header Hardening (28)
+
+| Plugin | Tier | Oracle | File |
+|--------|------|--------|------|
+| `coep-unsafe-none` | Tier 1 | `header` (policy) | `tier1-expansion/headers/coep-unsafe-none.yaml` |
+| `coop-unsafe-none` | Tier 1 | `header` (policy) | `tier1-expansion/headers/coop-unsafe-none.yaml` |
+| `csp-base-uri-missing` | Tier 1 | `header` (policy) | `tier1-expansion/headers/csp-base-uri-missing.yaml` |
+| `csp-default-src-missing` | Tier 1 | `header` (policy) | `tier1-expansion/headers/csp-default-src-missing.yaml` |
+| `csp-form-action-missing` | Tier 1 | `header` (policy) | `tier1-expansion/headers/csp-form-action-missing.yaml` |
+| `permissions-policy-payment-missing` | Tier 1 | `header` (policy) | `tier1-expansion/headers/permissions-policy-payment-missing.yaml` |
+| `csp-require-trusted-types-missing` | Tier 1 | `header` (policy) | `tier1-expansion/headers/csp-require-trusted-types-missing.yaml` |
+| `csp-upgrade-insecure-requests-missing` | Tier 1 | `header` (policy) | `tier1-expansion/headers/csp-upgrade-insecure-requests-missing.yaml` |
+| `feature-policy-deprecated` | Tier 1 | `header` (policy) | `tier1-expansion/headers/feature-policy-deprecated.yaml` |
+| `hsts-preload-missing` | Tier 1 | `header` (policy) | `tier1-expansion/headers/hsts-preload-missing.yaml` |
+| `permissions-policy-camera-missing` | Tier 1 | `header` (policy) | `tier1-expansion/headers/permissions-policy-camera-missing.yaml` |
+| `permissions-policy-geolocation-missing` | Tier 1 | `header` (policy) | `tier1-expansion/headers/permissions-policy-geolocation-missing.yaml` |
+| `permissions-policy-microphone-missing` | Tier 1 | `header` (policy) | `tier1-expansion/headers/permissions-policy-microphone-missing.yaml` |
+| `referrer-policy-no-referrer-when-downgrade` | Tier 1 | `header` (policy) | `tier1-expansion/headers/referrer-policy-no-referrer-when-downgrade.yaml` |
+| `referrer-policy-unsafe-url` | Tier 1 | `header` (policy) | `tier1-expansion/headers/referrer-policy-unsafe-url.yaml` |
+| `x-application-context-disclosure` | Tier 1 | `header` (policy) | `tier1-expansion/headers/x-application-context-disclosure.yaml` |
+| `x-aspnet-version-disclosure` | Tier 1 | `header` (policy) | `tier1-expansion/headers/x-aspnet-version-disclosure.yaml` |
+| `x-aspnetmvc-version-disclosure` | Tier 1 | `header` (policy) | `tier1-expansion/headers/x-aspnetmvc-version-disclosure.yaml` |
+| `x-debug-token-disclosure` | Tier 1 | `header` (policy) | `tier1-expansion/headers/x-debug-token-disclosure.yaml` |
+| `x-debug-token-link-disclosure` | Tier 1 | `header` (policy) | `tier1-expansion/headers/x-debug-token-link-disclosure.yaml` |
+| `x-download-options-missing` | Tier 1 | `header` (policy) | `tier1-expansion/headers/x-download-options-missing.yaml` |
+| `x-frame-options-allow-from` | Tier 1 | `header` (policy) | `tier1-expansion/headers/x-frame-options-allow-from.yaml` |
+| `x-generator-disclosure` | Tier 1 | `header` (policy) | `tier1-expansion/headers/x-generator-disclosure.yaml` |
+| `x-permitted-cross-domain-policies-missing` | Tier 1 | `header` (policy) | `tier1-expansion/headers/x-permitted-cross-domain-policies-missing.yaml` |
+| `x-rack-cache-disclosure` | Tier 1 | `header` (policy) | `tier1-expansion/headers/x-rack-cache-disclosure.yaml` |
+| `x-runtime-disclosure` | Tier 1 | `header` (policy) | `tier1-expansion/headers/x-runtime-disclosure.yaml` |
+| `x-varnish-disclosure` | Tier 1 | `header` (policy) | `tier1-expansion/headers/x-varnish-disclosure.yaml` |
+| `x-xss-protection-enabled` | Tier 1 | `header` (policy) | `tier1-expansion/headers/x-xss-protection-enabled.yaml` |
+
+### Product Fingerprints (72)
+
+| Plugin | Tier | Oracle | File |
+|--------|------|--------|------|
+| `alertmanager-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/alertmanager-version-disclosure.yaml` |
+| `arangodb-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/arangodb-version-disclosure.yaml` |
+| `authelia-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/authelia-version-disclosure.yaml` |
+| `authentik-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/authentik-version-disclosure.yaml` |
+| `bitrix-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/bitrix-version-disclosure.yaml` |
+| `bookstack-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/bookstack-version-disclosure.yaml` |
+| `bugzilla-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/bugzilla-version-disclosure.yaml` |
+| `casdoor-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/casdoor-version-disclosure.yaml` |
+| `cgit-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/cgit-version-disclosure.yaml` |
+| `cloudbeaver-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/cloudbeaver-version-disclosure.yaml` |
+| `cloudreve-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/cloudreve-version-disclosure.yaml` |
+| `concourse-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/concourse-version-disclosure.yaml` |
+| `confluence-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/confluence-version-disclosure.yaml` |
+| `craft-cms-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/craft-cms-version-disclosure.yaml` |
+| `dokuwiki-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/dokuwiki-version-disclosure.yaml` |
+| `dolibarr-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/dolibarr-version-disclosure.yaml` |
+| `druid-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/druid-version-disclosure.yaml` |
+| `drupal-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/drupal-version-disclosure.yaml` |
+| `erpnext-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/erpnext-version-disclosure.yaml` |
+| `espocrm-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/espocrm-version-disclosure.yaml` |
+| `flarum-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/flarum-version-disclosure.yaml` |
+| `flink-ui-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/flink-ui-version-disclosure.yaml` |
+| `focalboard-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/focalboard-version-disclosure.yaml` |
+| `gerrit-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/gerrit-version-disclosure.yaml` |
+| `gitlab-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/gitlab-version-disclosure.yaml` |
+| `glpi-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/glpi-version-disclosure.yaml` |
+| `gocd-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/gocd-version-disclosure.yaml` |
+| `invision-community-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/invision-community-version-disclosure.yaml` |
+| `jenkins-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/jenkins-version-disclosure.yaml` |
+| `jira-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/jira-version-disclosure.yaml` |
+| `joomla-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/joomla-version-disclosure.yaml` |
+| `kanboard-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/kanboard-version-disclosure.yaml` |
+| `kodbox-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/kodbox-version-disclosure.yaml` |
+| `magento-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/magento-version-disclosure.yaml` |
+| `matomo-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/matomo-version-disclosure.yaml` |
+| `mediawiki-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/mediawiki-version-disclosure.yaml` |
+| `meilisearch-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/meilisearch-version-disclosure.yaml` |
+| `mongo-express-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/mongo-express-version-disclosure.yaml` |
+| `mybb-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/mybb-version-disclosure.yaml` |
+| `nats-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/nats-version-disclosure.yaml` |
+| `nodebb-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/nodebb-version-disclosure.yaml` |
+| `odoo-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/odoo-version-disclosure.yaml` |
+| `opencart-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/opencart-version-disclosure.yaml` |
+| `opensearch-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/opensearch-version-disclosure.yaml` |
+| `opentsdb-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/opentsdb-version-disclosure.yaml` |
+| `orientdb-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/orientdb-version-disclosure.yaml` |
+| `osticket-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/osticket-version-disclosure.yaml` |
+| `phpbb-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/phpbb-version-disclosure.yaml` |
+| `phpldapadmin-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/phpldapadmin-version-disclosure.yaml` |
+| `prestashop-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/prestashop-version-disclosure.yaml` |
+| `pydio-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/pydio-version-disclosure.yaml` |
+| `redis-commander-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/redis-commander-version-disclosure.yaml` |
+| `shopware-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/shopware-version-disclosure.yaml` |
+| `sitecore-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/sitecore-version-disclosure.yaml` |
+| `spark-ui-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/spark-ui-version-disclosure.yaml` |
+| `storm-ui-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/storm-ui-version-disclosure.yaml` |
+| `suitecrm-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/suitecrm-version-disclosure.yaml` |
+| `thanos-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/thanos-version-disclosure.yaml` |
+| `trac-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/trac-version-disclosure.yaml` |
+| `typo3-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/typo3-version-disclosure.yaml` |
+| `umbraco-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/umbraco-version-disclosure.yaml` |
+| `uptime-kuma-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/uptime-kuma-version-disclosure.yaml` |
+| `vbulletin-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/vbulletin-version-disclosure.yaml` |
+| `vikunja-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/vikunja-version-disclosure.yaml` |
+| `vtiger-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/vtiger-version-disclosure.yaml` |
+| `wekan-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/wekan-version-disclosure.yaml` |
+| `wikijs-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/wikijs-version-disclosure.yaml` |
+| `woocommerce-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/woocommerce-version-disclosure.yaml` |
+| `wordpress-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/wordpress-version-disclosure.yaml` |
+| `xenforo-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/xenforo-version-disclosure.yaml` |
+| `xwiki-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/xwiki-version-disclosure.yaml` |
+| `zammad-version-disclosure` | Tier 1 | `version` (banner) | `tier1-expansion/products/zammad-version-disclosure.yaml` |
 
 ---
 

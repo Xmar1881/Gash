@@ -1,0 +1,11 @@
+{
+  "name": "CSP with default-src fallback",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'"
+  },
+  "body": "<html><body>hello</body></html>",
+  "expected_verdict": "reject"
+}

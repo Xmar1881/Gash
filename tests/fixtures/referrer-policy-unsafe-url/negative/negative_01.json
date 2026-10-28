@@ -1,0 +1,11 @@
+{
+  "name": "compliant policy for referrer-policy-unsafe-url",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html",
+    "Referrer-Policy": "strict-origin-when-cross-origin"
+  },
+  "body": "<html><body><h1>Welcome</h1><p>Static page.</p></body></html>",
+  "expected_verdict": "reject"
+}

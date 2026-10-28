@@ -5,7 +5,10 @@
 package wafbypass
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
+	"io"
 	"net/url"
 	"strings"
 	"testing"
@@ -146,6 +149,55 @@ func TestModernSSRFIPSpellings(t *testing.T) {
 	}
 	if found < 2 {
 		t.Fatalf("expected multiple IP spellings, got %d: %+v", found, atts)
+	}
+}
+
+// TestModernHeaderGzipCookieAttempts covers header-injection points, gzip body
+// decoding, and the legacy cookie parser differential.
+func TestModernHeaderGzipCookieAttempts(t *testing.T) {
+	headers := map[string]string{
+		"Content-Type": "application/x-www-form-urlencoded",
+		"Referer":      "https://example.com/<script>alert(gash_canary_header)</script>",
+		"Cookie":       "sid=abc123",
+	}
+	body := []byte("q=1")
+	atts := BuildAttemptsForPlugin("http://example.com/api", headers, body, "xss-reflected-header")
+	if len(atts) > MaxAttemptsForPlugin {
+		t.Fatalf("attempt cap exceeded: %d", len(atts))
+	}
+	var gzipAttempt, cookieAttempt *Attempt
+	headerFound := false
+	for i := range atts {
+		a := &atts[i]
+		switch {
+		case strings.HasPrefix(a.Name, "header-xss-referer"):
+			headerFound = true
+			if !strings.Contains(a.Headers["Referer"], "<svg") {
+				t.Fatalf("header payload not mutated: %v", a.Headers)
+			}
+		case a.Name == "gzip-body":
+			gzipAttempt = a
+		case a.Name == "cookie-version":
+			cookieAttempt = a
+		}
+	}
+	if !headerFound || gzipAttempt == nil || cookieAttempt == nil {
+		t.Fatalf("missing header/gzip/cookie attempts: %+v", atts)
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(gzipAttempt.Body))
+	if err != nil {
+		t.Fatalf("gzip body is not decodable: %v", err)
+	}
+	plain, err := io.ReadAll(zr)
+	zr.Close()
+	if err != nil || !bytes.Equal(plain, body) {
+		t.Fatalf("gzip roundtrip = %q, err=%v", plain, err)
+	}
+	if gzipAttempt.Headers["Content-Encoding"] != "gzip" {
+		t.Fatalf("missing Content-Encoding: %v", gzipAttempt.Headers)
+	}
+	if !strings.HasPrefix(cookieAttempt.Headers["Cookie"], "$Version=1; sid=abc123") {
+		t.Fatalf("cookie parser differential malformed: %v", cookieAttempt.Headers)
 	}
 }
 

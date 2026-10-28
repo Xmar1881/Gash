@@ -1,0 +1,11 @@
+{
+  "name": "GLPI Fingerprint Disclosure marker",
+  "target": "http://example.com/front/login.php",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><head><title>GLPI</title></head><body>login</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

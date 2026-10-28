@@ -2,7 +2,7 @@ SPDX-License-Identifier: AGPL-3.0-only | Copyright (C) 2026 Xmar1881 / GASH cont
 
 # Gash - Kanit Standardi (guncel, 2026-10-27)
 
-- Durum: `v0.1.0-dev`; kod mevcut (338 plugin: 275 Tier 1 YAML + 62 Tier 2 JS + 1 Tier 3 native; 13 engine detector). Bu dokuman Faz 1'de dondurulan kanit standardini korur; guncel uygulama durumu README ve docs/architecture.md §0.2'dedir.
+- Durum: `v0.1.0-dev`; kod mevcut (438 plugin: 375 Tier 1 YAML + 62 Tier 2 JS + 1 Tier 3 native; 13 engine detector). Bu dokuman Faz 1'de dondurulan kanit standardini korur; guncel uygulama durumu README ve docs/architecture.md §0.2'dedir.
 - Modul: github.com/Xmar1881/Gash. Lisans: AGPL-3.0-only.
 - Es dosya: docs/architecture.md (oracle arayuzleri bolum 6, Finding semasi bolum 10, OOB protokolu bolum 9).
 - Faz kapisi: tarihsel; onay verildi, kod ve testler mevcut. Guncel dogrulama: gofmt, go vet, go build, go test -count=1 ./...
@@ -133,6 +133,7 @@ controlled headless run with a triggered canary and clean control may emit
 - Ornek (+): ' AND 1=CONVERT(int,@@version)-- yanitinda "SQLServer ... conversion failed" + kontrolde normal sayfa -> confirmed.
 - Ornek (-): her 500'de ayni "DB error" (kontrolde de var) -> reject.
 - OOB: gecersiz.
+- Shared `ErrorSignatureOracle` mode mapping: `path_traversal` → GASH-017, `xpath` → GASH-034, `backup_file` → GASH-037, `phpinfo` → GASH-057, `management_endpoint` → GASH-058, `directory_listing` → GASH-059, `ssi` → GASH-064, `source_map` → GASH-066, `critical_exposure`/`content` → GASH-028. GASH-004 is reserved for SQLi and generic error signatures.
 
 ### GASH-005 SQLi boolean/differential
 

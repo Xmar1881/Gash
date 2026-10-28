@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/x-varnish-disclosure.yaml
+# What: Varnish cache transaction disclosure header check.
+# Why: Cache transaction IDs aid cache-poisoning recon; deterministic header presence.
+
+id: x-varnish-disclosure
+name: X-Varnish Disclosure
+description: Detects an X-Varnish response header exposing Varnish cache transaction IDs.
+author: GASH contributors
+severity: info
+tags: [headers, disclosure, varnish, cache, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 228
+api_version: "1.0"
+tests: tests/fixtures/x-varnish-disclosure/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: X-Varnish
+    policy: forbidden

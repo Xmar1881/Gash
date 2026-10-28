@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/x-debug-token-disclosure.yaml
+# What: Symfony debug token disclosure header check.
+# Why: A public debug token enables profiler data access when the profiler is reachable.
+
+id: x-debug-token-disclosure
+name: X-Debug-Token Disclosure
+description: Detects an X-Debug-Token response header used by Symfony profiler debug tooling.
+author: GASH contributors
+severity: low
+tags: [headers, disclosure, debug, symfony, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 224
+api_version: "1.0"
+tests: tests/fixtures/x-debug-token-disclosure/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: X-Debug-Token
+    policy: forbidden

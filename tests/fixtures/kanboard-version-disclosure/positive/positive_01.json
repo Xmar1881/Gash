@@ -1,0 +1,11 @@
+{
+  "name": "Kanboard Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body><link rel=\"stylesheet\" href=\"/assets/css/app.css\"><footer>Kanboard</footer></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

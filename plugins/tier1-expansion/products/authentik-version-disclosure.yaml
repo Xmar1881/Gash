@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/products/authentik-version-disclosure.yaml
+# What: authentik Fingerprint Disclosure (banner-only fingerprint).
+# Why: Banner-only product fingerprint; tentative evidence, never version-exploit proof.
+
+id: authentik-version-disclosure
+name: authentik Fingerprint Disclosure
+description: Detects authentik markers on public login pages; banner-only fingerprint, tentative confidence.
+author: GASH contributors
+severity: low
+tags: [version, fingerprint, disclosure, authentik]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 294
+api_version: "1.0"
+tests: tests/fixtures/authentik-version-disclosure/
+request:
+  method: GET
+oracle:
+  name: version
+  params:
+    mode: banner
+    banner_regex: "(?i)authentik"

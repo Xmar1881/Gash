@@ -1,0 +1,11 @@
+{
+  "name": "Umbraco Fingerprint Disclosure marker",
+  "target": "http://example.com/umbraco/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><head><title>Umbraco</title></head><body>login</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

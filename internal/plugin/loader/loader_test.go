@@ -7,6 +7,7 @@ package loader
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Xmar1881/Gash/internal/plugin"
@@ -182,6 +183,29 @@ func TestDiscoverDeterministic(t *testing.T) {
 	}
 	if snap[0].Spec.ID != "aaa-first-plugin" {
 		t.Fatalf("deterministik sıra bozuldu: %v", snap[0].Spec.ID)
+	}
+	for _, entry := range snap {
+		if entry.OracleName != "redirect" {
+			t.Fatalf("discovery must record the pinned oracle for %s, got %q", entry.Spec.ID, entry.OracleName)
+		}
+	}
+}
+
+// TestDiscoverRecordsTier2Oracle locks profile gating for JS plugins: the
+// discovered entry must carry the oracle inferred from host.oracles.<name>.
+func TestDiscoverRecordsTier2Oracle(t *testing.T) {
+	dir := t.TempDir()
+	src := strings.Replace(tier2Good,
+		"function run(probe, ctx) { return []; }",
+		"function run(probe, ctx) { return host.oracles.differential ? [] : []; }", 1)
+	write(t, dir, "tier2.js", src)
+	reg := plugin.NewRegistry()
+	if _, err := Discover([]string{dir}, reg); err != nil {
+		t.Fatal(err)
+	}
+	snap := reg.Snapshot()
+	if len(snap) != 1 || snap[0].OracleName != "differential" {
+		t.Fatalf("tier2 oracle inference missing: %+v", snap)
 	}
 }
 

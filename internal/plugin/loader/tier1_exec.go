@@ -436,14 +436,15 @@ func executeSingle(ctx context.Context, spec *plugin.PluginSpec, file *Tier1File
 			}
 		}
 		ev, err := o.Verify(ctx, cls, false, oracle.HeaderParams{
-			Headers:         headers,
-			Mode:            mode,
-			RequestHeaders:  reqHeadersChk,
-			Body:            body,
-			HeaderName:      getStringParam(oracleParams, "header_name", ""),
-			Policy:          getStringParam(oracleParams, "policy", ""),
-			RequiredTokens:  getStringSliceParam(oracleParams, "required_tokens"),
-			ForbiddenTokens: getStringSliceParam(oracleParams, "forbidden_tokens"),
+			Headers:             headers,
+			Mode:                mode,
+			RequestHeaders:      reqHeadersChk,
+			Body:                body,
+			HeaderName:          getStringParam(oracleParams, "header_name", ""),
+			Policy:              getStringParam(oracleParams, "policy", ""),
+			RequiredTokens:      getStringSliceParam(oracleParams, "required_tokens"),
+			ForbiddenTokens:     getStringSliceParam(oracleParams, "forbidden_tokens"),
+			SkipIfHeaderMissing: getBoolParam(oracleParams, "skip_if_header_missing", false),
 		})
 		if err != nil {
 			return nil, err
@@ -1026,6 +1027,18 @@ func getStringSliceParam(params map[string]any, key string) []string {
 		}
 	}
 	return nil
+}
+
+func getBoolParam(params map[string]any, key string, defaultVal bool) bool {
+	if params == nil {
+		return defaultVal
+	}
+	if v, ok := params[key]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return defaultVal
 }
 
 func getFloat64Param(params map[string]any, key string, defaultVal float64) float64 {

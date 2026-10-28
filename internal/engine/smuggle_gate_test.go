@@ -6,9 +6,11 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Xmar1881/Gash/internal/config"
@@ -114,9 +116,12 @@ func TestSmuggleAggressiveConsistentNoFinding(t *testing.T) {
 }
 
 // TestSmuggleScopedOutNoSocket --scope verilince kapsam-dışı hedefe soket
-// AÇILMAZ (strict mod kanıtı; open modda yazılımsal engel yok).
+// AÇILMAZ (strict mod kanıtı; open modda yazılımsal engel yok). The engine now
+// stops at the preflight GET, so no plugin or detector ever dials the target.
 func TestSmuggleScopedOutNoSocket(t *testing.T) {
+	var hits atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK-clean"))
@@ -132,25 +137,14 @@ func TestSmuggleScopedOutNoSocket(t *testing.T) {
 	cfg.Profile = config.ProfileAggressive
 	cfg.Scope = []string{"example.org"} // loopback hedef kapsam DIŞI
 	e := New(reg, cfg)
-	rep, err := e.Run(context.Background(), srv.URL)
-	if err != nil {
-		t.Fatalf("run: %v", err)
+	_, err := e.Run(context.Background(), srv.URL)
+	if err == nil || !errors.Is(err, plugin.ErrScopeViolation) {
+		t.Fatalf("kapsam-dışı hedef ön kontrolde fail-closed olmalı, got %v", err)
 	}
-	found := false
-	for _, s := range rep.Skipped {
-		if s.PluginID == smuggle.PluginID && strings.Contains(s.Reason, "scope violation") {
-			found = true
-		}
+	if !strings.Contains(err.Error(), "target preflight failed") {
+		t.Fatalf("preflight error must name the phase: %v", err)
 	}
-	if !found {
-		t.Fatalf("kapsam-dışı → smuggle scope-violation skip izi beklenir: %+v", rep.Skipped)
-	}
-	if n := rep.Stats["smuggle_requests"]; n != 0 {
-		t.Fatalf("kapsam-dışı soket AÇILMAMALI (smuggle_requests=%d)", n)
-	}
-	for _, f := range rep.Findings {
-		if f.RuleID == smuggle.RuleID {
-			t.Fatalf("kapsam-dışı GASH-033 bulgusu olmamalı: %+v", f)
-		}
+	if n := hits.Load(); n != 0 {
+		t.Fatalf("kapsam-dışı hedefe soket AÇILMAMALI (%d istek)", n)
 	}
 }

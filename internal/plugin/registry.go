@@ -7,6 +7,7 @@ package plugin
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -25,6 +26,10 @@ type RegistryEntry struct {
 	Builtin    bool
 	Trusted    bool // Tier3 için trust durumu
 	SkipReason string
+	// OracleName is the oracle a Tier 1/3 plugin actually pins. The scheduler
+	// uses it to honor profile detector gates; tag heuristics alone miss
+	// plugins whose tags name the product rather than the oracle.
+	OracleName string
 }
 
 // NewRegistry boş registry döner.
@@ -122,6 +127,23 @@ func (r *Registry) MarkTrusted(id string, trusted bool) {
 	defer r.mu.Unlock()
 	if e, ok := r.entries[id]; ok {
 		e.Trusted = trusted
+		r.entries[id] = e
+	}
+}
+
+// SetOracleName records the oracle a loaded plugin actually pins.
+// What: Discovery-time metadata for profile/detector gating.
+// Why: Product tags (e.g. "adminer") do not name the oracle, so the scheduler
+// must not infer "no oracle" and run a profile-disabled detector.
+func (r *Registry) SetOracleName(id, oracle string) {
+	oracle = strings.ToLower(strings.TrimSpace(oracle))
+	if oracle == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if e, ok := r.entries[id]; ok {
+		e.OracleName = oracle
 		r.entries[id] = e
 	}
 }

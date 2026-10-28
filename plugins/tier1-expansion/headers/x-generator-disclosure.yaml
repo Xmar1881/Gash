@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/x-generator-disclosure.yaml
+# What: CMS generator disclosure header check.
+# Why: Generator metadata supports targeted fingerprinting; deterministic header presence.
+
+id: x-generator-disclosure
+name: X-Generator Disclosure
+description: Detects an X-Generator response header that fingerprints the CMS or site generator.
+author: GASH contributors
+severity: info
+tags: [headers, disclosure, fingerprinting, cms, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 222
+api_version: "1.0"
+tests: tests/fixtures/x-generator-disclosure/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: X-Generator
+    policy: forbidden

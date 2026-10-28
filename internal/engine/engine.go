@@ -75,10 +75,14 @@ type Config struct {
 	StrictPlugins    bool
 	ShowTentative    bool
 	IgnorePlugins    map[string]bool
-	Target           string
-	MaxPages         int    // Maximum pages to crawl (default 50)
-	Depth            int    // Maximum crawl depth (default 3)
-	ProxyURL         string // Upstream HTTP proxy URL (e.g. http://127.0.0.1:8080)
+	// OnlyPlugins, when non-empty, restricts scheduling to these plugin IDs.
+	// It is an explicit positive selection, so unselected plugins are omitted
+	// from the schedule without generating a skipped entry.
+	OnlyPlugins map[string]bool
+	Target      string
+	MaxPages    int    // Maximum pages to crawl (default 50)
+	Depth       int    // Maximum crawl depth (default 3)
+	ProxyURL    string // Upstream HTTP proxy URL (e.g. http://127.0.0.1:8080)
 	// ProxyURLs is a rotating proxy pool (from --proxy/--proxy-file). Empty
 	// means direct traffic. The pool rotates on timeouts and block statuses.
 	ProxyURLs []string
@@ -221,6 +225,9 @@ type Engine struct {
 	// analysis over crawler output, wordlist probing). It is the single
 	// enumerable list of scan units that cannot be YAML or JS plugins.
 	detectors *detector.Registry
+	// passiveCache coalesces identical static GET/HEAD responses within one
+	// Run. It is reset per target and only serves read-only Tier 1 oracles.
+	passiveCache *passiveResponseCache
 	// oobOnce caches the OOB provider so interactsh registers one session per
 	// scan instead of once per detector/plugin.
 	oobOnce    sync.Once
@@ -323,11 +330,27 @@ func (e *Engine) EffectiveProfile() *config.Profile {
 // Sıra: ignore → politika → chain (teknoloji + sağlayıcı) → faz sıralaması.
 func (e *Engine) Schedule(_ context.Context) (ordered []plugin.PluginSpec, skipped []plugin.SkippedPlugin, err error) {
 	specs := e.registry.Specs()
+	if len(e.cfg.OnlyPlugins) > 0 {
+		var unknown []string
+		for id := range e.cfg.OnlyPlugins {
+			if _, ok := e.registry.Get(id); !ok {
+				unknown = append(unknown, id)
+			}
+		}
+		if len(unknown) > 0 {
+			sort.Strings(unknown)
+			return nil, skipped, fmt.Errorf("engine schedule: unknown --only-plugin ID(s): %s", strings.Join(unknown, ", "))
+		}
+	}
 	// Ignore-listesi.
 	var kept []plugin.PluginSpec
 	for _, s := range specs {
 		if e.cfg.IgnorePlugins[s.ID] {
 			skipped = append(skipped, plugin.SkippedPlugin{PluginID: s.ID, Reason: "skipped (ignored via --ignore-plugin)"})
+			continue
+		}
+		// Positive selection is explicit: unselected plugins are not skips.
+		if len(e.cfg.OnlyPlugins) > 0 && !e.cfg.OnlyPlugins[s.ID] {
 			continue
 		}
 		kept = append(kept, s)
@@ -405,6 +428,13 @@ func (e *Engine) filterReason(s plugin.PluginSpec) (string, bool) {
 // What: Maps plugin spec to oracle for profile-based filtering.
 // Why: Profile enables/disables detectors (oracles), not plugins directly.
 func (e *Engine) oracleForPlugin(s plugin.PluginSpec) string {
+	// Discovery records the pinned oracle, so product tags (e.g. "adminer")
+	// cannot hide a profile-disabled detector behind the heuristic below.
+	if e.registry != nil {
+		if entry, ok := e.registry.Get(s.ID); ok && entry.OracleName != "" {
+			return entry.OracleName
+		}
+	}
 	// For Tier1 YAML plugins, the oracle is defined in the plugin file.
 	// We can't easily read it here without loading the file.
 	// Instead, we infer from plugin ID patterns and tags.
@@ -498,6 +528,10 @@ func (e *Engine) Run(ctx context.Context, target string) (*Report, error) {
 	e.runMu.Lock()
 	defer e.runMu.Unlock()
 
+	// Each Run gets a fresh passive cache: bulk scans reuse one Engine across
+	// hosts, and a response authenticated for target A must never answer B.
+	e.passiveCache = newPassiveResponseCache(60*time.Second, 512, 32<<20)
+
 	// Bulk scans reuse one Engine across targets. Login merges new cookies into
 	// cfg.Auth, so clone the declared context for this run and restore it after:
 	// a session established for target A must never authenticate target B.
@@ -552,9 +586,10 @@ func (e *Engine) Run(ctx context.Context, target string) (*Report, error) {
 		client.SetExtraHeaders(e.cfg.Auth.HeaderMap())
 	}
 	// Çalışma-anı teknoloji tespiti: tek pasif GET ile zincir girdisi.
-	// Hata = boş küme (kullanıcı --tech tek başına yeterli); ek trafik yok.
+	// Aynı GET hedef ön kontrolüdür: taşıma/kapsam hatası, yüzlerce plugin'i
+	// erişilemeyen hedefe karşı zamanlamak yerine Run'ı erken durdurur.
 	e.notifyProgress(progressPhaseTech, progressDetailTechStart)
-	e.detectRuntimeTech(scanCtx, normalized, client)
+	preflightErr := e.detectRuntimeTech(scanCtx, normalized, client)
 	e.notifyProgress(progressPhaseTech, progressDetailTechDone,
 		len(e.detectedTech), len(e.detectedCaps))
 	e.notifyProgress(progressPhasePlanning, progressDetailPlanStart)
@@ -573,9 +608,11 @@ func (e *Engine) Run(ctx context.Context, target string) (*Report, error) {
 			Stats: map[string]int{
 				"scheduled": 0, "skipped": len(skipped), "partial_plugins": 0,
 				"findings": 0, "errors": 0,
-				"login_attempted": login.attempted,
-				"login_succeeded": login.succeeded,
-				"login_cookies":   login.cookies,
+				"plugin_selection":  len(e.cfg.OnlyPlugins),
+				"plugin_exclusions": len(e.cfg.IgnorePlugins),
+				"login_attempted":   login.attempted,
+				"login_succeeded":   login.succeeded,
+				"login_cookies":     login.cookies,
 			},
 			Skipped: skipped,
 			ScanID:  newScanID(),
@@ -586,7 +623,14 @@ func (e *Engine) Run(ctx context.Context, target string) (*Report, error) {
 		// B2: empty registry yields a valid empty report, not an error.
 		return rep, nil
 	}
-	return e.runLive(scanCtx, normalized, ordered, skipped, policy, client, login)
+	// Ön kontrol yalnızca koşacak plugin varken bağlayıcıdır: her şey kapıda
+	// elendiyse boş rapor dürüst sonuçtur, hedef erişimi anlamsızdır.
+	// TLS sertifika hataları runLive'a taşınır: oradaki fail-closed karar
+	// SkipTLSFailFast dikişini korur ve ikinci bir ön-uçuş isteği gerekmez.
+	if preflightErr != nil && !isTLSCertError(preflightErr) {
+		return nil, fmt.Errorf("target preflight failed for %s: %w (check reachability, scope, proxy pool, and request budget; use --no-proxy for direct traffic)", normalized, preflightErr)
+	}
+	return e.runLive(scanCtx, normalized, ordered, skipped, policy, client, login, preflightErr)
 }
 
 // Correlate motor-tarafı dedup uygular (A-16).

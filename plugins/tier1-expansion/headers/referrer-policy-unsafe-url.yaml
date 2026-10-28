@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/referrer-policy-unsafe-url.yaml
+# What: Weak Referrer-Policy value check.
+# Why: unsafe-url leaks paths and query strings cross-origin; deterministic header logic.
+
+id: referrer-policy-unsafe-url
+name: Referrer-Policy unsafe-url
+description: Detects a Referrer-Policy set to unsafe-url, which leaks full URLs to cross-origin destinations.
+author: GASH contributors
+severity: low
+tags: [headers, referrer-policy, privacy, misconfig, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 208
+api_version: "1.0"
+tests: tests/fixtures/referrer-policy-unsafe-url/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: Referrer-Policy
+    policy: forbidden_tokens
+    forbidden_tokens: [unsafe-url]

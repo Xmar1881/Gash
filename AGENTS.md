@@ -27,7 +27,7 @@ index: `docs/README.md`; LLM map: `llms.txt`.
 
 | Path | Contents |
 |---|---|
-| `cmd/gash` | CLI entry point (Cobra commands: `scan`, `plugins`, `bench`, `menu`, `diff`, `suppress`) |
+| `cmd/gash` | CLI entry point (Cobra commands: `scan`, `plugins`, `bench`, `openapi`, `menu`, `diff`, `suppress`) |
 | `internal/engine` | Scan orchestration, budgets, detector registry wiring, report output |
 | `internal/detector` | Detector port: `Spec`, `Detector`, `Registry`, `Env`, policy/gating |
 | `internal/oracle` | Engine-owned oracles that decide confidence (`reflection`, `stored`, `error`, `differential`, `timing`, `oob`, `header`, `cookie`, `cors`, `redirect`, `version`, `execution`, `upload-served`, ...) |
@@ -77,7 +77,8 @@ go run ./cmd/gash plugins test <plugin-file>     # run one plugin's fixtures
    logic belongs in Tier 2 JS and must declare its parameters in the frontmatter
    `oracle_params` block. Tier 3 native plugins are SHA-256 pinned and never run
    on discovery alone; they have no raw-socket access.
-7. **Defaults stay safe.** The `safe` profile is passive. New checks that send
+7. **Defaults stay safe.** The CLI default profile is `standard` (controlled
+   active); `--profile safe` is strictly passive. New checks that send
    attack traffic are `active`, and OOB-dependent checks must skip honestly
    (`oob-not-configured`) when no self-hosted server is configured.
 8. **Headers.** Every Go and Markdown file carries the SPDX header used across

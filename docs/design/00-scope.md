@@ -1,5 +1,9 @@
 # Gash — Faz 0 Kapsam Kararları (`00-scope.md`)
 
+> **Tarihsel kayıt:** Bu dosya Faz 0 kararlarını dondurur. Güncel toolchain
+> `go1.27.3` (modül minimum `go 1.26.0`) ve güncel durum `docs/architecture.md`
+> §0.2'dedir; aşağıdaki `go1.26.8` satırları o tarihteki kararı belgeler.
+
 - **Durum:** Faz 0 çıktısı — kod YOK, motor kodu yazılmadı.
 - **Tarih:** 12 Ekim 2026 (UTC)
 - **Kaynak spec:** `benioku.txt` (Gash, sıfırdan bağımsız Go projesi; migrasyon yok, önceki kod yok, referans yok)

@@ -446,6 +446,17 @@ func NewRoundTripper(pool *Pool, base *http.Transport) *RoundTripper {
 	if direct.MaxResponseHeaderBytes == 0 {
 		direct.MaxResponseHeaderBytes = 1 << 20
 	}
+	// Parallel scan workers need a deeper per-host idle pool; the stdlib
+	// default of two causes a reconnect (and proxy CONNECT) per request.
+	if base.MaxIdleConnsPerHost < 32 {
+		base.MaxIdleConnsPerHost = 32
+	}
+	if base.MaxIdleConns < 200 {
+		base.MaxIdleConns = 200
+	}
+	if direct.MaxIdleConnsPerHost < 32 {
+		direct.MaxIdleConnsPerHost = 32
+	}
 	return &RoundTripper{
 		pool:         pool,
 		base:         base,

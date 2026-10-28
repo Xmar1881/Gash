@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/products/drupal-version-disclosure.yaml
+# What: Drupal Fingerprint Disclosure (banner-only fingerprint).
+# Why: Banner-only product fingerprint; tentative evidence, never version-exploit proof.
+
+id: drupal-version-disclosure
+name: Drupal Fingerprint Disclosure
+description: Detects Drupal script settings or core asset paths in public responses; banner-only fingerprint, tentative confidence.
+author: GASH contributors
+severity: low
+tags: [version, fingerprint, disclosure, drupal]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 241
+api_version: "1.0"
+tests: tests/fixtures/drupal-version-disclosure/
+request:
+  method: GET
+oracle:
+  name: version
+  params:
+    mode: banner
+    banner_regex: "(?i)(Drupal\\.settings|core/misc/drupal\\.js|sites/(all|default)/(files|modules)/)"

@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/products/meilisearch-version-disclosure.yaml
+# What: Meilisearch Fingerprint Disclosure (banner-only fingerprint).
+# Why: Banner-only product fingerprint; tentative evidence, never version-exploit proof.
+
+id: meilisearch-version-disclosure
+name: Meilisearch Fingerprint Disclosure
+description: Detects the Meilisearch pkgVersion field on the public version API; banner-only fingerprint, tentative confidence.
+author: GASH contributors
+severity: low
+tags: [version, fingerprint, disclosure, meilisearch]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: discovery
+order: 289
+api_version: "1.0"
+tests: tests/fixtures/meilisearch-version-disclosure/
+request:
+  method: GET
+  paths:
+    - "/version"
+oracle:
+  name: version
+  params:
+    mode: banner
+    banner_regex: "(?is)\\\"pkgVersion\\\"\\s*:"

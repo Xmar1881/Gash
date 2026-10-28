@@ -8,7 +8,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Xmar1881/Gash/internal/config"
 	"github.com/Xmar1881/Gash/internal/plugin"
 )
 
@@ -29,6 +31,46 @@ func TestEmptyRegistryEmptyReport(t *testing.T) {
 	}
 	if len(rep.Findings) != 0 {
 		t.Fatalf("boş rapor bekleniyordu")
+	}
+}
+
+// TestTargetPreflightFailsFast locks the early abort for unreachable targets.
+// What: A non-empty schedule against a closed port must return a preflight
+// error instead of burning every per-plugin timeout.
+// Why: The runtime tech GET doubles as the reachability check.
+func TestTargetPreflightFailsFast(t *testing.T) {
+	reg := plugin.NewRegistry()
+	reg.MustRegister(mkSpec("passive-p", plugin.PhaseProbe, 1), "mem", false)
+	cfg := DefaultConfig()
+	cfg.ScanTimeout = 5 * time.Second
+	cfg.RequestTimeout = 2 * time.Second
+	_, err := New(reg, cfg).Run(context.Background(), "http://127.0.0.1:1/")
+	if err == nil {
+		t.Fatal("unreachable target must fail the preflight")
+	}
+	if !strings.Contains(err.Error(), "target preflight failed") {
+		t.Fatalf("preflight error must name the phase: %v", err)
+	}
+}
+
+// TestPreflightIgnoredWhenScheduleEmpty keeps the empty-result contract: when
+// profile gates skip every plugin, an unreachable target is irrelevant and the
+// run still returns a valid empty report.
+func TestPreflightIgnoredWhenScheduleEmpty(t *testing.T) {
+	reg := plugin.NewRegistry()
+	active := mkSpec("active-p", plugin.PhaseProbe, 1)
+	active.Active = true
+	active.Safe = false
+	reg.MustRegister(active, "mem", false)
+	cfg := DefaultConfig()
+	cfg.ScanTimeout = 5 * time.Second
+	cfg.RequestTimeout = 2 * time.Second
+	rep, err := New(reg, cfg).Run(context.Background(), "http://127.0.0.1:1/")
+	if err != nil {
+		t.Fatalf("empty schedule must not surface preflight: %v", err)
+	}
+	if len(rep.Findings) != 0 || len(rep.Skipped) == 0 {
+		t.Fatalf("expected empty report with skips, got %+v", rep)
 	}
 }
 
@@ -172,6 +214,26 @@ func TestSkippedReasonFormat(t *testing.T) {
 	}
 }
 
+// TestOnlyPluginsRestrictsSchedule locks positive selection semantics:
+// unselected plugins disappear from the schedule without skip-wall entries.
+func TestOnlyPluginsRestrictsSchedule(t *testing.T) {
+	reg := plugin.NewRegistry()
+	reg.MustRegister(mkSpec("keep-plugin", plugin.PhaseProbe, 1), "mem", false)
+	reg.MustRegister(mkSpec("drop-plugin", plugin.PhaseProbe, 2), "mem", false)
+	cfg := DefaultConfig()
+	cfg.OnlyPlugins = map[string]bool{"keep-plugin": true}
+	ordered, skipped, err := New(reg, cfg).Schedule(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ordered) != 1 || ordered[0].ID != "keep-plugin" {
+		t.Fatalf("only-plugin schedule = %+v", ordered)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("positive selection must not create skip entries: %+v", skipped)
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (func() bool {
 		for i := 0; i+len(sub) <= len(s); i++ {
@@ -181,4 +243,31 @@ func contains(s, sub string) bool {
 		}
 		return false
 	})()
+}
+
+// TestProfileGateUsesRegistryOracle locks discovery-recorded oracle gating.
+// What: A product-tagged plugin whose tags never name "error" must still be
+// filtered by the safe profile when discovery recorded the error oracle.
+// Why: This is the starvation path that made hundreds of exposure plugins run
+// in passive profiles and exhaust the request budget before header checks.
+func TestProfileGateUsesRegistryOracle(t *testing.T) {
+	reg := plugin.NewRegistry()
+	spec := mkSpec("product-tagged-exposure", plugin.PhaseDiscovery, 1)
+	spec.Safe = false
+	spec.Tags = []string{"adminer", "database"}
+	reg.MustRegister(spec, "mem", false)
+	reg.SetOracleName(spec.ID, "error")
+
+	cfg := DefaultConfig()
+	cfg.Profile = config.ProfileSafe
+	ordered, skipped, err := New(reg, cfg).Schedule(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ordered) != 0 {
+		t.Fatalf("safe profile must not schedule an error-oracle plugin: %v", ordered)
+	}
+	if len(skipped) != 1 || !strings.Contains(skipped[0].Reason, `oracle "error" disabled by profile safe`) {
+		t.Fatalf("profile skip reason must name the recorded oracle: %+v", skipped)
+	}
 }

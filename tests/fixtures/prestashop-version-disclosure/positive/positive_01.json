@@ -1,0 +1,11 @@
+{
+  "name": "PrestaShop Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><head><meta name=\"generator\" content=\"PrestaShop\"></head><body>shop</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

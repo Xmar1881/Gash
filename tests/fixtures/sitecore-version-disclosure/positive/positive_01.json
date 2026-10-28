@@ -1,0 +1,11 @@
+{
+  "name": "Sitecore Fingerprint Disclosure marker",
+  "target": "http://example.com/sitecore/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><head><title>Sitecore</title></head><body>login</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

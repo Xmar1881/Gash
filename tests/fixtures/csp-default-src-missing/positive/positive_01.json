@@ -1,0 +1,12 @@
+{
+  "name": "CSP without default-src fallback",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html",
+    "Content-Security-Policy": "script-src 'self'; object-src 'none'"
+  },
+  "body": "<html><body>hello</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

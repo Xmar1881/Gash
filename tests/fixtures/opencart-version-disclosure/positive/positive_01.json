@@ -1,0 +1,11 @@
+{
+  "name": "OpenCart Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body><a href=\"/index.php?route=common/home\">Home</a></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

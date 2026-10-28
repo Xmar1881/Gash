@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -184,6 +185,7 @@ func newScanCmd() *cobra.Command {
 		strictPlugins     bool
 		profile           string
 		ignorePlugins     []string
+		onlyPlugins       []string
 		rateLimit         float64
 		parallelism       int
 		authHeaders       []string
@@ -513,9 +515,39 @@ func newScanCmd() *cobra.Command {
 			ignoreSet := make(map[string]bool, len(ignorePlugins))
 			for _, id := range ignorePlugins {
 				for _, part := range strings.Split(id, ",") {
-					if trimmed := strings.TrimSpace(part); trimmed != "" {
+					if trimmed := strings.ToLower(strings.TrimSpace(part)); trimmed != "" {
 						ignoreSet[trimmed] = true
 					}
+				}
+			}
+			onlySet := make(map[string]bool, len(onlyPlugins))
+			for _, id := range onlyPlugins {
+				for _, part := range strings.Split(id, ",") {
+					if trimmed := strings.ToLower(strings.TrimSpace(part)); trimmed != "" {
+						onlySet[trimmed] = true
+					}
+				}
+			}
+			if len(onlySet) > 0 {
+				var unknown []string
+				for id := range onlySet {
+					if _, ok := reg.Get(id); !ok {
+						unknown = append(unknown, id)
+					}
+				}
+				if len(unknown) > 0 {
+					sort.Strings(unknown)
+					return fmt.Errorf("scan: unknown --only-plugin ID(s): %s", strings.Join(unknown, ", "))
+				}
+				var overlap []string
+				for id := range onlySet {
+					if ignoreSet[id] {
+						overlap = append(overlap, id)
+					}
+				}
+				if len(overlap) > 0 {
+					sort.Strings(overlap)
+					return fmt.Errorf("scan: --only-plugin and --ignore-plugin overlap: %s", strings.Join(overlap, ", "))
 				}
 			}
 			cfg := engine.DefaultConfig()
@@ -567,6 +599,7 @@ func newScanCmd() *cobra.Command {
 			cfg.StrictPlugins = strictPlugins
 			cfg.ShowTentative = showTentative
 			cfg.IgnorePlugins = ignoreSet
+			cfg.OnlyPlugins = onlySet
 			cfg.Target = normalized
 			cfg.MaxPages = maxPages
 			cfg.Depth = depth
@@ -692,8 +725,8 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&active, "active", false, "state-changing/OOB payload kapısı")
 	cmd.Flags().BoolVar(&aggressive, "aggressive", false, "tam güç ofansif tarama: tüm dedektörler, genişletilmiş bütçe, yüksek rate-limit")
 	cmd.Flags().StringSliceVar(&scope, "scope", nil, "CIDR/domain allowlist; verilmezse hedef domain (eTLD+1) otomatik kullanılır (--allow-external ile kapatılır)")
-	cmd.Flags().Int64Var(&maxPerTarget, "max-requests-per-target", 1000, "per-target bütçe")
-	cmd.Flags().Int64Var(&maxTotal, "max-requests-total", 10000, "global bütçe")
+	cmd.Flags().Int64Var(&maxPerTarget, "max-requests-per-target", 2000, "per-target bütçe (profil değeri aksi belirtilmedikçe geçerlidir)")
+	cmd.Flags().Int64Var(&maxTotal, "max-requests-total", 15000, "global bütçe (profil değeri aksi belirtilmedikçe geçerlidir)")
 	cmd.Flags().StringVar(&pluginTimeout, "plugin-timeout", "60s", "per-plugin timeout")
 	cmd.Flags().StringVar(&requestTimeout, "request-timeout", "20s", "per-HTTP-request timeout")
 	cmd.Flags().Int64Var(&maxResponseBytes, "max-response-bytes", 5*1024*1024, "max stored response body bytes")
@@ -710,6 +743,7 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noPluginCache, "no-plugin-cache", false, "cache bypass (debug)")
 	cmd.Flags().BoolVar(&strictPlugins, "strict-plugins", false, "yalnızca trust'lı Tier3")
 	cmd.Flags().StringSliceVar(&ignorePlugins, "ignore-plugin", nil, "döngü kırma / susturma")
+	cmd.Flags().StringSliceVar(&onlyPlugins, "only-plugin", nil, "yalnızca bu plugin ID'lerini tara (tekrarlanabilir/virgüllü; profil kapıları yine uygulanır)")
 	cmd.Flags().Float64Var(&rateLimit, "rate-limit", 10, "per-target req/s")
 	cmd.Flags().IntVar(&parallelism, "parallelism", 8, "worker sayısı")
 	cmd.Flags().StringVar(&profile, "profile", "standard", "scan profile: safe|standard|deep|aggressive (safe=pasif+düşük bütçe, standard=kontrollü aktif, deep=browser+yüksek bütçe, aggressive=tam ofansif)")

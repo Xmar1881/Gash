@@ -1,0 +1,11 @@
+{
+  "name": "MediaWiki Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><head><meta name=\"generator\" content=\"MediaWiki 1.42\"></head><body>wiki</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

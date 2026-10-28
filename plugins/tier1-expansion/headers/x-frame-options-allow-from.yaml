@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/x-frame-options-allow-from.yaml
+# What: Obsolete X-Frame-Options directive check.
+# Why: ALLOW-FROM is ignored by modern browsers, leaving framing protection ineffective.
+
+id: x-frame-options-allow-from
+name: X-Frame-Options ALLOW-FROM
+description: Detects the obsolete X-Frame-Options ALLOW-FROM directive that modern browsers ignore.
+author: GASH contributors
+severity: low
+tags: [headers, clickjacking, legacy, misconfig, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 210
+api_version: "1.0"
+tests: tests/fixtures/x-frame-options-allow-from/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: X-Frame-Options
+    policy: forbidden_tokens
+    forbidden_tokens: [allow-from]

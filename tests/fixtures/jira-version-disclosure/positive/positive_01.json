@@ -1,0 +1,11 @@
+{
+  "name": "Jira Fingerprint Disclosure marker",
+  "target": "http://example.com/rest/api/2/serverInfo",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "{\"baseUrl\":\"https://jira.example.com\",\"version\":\"9.12.0\",\"versionNumbers\":[9,12,0],\"deploymentType\":\"Server\",\"buildNumber\":912000,\"serverTitle\":\"Jira\"}",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

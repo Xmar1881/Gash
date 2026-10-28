@@ -117,6 +117,15 @@ func NewClient(opts Options) *Client {
 	if tr.MaxResponseHeaderBytes == 0 {
 		tr.MaxResponseHeaderBytes = 1 << 20
 	}
+	// The default transport keeps only two idle connections per host. With
+	// 8-32 parallel plugin workers that forces a fresh TCP/TLS handshake for
+	// almost every request, which looks like target/proxy timeouts under load.
+	if tr.MaxIdleConnsPerHost < 32 {
+		tr.MaxIdleConnsPerHost = 32
+	}
+	if tr.MaxIdleConns < 200 {
+		tr.MaxIdleConns = 200
+	}
 	if opts.ProxyURL != nil {
 		tr.Proxy = http.ProxyURL(opts.ProxyURL)
 	}

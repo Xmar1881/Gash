@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/x-debug-token-link-disclosure.yaml
+# What: Symfony profiler link disclosure header check.
+# Why: A public profiler link exposes request internals when the endpoint is reachable.
+
+id: x-debug-token-link-disclosure
+name: X-Debug-Token-Link Disclosure
+description: Detects an X-Debug-Token-Link response header pointing at a profiler endpoint.
+author: GASH contributors
+severity: low
+tags: [headers, disclosure, debug, symfony, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 225
+api_version: "1.0"
+tests: tests/fixtures/x-debug-token-link-disclosure/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: X-Debug-Token-Link
+    policy: forbidden

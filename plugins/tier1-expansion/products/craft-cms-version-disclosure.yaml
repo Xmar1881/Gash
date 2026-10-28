@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/products/craft-cms-version-disclosure.yaml
+# What: Craft CMS Fingerprint Disclosure (banner-only fingerprint).
+# Why: Banner-only product fingerprint; tentative evidence, never version-exploit proof.
+
+id: craft-cms-version-disclosure
+name: Craft CMS Fingerprint Disclosure
+description: Detects Craft CMS response headers or body markers; banner-only fingerprint, tentative confidence.
+author: GASH contributors
+severity: low
+tags: [version, fingerprint, disclosure, craft-cms]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 244
+api_version: "1.0"
+tests: tests/fixtures/craft-cms-version-disclosure/
+request:
+  method: GET
+oracle:
+  name: version
+  params:
+    mode: banner
+    banner_regex: "(?i)(Craft CMS|X-Powered-By:\\s*Craft CMS)"

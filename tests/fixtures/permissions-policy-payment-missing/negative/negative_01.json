@@ -1,0 +1,11 @@
+{
+  "name": "Permissions-Policy with payment restriction",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html",
+    "Permissions-Policy": "geolocation=(), camera=(), microphone=(), payment=()"
+  },
+  "body": "<html><body>hello</body></html>",
+  "expected_verdict": "reject"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "Spark UI Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body><h1>Spark Master at spark://master:7077</h1></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

@@ -1,0 +1,12 @@
+{
+  "name": "policy violation for hsts-preload-missing",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains"
+  },
+  "body": "<html><body><h1>Welcome</h1><p>Static page.</p></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "Confluence Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><head><meta name=\"ajs-version-number\" content=\"8.5.4\"></head><body>wiki</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

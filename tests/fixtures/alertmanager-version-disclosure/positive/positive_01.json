@@ -1,0 +1,11 @@
+{
+  "name": "Alertmanager Fingerprint Disclosure marker",
+  "target": "http://example.com/api/v2/status",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "{\"cluster\":{\"name\":\"alertmanager\",\"peers\":[]},\"versionInfo\":{\"version\":\"0.27.0\",\"revision\":\"abc\",\"branch\":\"HEAD\"}}",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

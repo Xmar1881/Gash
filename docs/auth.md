@@ -253,7 +253,7 @@ gash scan --target https://app.example.com --active \
 
 - Challenge pages from Cloudflare, Akamai, Imperva, DataDome, PerimeterX, AWS
   WAF, Sucuri, F5, and Kasada are classified as untrusted, even on HTTP 200.
-- Aggressive mode retries up to 24 scoped variants: header-only, HPP
+- Aggressive mode retries up to 28 scoped variants: header-only, HPP
   (including benign-first/last-wins differentials), double encoding, mixed
   case, class-aware semantic payloads (SQLi comments, versioned MySQL
   comments, symbolic `||`/`&&`, `0x`/`CHAR()`/`CHR()`, percent/GBK quote and
@@ -265,9 +265,12 @@ gash scan --target https://app.example.com --active \
   differentials (JSON duplicate keys, `\uXXXX` value escapes and escaped key
   names), malformed multipart field names (NUL suffix, filename-bearing
   fields), 8 KiB inspection-window padding, path-normalization confusion
-  (`//`, `/./`, `..;/`, `;`), decimal/hex/octal/IPv6 IP spellings, and
-  IP-spoofing headers (`X-Forwarded-For`, `Forwarded`, `CF-Connecting-IP`,
-  `True-Client-IP`, `X-Original-URL`, `X-Forwarded-Host`, ...).
+  (`//`, `/./`, `..;/`, `;`), decimal/hex/octal/IPv6 IP spellings,
+  payload-bearing header mutations (Referer/User-Agent/Origin/path-override),
+  gzip-compressed bodies via `Content-Encoding`, the legacy `$Version` cookie
+  parser differential, and IP-spoofing headers (`X-Forwarded-For`, `Forwarded`,
+  `CF-Connecting-IP`, `True-Client-IP`, `X-Original-URL`, `X-Forwarded-Host`,
+  ...).
 - A variant only counts as a bypass after two stable application responses; a
   block page, login page, soft-404, or dynamic body never does.
 - Challenge/429 responses are counted as `waf_challenges`; the scanner does not

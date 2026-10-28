@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/products/odoo-version-disclosure.yaml
+# What: Odoo Fingerprint Disclosure (banner-only fingerprint).
+# Why: Banner-only product fingerprint; tentative evidence, never version-exploit proof.
+
+id: odoo-version-disclosure
+name: Odoo Fingerprint Disclosure
+description: Detects the Odoo version_info server_version field; banner-only fingerprint, tentative confidence.
+author: GASH contributors
+severity: low
+tags: [version, fingerprint, disclosure, odoo]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: discovery
+order: 273
+api_version: "1.0"
+tests: tests/fixtures/odoo-version-disclosure/
+request:
+  method: GET
+  paths:
+    - "/web/webclient/version_info"
+oracle:
+  name: version
+  params:
+    mode: banner
+    banner_regex: "(?is)\\\"server_version\\\"\\s*:"

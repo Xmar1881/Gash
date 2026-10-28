@@ -1,0 +1,11 @@
+{
+  "name": "Meilisearch Fingerprint Disclosure marker",
+  "target": "http://example.com/version",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "{\"commitSha\":\"abc123\",\"commitDate\":\"2024-01-01\",\"pkgVersion\":\"1.8.0\"}",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/csp-form-action-missing.yaml
+# What: CSP form-action directive hardening check.
+# Why: form-action absence permits credential-submitting forms to post off-origin.
+
+id: csp-form-action-missing
+name: CSP form-action Missing
+description: Detects an existing Content-Security-Policy that omits form-action, allowing form submissions to any origin.
+author: GASH contributors
+severity: low
+tags: [headers, csp, hardening, misconfig, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 204
+api_version: "1.0"
+tests: tests/fixtures/csp-form-action-missing/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: Content-Security-Policy
+    policy: required
+    required_tokens: [form-action]
+    skip_if_header_missing: true

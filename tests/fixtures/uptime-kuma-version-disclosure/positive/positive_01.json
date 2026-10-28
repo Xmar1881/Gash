@@ -1,0 +1,11 @@
+{
+  "name": "Uptime Kuma Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><head><title>Uptime Kuma</title></head><body>dashboard</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

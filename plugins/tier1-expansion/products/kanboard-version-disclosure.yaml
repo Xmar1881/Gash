@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/products/kanboard-version-disclosure.yaml
+# What: Kanboard Fingerprint Disclosure (banner-only fingerprint).
+# Why: Banner-only product fingerprint; tentative evidence, never version-exploit proof.
+
+id: kanboard-version-disclosure
+name: Kanboard Fingerprint Disclosure
+description: Detects Kanboard markers or app asset paths; banner-only fingerprint, tentative confidence.
+author: GASH contributors
+severity: low
+tags: [version, fingerprint, disclosure, kanboard]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 283
+api_version: "1.0"
+tests: tests/fixtures/kanboard-version-disclosure/
+request:
+  method: GET
+oracle:
+  name: version
+  params:
+    mode: banner
+    banner_regex: "(?i)(Kanboard|/assets/(css|js)/app\\.css)"

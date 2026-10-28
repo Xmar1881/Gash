@@ -19,7 +19,7 @@ Gash is a Go-native, plugin-driven web security scanner. Its core philosophy: **
 ### Is Gash production-ready?
 
 **Experimental** (`v0.1.0-dev`). The core architecture is stable but:
-- Plugin set is growing (338 reference plugins)
+- Plugin set is growing (438 reference plugins)
 - Real-world recall is manually measured on lab targets only
 - Deep build (browser) requires Chrome/Chromium
 - API may change before `v1.0.0`
@@ -77,7 +77,7 @@ Common causes:
 
 Without `--scope`: **same-site mode** — the target's registrable domain
 (eTLD+1) and its subdomains are allowed; external crawl links and redirects are
-blocked. `--allow-external` restores the old open mode.
+blocked. `--allow-external` restores open mode.
 With `--scope example.com`:
 - Only requests to `example.com` and subdomains allowed
 - Redirects to outside scope are blocked

@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/x-permitted-cross-domain-policies-missing.yaml
+# What: Legacy cross-domain policy header check.
+# Why: The header is deterministic hardening metadata; missing means legacy clients default to permissive.
+
+id: x-permitted-cross-domain-policies-missing
+name: X-Permitted-Cross-Domain-Policies Missing
+description: Detects a missing X-Permitted-Cross-Domain-Policies header that lets legacy Adobe clients load cross-domain policy files.
+author: GASH contributors
+severity: info
+tags: [headers, legacy, cross-domain, hardening, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 217
+api_version: "1.0"
+tests: tests/fixtures/x-permitted-cross-domain-policies-missing/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: X-Permitted-Cross-Domain-Policies
+    policy: missing

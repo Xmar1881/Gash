@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/csp-upgrade-insecure-requests-missing.yaml
+# What: CSP upgrade-insecure-requests directive hardening check.
+# Why: Without the directive, subresource fetches may remain on cleartext HTTP.
+
+id: csp-upgrade-insecure-requests-missing
+name: CSP upgrade-insecure-requests Missing
+description: Detects an existing Content-Security-Policy that omits upgrade-insecure-requests, leaving mixed-content fetches possible.
+author: GASH contributors
+severity: low
+tags: [headers, csp, hardening, misconfig, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 205
+api_version: "1.0"
+tests: tests/fixtures/csp-upgrade-insecure-requests-missing/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: Content-Security-Policy
+    policy: required
+    required_tokens: [upgrade-insecure-requests]
+    skip_if_header_missing: true

@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/hsts-preload-missing.yaml
+# What: HSTS preload directive hardening check.
+# Why: The preload directive is required for browser preload list eligibility.
+
+id: hsts-preload-missing
+name: HSTS preload Missing
+description: Detects an existing Strict-Transport-Security policy that omits the preload directive.
+author: GASH contributors
+severity: low
+tags: [headers, hsts, hardening, misconfig, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 207
+api_version: "1.0"
+tests: tests/fixtures/hsts-preload-missing/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: Strict-Transport-Security
+    policy: required
+    required_tokens: [preload]
+    skip_if_header_missing: true

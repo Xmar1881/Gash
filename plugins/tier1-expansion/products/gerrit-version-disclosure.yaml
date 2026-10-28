@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/products/gerrit-version-disclosure.yaml
+# What: Gerrit Fingerprint Disclosure (banner-only fingerprint).
+# Why: Banner-only product fingerprint; tentative evidence, never version-exploit proof.
+
+id: gerrit-version-disclosure
+name: Gerrit Fingerprint Disclosure
+description: Detects Gerrit Code Review markers or /gerrit/ paths; banner-only fingerprint, tentative confidence.
+author: GASH contributors
+severity: low
+tags: [version, fingerprint, disclosure, gerrit]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 279
+api_version: "1.0"
+tests: tests/fixtures/gerrit-version-disclosure/
+request:
+  method: GET
+oracle:
+  name: version
+  params:
+    mode: banner
+    banner_regex: "(?i)(Gerrit Code Review|/gerrit/)"

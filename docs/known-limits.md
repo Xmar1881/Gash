@@ -211,7 +211,7 @@ retention bounds, not detection bounds. Phase timings are reported per stage
 ## WAF bypass success rate: unmeasured outside controlled tests
 
 The scanner records WAF observation separately from bypass verification.
-Aggressive mode is opt-in, scope-checked, and bounded to twenty-four mutations:
+Aggressive mode is opt-in, scope-checked, and bounded to twenty-eight mutations:
 header-only, HPP including benign-first/last-wins differentials, double
 encoding, mixed case, class-aware SQLi/XSS/shell/path/URL semantic variants
 (for example `/**/` and versioned MySQL comments, symbolic `||`/`&&`,
@@ -224,8 +224,10 @@ multipart, and a body with no `Content-Type`), parser differentials (JSON
 duplicate keys, `\uXXXX` value escapes and escaped key names, malformed
 multipart field names, multipart duplicate fields), 8 KiB inspection-window
 padding, path-normalization confusion (`//`, `/./`, `..;/`, `;`),
-decimal/hex/octal/IPv6 IP spellings, and IP-spoofing header families. A
-non-block status
+payload-bearing header mutations (Referer/User-Agent/Origin/path-override),
+gzip-compressed bodies via `Content-Encoding`, the legacy `$Version` cookie
+parser differential, decimal/hex/octal/IPv6 IP spellings, and IP-spoofing
+header families. A non-block status
 alone is never a bypass: the same mutation must produce two stable application
 responses and must not look like authentication rejection, soft-404, challenge,
 error, or dynamic noise. Modern challenge pages (Cloudflare, Akamai, Imperva,

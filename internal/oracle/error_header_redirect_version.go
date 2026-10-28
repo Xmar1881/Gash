@@ -334,6 +334,10 @@ type HeaderParams struct {
 	Policy          string      // policy mode: missing|required|forbidden|forbidden_tokens
 	RequiredTokens  []string    // policy mode: case-insensitive required directives
 	ForbiddenTokens []string    // policy mode: case-insensitive forbidden directives
+	// SkipIfHeaderMissing makes directive checks complement the presence check
+	// instead of duplicating it: when the header is absent the policy rejects,
+	// leaving the missing-header finding to the dedicated presence plugin.
+	SkipIfHeaderMissing bool
 	// CanaryHost host_header mode: injected Host/X-Forwarded-Host kanaryası (GASH-035).
 	CanaryHost string
 	// ControlBody host_header mode: başlıksız kontrol yanıtı; kanarya burada
@@ -403,6 +407,9 @@ func verifyHeaderPolicy(p HeaderParams) (*Evidence, error) {
 	policy := strings.ToLower(strings.TrimSpace(p.Policy))
 	if policy == "" {
 		policy = "required"
+	}
+	if p.SkipIfHeaderMissing && value == "" {
+		return &Evidence{Verdict: VerdictReject, Note: "header absent — presence policy owns this finding"}, nil
 	}
 	lowerValue := strings.ToLower(value)
 

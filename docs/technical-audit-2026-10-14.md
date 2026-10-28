@@ -21,8 +21,8 @@ documented in `docs/detector-inventory.md` and the unresolved limits remain in
 
 ## Current Repository Reference
 
-As of 2026-10-25, the repository contains 283 reference plugins (275 Tier 1
-YAML, 7 sandboxed JavaScript, and 1 Tier 3 native PoC). Current
+As of 2026-10-28, the repository contains 438 reference plugins (375 Tier 1
+YAML, 62 sandboxed JavaScript, and 1 Tier 3 native PoC). Current
 engine behavior and verification status are summarized in the root README and
 the benchmark/metrics index; the historical measurements below are preserved
 for traceability and are not silently re-labeled as current results.

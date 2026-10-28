@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/csp-require-trusted-types-missing.yaml
+# What: CSP Trusted Types directive hardening check.
+# Why: Trusted Types enforcement blocks string-based DOM sinks when present.
+
+id: csp-require-trusted-types-missing
+name: CSP Trusted Types Missing
+description: Detects an existing Content-Security-Policy that omits require-trusted-types-for, leaving DOM sink hardening disabled.
+author: GASH contributors
+severity: low
+tags: [headers, csp, hardening, misconfig, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 206
+api_version: "1.0"
+tests: tests/fixtures/csp-require-trusted-types-missing/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: Content-Security-Policy
+    policy: required
+    required_tokens: [require-trusted-types-for]
+    skip_if_header_missing: true

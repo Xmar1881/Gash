@@ -1,0 +1,11 @@
+{
+  "name": "Trac Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><head><meta name=\"generator\" content=\"Trac 1.6\"></head><body>trac</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

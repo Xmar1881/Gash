@@ -70,6 +70,6 @@ metrics reports, or issues. OOB tokens come from `--oob-token` or
 
 ## Supported Versions
 
-Only the latest minor release on the supported Go toolchain (`go1.26.8`)
-receives fixes. Older checkouts should upgrade before reporting scanner
-vulnerabilities.
+Only the latest minor release on the supported Go toolchain (`go1.27.3`,
+minimum `go 1.26.0`) receives fixes. Older checkouts should upgrade before
+reporting scanner vulnerabilities.

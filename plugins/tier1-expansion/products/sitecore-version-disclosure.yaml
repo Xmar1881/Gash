@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/products/sitecore-version-disclosure.yaml
+# What: Sitecore Fingerprint Disclosure (banner-only fingerprint).
+# Why: Banner-only product fingerprint; tentative evidence, never version-exploit proof.
+
+id: sitecore-version-disclosure
+name: Sitecore Fingerprint Disclosure
+description: Detects Sitecore paths or analytics cookie markers; banner-only fingerprint, tentative confidence.
+author: GASH contributors
+severity: low
+tags: [version, fingerprint, disclosure, sitecore]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: discovery
+order: 246
+api_version: "1.0"
+tests: tests/fixtures/sitecore-version-disclosure/
+request:
+  method: GET
+  paths:
+    - "/sitecore/"
+oracle:
+  name: version
+  params:
+    mode: banner
+    banner_regex: "(?i)(sitecore|SC_ANALYTICS_GLOBAL_COOKIE)"

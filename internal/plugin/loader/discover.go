@@ -72,25 +72,33 @@ func Discover(dirs []string, reg *plugin.Registry) (warnings []string, err error
 			}
 			if rerr := reg.Register(*spec, f, false); rerr != nil {
 				warnings = append(warnings, fmt.Sprintf("conflict %s: %v", f, rerr))
+				continue
+			}
+			if data, rerr := os.ReadFile(f); rerr == nil {
+				reg.SetOracleName(spec.ID, plugin.InferOracleFromSource(string(data)))
 			}
 		case strings.HasSuffix(lower, ".gashplugin.yaml"):
-			spec, _, lerr := LoadTier3Manifest(f)
+			spec, m, lerr := LoadTier3Manifest(f)
 			if lerr != nil {
 				warnings = append(warnings, fmt.Sprintf("skip %s: %v", f, lerr))
 				continue
 			}
 			if rerr := reg.Register(*spec, f, false); rerr != nil {
 				warnings = append(warnings, fmt.Sprintf("conflict %s: %v", f, rerr))
+				continue
 			}
+			reg.SetOracleName(spec.ID, m.Oracle)
 		default: // Tier1 yaml/json
-			spec, _, lerr := LoadTier1File(f)
+			spec, tier1, lerr := LoadTier1File(f)
 			if lerr != nil {
 				warnings = append(warnings, fmt.Sprintf("skip %s: %v", f, lerr))
 				continue
 			}
 			if rerr := reg.Register(*spec, f, false); rerr != nil {
 				warnings = append(warnings, fmt.Sprintf("conflict %s: %v", f, rerr))
+				continue
 			}
+			reg.SetOracleName(spec.ID, tier1.Oracle.Name)
 		}
 	}
 	return warnings, nil

@@ -94,6 +94,7 @@ Tarama seçeneklerini gösterir. Uydurma flag kullanma, listede ne varsa o geçe
       --fail-on string                CI kapısı (firm|confirmed)
       --format strings                json|sarif|text|html|junit (tekrarlanabilir) (default [text])
       --ignore-plugin strings         döngü kırma / susturma
+      --only-plugin strings           yalnızca bu plugin ID'lerini tara (profil kapıları yine uygulanır)
       --login-pass string             tek kimlik seti parolası (--login-pass-env tercih edilir)
       --login-pass-env string         parolayı ortam değişkeninden oku (örn. GASH_LOGIN_PASS)
       --login-pass-field string       parola alanı adı override'ı (boşsa ilk type=password)
@@ -101,8 +102,8 @@ Tarama seçeneklerini gösterir. Uydurma flag kullanma, listede ne varsa o geçe
       --login-user string             tek kimlik seti kullanıcı adı (parola denemesi YOK)
       --login-user-field string       kullanıcı alanı adı override'ı (boşsa sezgisel)
       --login-verify-url string       oturum doğrulama URL'i (boşsa action target, o da yoksa --login-url)
-      --max-requests-per-target int   per-target bütçe (default 1000)
-      --max-requests-total int        global bütçe (default 10000)
+      --max-requests-per-target int   per-target bütçe (default 2000; profil değeri aksi belirtilmedikçe)
+      --max-requests-total int        global bütçe (default 15000; profil değeri aksi belirtilmedikçe)
       --no-plugin-cache               cache bypass (debug)
       --oob-server string             OOB sağlayıcısı: local | interactsh (public) | interactsh://host | self-hosted API URL (boş=kapalı)
       --oob-token string              self-hosted interactsh/API token'ı (boşsa GASH_OOB_TOKEN)
@@ -164,7 +165,7 @@ Dışarı çıkmak isterseniz `--allow-external`, belirli bir listeyi zorlamak i
 `--scope` kullanın. Menüde scope boş bırakılırsa aynı otomatik kapsam uygulanır.
 
 - `--scan-timeout` (varsayılan `30m`): discovery + pluginler dahil tüm taramanın
-  süre tavanı. 338 plugin'lik taramalarda 10m çoğu plugin'i skip ettiriyordu;
+  süre tavanı. 438 plugin'lik taramalarda 10m çoğu plugin'i skip ettiriyordu;
   menüdeki "HER ŞEY" profili `45m` kullanır.
 - `--crawl-timeout` (varsayılan `5m`, menü HER ŞEY `10m`): BFS keşif fazının
   süre tavanı; yavaş proxy havuzu tüm scan süresini yiyemez, pluginlere süre
@@ -212,9 +213,10 @@ Komutları ezberlemek istemiyorsan menüyü aç:
 go run ./cmd/gash menu
 ```
 
-Sekmeler: `1` tarama, `2` pluginler, `3` bench, `4` OpenAPI, `5` diff,
-`6` suppress, `7` konsol, `8` sistem durumu, `9` yardım. Sekme adını da
-yazabilirsin (`scan`, `durum`, `yardim`); `0` veya `iptal` geri döner.
+Sekmeler: `1` tarama, `2` pluginler, `3` araçlar (bench, OpenAPI, diff,
+suppress), `4` konsol, `5` sistem durumu, `6` yardım. `b`/`o`/`d`/`x` doğrudan
+ilgili aracı açar. Sekme adını da yazabilirsin (`scan`, `durum`, `yardim`);
+`0` veya `iptal` geri döner.
 
 Tarama sekmesinde:
 
@@ -227,16 +229,28 @@ Tarama sekmesinde:
 - **Kimlik modu:** `cookie`, `header` veya `login` seçebilirsin. `login` güvenli
   profili otomatik `standard`a yükseltir ve `--active` ekler.
 - **Dış alan adları:** varsayılan kapalıdır; açarsan `--allow-external` eklenir.
-- Çalıştırmadan önce komut özeti gösterilir; `--cookie`, `--auth-header`,
-  `--oob-token`, `--login-pass`, `--basic-auth` ve proxy kimlik bilgileri
-  `[redacted]`/`***` olarak maskelenir.
+- Çalıştırmadan önce komut özeti gösterilir; özet satırı seçili profilin
+  motor tarafından uygulanan istek bütçesini, istek/sn sınırını, sayfa tavanını
+  ve crawl derinliğini de yazar (aynı `internal/config` profilinden okunur).
+  `--cookie`, `--auth-header`, `--oob-token`, `--login-pass`, `--basic-auth`
+  ve proxy kimlik bilgileri `[redacted]`/`***` olarak maskelenir.
 - Tarama sırasında her faz bittiğinde son detayı ve süresi sabitlenir; aktif
   faz canlı güncellenir (sayfa/endpoint/istek/bulgu/plugin sayaçları). Atlanan
   fazın gerekçesi de yazılır; örnek: `✔ [İçerik Keşfi] tamam · 82 istek ·
   1 bulgu · 45000 ms`.
 - Son komutu yeniden çalıştırmak için ana menüde `r` (veya `tekrar`) tuşuna bas.
+- **Plugin seçimi** (`2` → `s`): yalnızca taranacak ve hariç tutulacak plugin
+  ID'lerini ekle/çıkar; liste `.gash/menu-settings.json` içinde kalıcıdır.
+  Tarama akışı kayıtlı seçimi uygulamayı sorar ve komuta `--only-plugin` /
+  `--ignore-plugin` ekler; özet seçili/hariç sayılarını gösterir. Seçim yalnızca
+  plugin planını filtreler; motorun kendi keşif ve dedektör fazları (crawl, JS
+  recon, protokol/TLS, smuggle) çalışmaya devam eder.
+- **Menü ayarları** (`2` → `g`): varsayılan profil, logo görünürlüğü ve
+  varsayılan proxy modu (`auto`/`off`/`all`) kalıcı olarak saklanır. Tüm yeni
+  etiket ve mesajlar TR/EN dil anahtarlarından gelir.
 
-`8` sistem durumu sekmesi derleme etiketlerini, Chrome/headless durumunu, Go
+`5` sistem durumu sekmesi derleme etiketlerini, motor varsayılanlarını
+(`standard` profil bütçesi ve WAF varyant tavanı), Chrome/headless durumunu, Go
 sürümünü, yüklü plugin sayısını, otomatik proxy listesini ve son raporları
 gösterir; `o` rapor klasörünü açar, `v` son raporu görüntüler, `p` proxy
 sağlık kontrolü komutunu yazdırır. Ayrıntılı menü rehberi:
@@ -278,9 +292,9 @@ Profil, hangi dedektörlerin koşacağını ve bütçeyi tek yerden seçer:
 
 | Profil | Ne yapar | Ne zaman kullan |
 |---|---|---|
-| `safe` | Pasif kontroller, düşük bütçe (100 req/hedef) | CI ve üretim, izinsiz yük yok |
-| `standard` | Kontrollü aktif testler (500 req/hedef) | Yetkili web uygulaması (varsayılan) |
-| `deep` | Tarayıcı/OOB dahil yüksek bütçe (2000 req/hedef), `--deep` ister | Açıkça yetkilendirilmiş hedef |
+| `safe` | Pasif kontroller, düşük bütçe (250 req/hedef) | CI ve üretim, izinsiz yük yok |
+| `standard` | Kontrollü aktif testler (2000 req/hedef) | Yetkili web uygulaması (varsayılan) |
+| `deep` | Tarayıcı/OOB dahil yüksek bütçe (8000 req/hedef), `--deep` ister | Açıkça yetkilendirilmiş hedef |
 | `aggressive` | Tam güç ofansif (50000 req/hedef, 100 req/s, 32 worker) | Yalnızca lab ve yazılı izinli hedef |
 
 ```powershell
@@ -307,8 +321,10 @@ sayaçlarına işlenir. Agresif modda sınıflı semantik varyantlar denenir
 yüzde/GBK quote ve `%0b`/`%0c`/`%a0` whitespace farkları + XSS alternatif
 tag/entity/Unicode + shell `${IFS}` + path encode; content-type switching
 (JSON→text/plain/vendor, form→multipart, multipart duplicate field); JSON
-duplicate-key/Unicode-escape parser farkları; path-normalization `//`, `/./`,
-`;`; IP spoof header'ları; en fazla 16, aynı kapsam ve bütçe içinde). Cloudflare/Akamai/Imperva/DataDome/PerimeterX/AWS
+duplicate-key/Unicode-escape parser farkları; başlık/cookie payload
+mutasyonları; gzip sıkıştırılmış gövde; `$Version` cookie differential;
+path-normalization `//`, `/./`, `..;/`, `;`; decimal/hex/octal/IPv6 IP
+gösterimleri; IP spoof header'ları; en fazla 28, aynı kapsam ve bütçe içinde). Cloudflare/Akamai/Imperva/DataDome/PerimeterX/AWS
 WAF/Sucuri/F5/Kasada challenge sayfaları untrusted kabul edilir ve
 `waf_challenges` sayacına işlenir; host-genelinde plugin skip uygulanmaz.
 Proxy rotasyonu ve per-target rate limit devrede kalır. Headless Chrome challenge
@@ -460,7 +476,8 @@ yoktur veya ölçülmemiştir. Bahane değil, kayıt: `docs/known-limits.md`.
 
 - Yalnızca izinli hedef tara.
 - `--scope` ile kapsamı dar tut.
-- Varsayılan `--safe` modda kal; `--active`/`--aggressive` yalnızca izinli lab'da.
+- Varsayılan profil `standard` (kontrollü aktif); CI ve üretimde pasif kalmak
+  için `--profile safe` kullan. `--active`/`--aggressive` yalnızca izinli lab'da.
 - OOB sunucusu kurmadan OOB açmaya çalışma.
 - Secret ve oturum değerlerini rapora elle yapıştırma.
 

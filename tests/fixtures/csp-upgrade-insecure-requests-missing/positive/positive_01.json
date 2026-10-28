@@ -1,0 +1,12 @@
+{
+  "name": "policy violation for csp-upgrade-insecure-requests-missing",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'"
+  },
+  "body": "<html><body><h1>Welcome</h1><p>Static page.</p></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

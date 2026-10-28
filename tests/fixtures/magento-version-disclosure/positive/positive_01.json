@@ -1,0 +1,11 @@
+{
+  "name": "Magento Fingerprint Disclosure marker",
+  "target": "http://example.com/magento_version",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "Magento/2.4.7 (Community)",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/products/umbraco-version-disclosure.yaml
+# What: Umbraco Fingerprint Disclosure (banner-only fingerprint).
+# Why: Banner-only product fingerprint; tentative evidence, never version-exploit proof.
+
+id: umbraco-version-disclosure
+name: Umbraco Fingerprint Disclosure
+description: Detects Umbraco admin paths or XSRF cookie markers; banner-only fingerprint, tentative confidence.
+author: GASH contributors
+severity: low
+tags: [version, fingerprint, disclosure, umbraco]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: discovery
+order: 245
+api_version: "1.0"
+tests: tests/fixtures/umbraco-version-disclosure/
+request:
+  method: GET
+  paths:
+    - "/umbraco/"
+oracle:
+  name: version
+  params:
+    mode: banner
+    banner_regex: "(?i)(umbraco|UMB-XSRF-TOKEN)"

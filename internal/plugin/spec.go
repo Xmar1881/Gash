@@ -180,9 +180,9 @@ type PluginResult struct {
 
 // SkippedPlugin denetlenebilirlik için sessiz drop YOKTUR.
 type SkippedPlugin struct {
-	PluginID string
-	Reason   string
+	PluginID string `json:"plugin_id"`
+	Reason   string `json:"reason"`
 	// Partial: plugin tam koşmadı (bütçe/rate tavanı) ama hata da değil.
 	// Why: Rapor "koşmadı" ile "yarım kaldı"yı ayırt edebilmeli.
-	Partial bool
+	Partial bool `json:"partial"`
 }

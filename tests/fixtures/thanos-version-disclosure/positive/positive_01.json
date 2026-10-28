@@ -1,0 +1,11 @@
+{
+  "name": "Thanos Fingerprint Disclosure marker",
+  "target": "http://example.com/api/v1/status/buildinfo",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "{\"version\":\"0.35.0\",\"revision\":\"abc\",\"branch\":\"HEAD\",\"buildUser\":\"thanos@example.com\",\"buildDate\":\"2024-01-01\",\"goVersion\":\"go1.22\"}",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

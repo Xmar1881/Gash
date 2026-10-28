@@ -18,6 +18,51 @@ Dates are UTC.
 
 ### Added
 
+- Plugin selection and persistent menu customization. The Plugins tab now has
+  a selection editor (`s`) for an **only** list and an **excluded** list:
+  adding to one removes the ID from the other, IDs are validated against the
+  discovered catalog, and lists persist in `.gash/menu-settings.json`
+  (`GASH_MENU_SETTINGS` overrides the path). Scans prompt to apply the saved
+  set and emit `--only-plugin` / `--ignore-plugin`; the summary shows the
+  counts and reports expose `plugin_selection` / `plugin_exclusions`.
+  `--only-plugin` itself is a new validated CLI flag (unknown IDs and overlap
+  with `--ignore-plugin` fail closed), and unselected plugins are omitted
+  without skip-wall entries. A Settings screen (`g`) persists the default
+  profile, logo visibility, and default proxy mode (`auto`/`off`/`all`). All
+  new menu copy is TR/EN locale-keyed.
+- Tier 1 expansion pack: 100 new YAML plugins (catalog 338 → 438; Tier 1 275 →
+  375). Twenty-eight passive header-policy/hardening checks cover CSP
+  directives, HSTS preload, referrer policy, permissions policy, legacy
+  X-Frame-Options/X-XSS-Protection, isolation values, and version/debug
+  disclosure headers. Seventy-two banner-only product fingerprints cover CMS,
+  wiki, helpdesk, CRM/ERP, CI/CD, observability, auth, storage, data-UI, and
+  ML/admin stacks. Every plugin ships positive/negative fixtures and an
+  individual metrics report; fingerprints stay tentative and header policies
+  stay firm/confirmed. The header oracle gained a generic
+  `skip_if_header_missing` policy parameter so directive checks complement the
+  dedicated presence checks instead of duplicating their findings.
+- Profile detector gating now uses the oracle a plugin actually pins
+  (recorded at discovery), not tag-name heuristics. Product-tagged exposure
+  plugins no longer run in passive profiles that disable their oracle; a local
+  safe-profile smoke target dropped from 219 scheduled/146 partial plugins to
+  133 scheduled/2 partial at the same 400-request budget (186 requests used).
+  JSON reports now serialize empty `findings` and `skipped` as arrays instead
+  of null, so consumers never special-case the empty scan.
+- Profile budgets raised for the 438-plugin catalog: `safe` 100 → 250,
+  `standard` 500 → 2,000, and `deep` 4,000 → 8,000 requests per target
+  (totals 2,000 / 15,000 / 40,000). A local standard smoke target needed about
+  1,650 requests to finish 399 scheduled plugins (12 findings); at 500 it
+  stopped with 220 partial plugins and zero findings. Explicit flags still win,
+  and the menu's budget line reads the same profile values.
+- Shared passive response cache: identical static GET/HEAD requests for
+  read-only Tier 1 oracles are coalesced with singleflight, a 60 s TTL, 512
+  entries, and a 32 MiB body cap. Active, timing, differential, OOB, redirect,
+  reflection, rate-limit, and host-header flows keep their own exchange.
+  Cached hits skip network and budget accounting; reports expose
+  `passive_cache_hits` / `passive_cache_fetches`, and text reports end with a
+  compact `summary:` line (requests, cache hits, scheduled/partial/error
+  counts, duration). A local standard smoke run served 218 requests from cache
+  (1,499 network requests vs 1,642 before) with the same 12 findings.
 - Interactive menu overhaul (`gash menu`): new `status` tab (build tags,
   headless/Chrome, Go runtime, catalog count, auto proxy list, latest reports
   with open/view actions), bulk target-file scans with per-target same-site
@@ -33,6 +78,11 @@ Dates are UTC.
   health-check path against the repo root, made the status viewer prefer text
   reports instead of dumping HTML/JSON, asked for OOB tokens on all custom
   providers, and added a confirmation before removing a suppression.
+- Main menu opens with a six-line ANSI Shadow GASH wordmark painted with a
+  purple-to-cyan gradient. Interactive color terminals play a short two-pass
+  highlight sweep and settle on the static mark; piped output, `NO_COLOR`,
+  `TERM=dumb`, and `GASH_NO_ANIMATION=1` stay static. The version/meta line
+  keeps the literal brand name, and operator copy remains locale-keyed.
 - Menu chrome modernized: compact brand/version header, persistent breadcrumb
   with language and tab position, numbered segmented tabs with an active pill,
   keycap action hints, aligned footer, and a prompt that turns green/red with
@@ -40,10 +90,13 @@ Dates are UTC.
   were replaced by a compact hero and a wrapped warning line; all new chrome
   stays on the TR/EN locale keys and the width-aware plain-text fallback.
 - Documentation landing page rewritten around the actual operator experience:
-  new SVG banner, a first-class interactive-menu section with the tab/shortcut
-  table, a dedicated `docs/menu.md`, a compact coverage section, and corrected
-  default-profile/scope statements (CLI default is `standard`; `safe` is the
-  passive profile, and same-site scope is the default).
+  a clean text masthead, a first-class interactive-menu section with the
+  tab/shortcut table (English sample), a dedicated `docs/menu.md`, a compact
+  coverage section, and corrected default-profile/scope statements (CLI default
+  is `standard`; `safe` is the passive profile, and same-site scope is the
+  default). The generated SVG banner was removed, and the Turkish operator
+  guide moved to a separate “Localized Guides” section instead of sitting
+  beside the English menu entry.
 - Live phase detail in menus and CLI: each completed scan phase now keeps its
   final summary and duration while the active phase updates in place. The
   engine reports crawl pages/surface/requests, JS files/endpoints/secrets, SPA
@@ -70,10 +123,39 @@ Dates are UTC.
   `smuggle_ms`, `browser_verify_ms`). New `surface_points` and `crawl_failed`
   stats plus a crawl-failure note make limited plugin surfaces explicit instead
   of silently probing only the root page.
-- Modern WAF bypass pack (aggressive-only, 24 bounded variants): benign-first
+- Report taxonomy and audit fixes: error-oracle evidence modes now keep their
+  documented rule IDs (path traversal GASH-017, XPath GASH-034, backup
+  GASH-037, phpinfo/management/directory/source-map/SSI, and critical exposure
+  GASH-028) instead of all collapsing to the SQLi GASH-004 rule. JSON stats
+  now agree with the visible findings array (`findings`, `findings_total`,
+  `findings_visible`, `findings_tentative_hidden`, `findings_suppressed`), and
+  the JSON envelope gained `scan_id`, `noisy_notes`, oracle/method/injection
+  point/verification/remediation fields, plus lowercase `skipped` keys.
+- Scan reliability tuning to reduce skipped/timeout plugins: the HTTP transport
+  keeps 32 idle connections per host (instead of the stdlib default of two),
+  retries are globally budgeted at 20% of observed responses (minimum 32) to
+  stop correlated-failure amplification, ambiguous 5xx responses are no longer
+  replayed for POST/PATCH, `Retry-After` is honored up to the configured
+  backoff ceiling, and the deep profile budget rises from 2,000 to 4,000
+  requests/target so a 334-plugin run does not exhaust its host budget before
+  the exposure checks finish. Reports expose `retry_budget_exhausted`.
+- Target preflight and self-describing limits: the runtime tech GET now doubles
+  as a reachability check, so an unreachable target, blocked scope, exhausted
+  budget, or dead proxy pool aborts the run with one actionable error before
+  every plugin timeout is spent (an all-skipped schedule still returns a valid
+  empty report). The same GET supplies the TLS certificate verdict, removing
+  the previous duplicate HTTPS preflight request while keeping the
+  `SkipTLSFailFast` seam. JSON stats record the effective
+  `request_budget_target`, `request_budget_total`, `rate_limit_per_second`,
+  `max_pages`, and `crawl_depth`. The menu reads the same `internal/config`
+  profiles to show the selected profile's budget in the pre-scan summary and an
+  Engine row in the status tab.
+- Modern WAF bypass pack (aggressive-only, 28 bounded variants): benign-first
   HPP differentials, JSON escaped keys (`\u0069d`) alongside duplicate keys,
   JSON bodies with no `Content-Type`, malformed multipart field names (NUL
   suffix/filename), 8 KiB inspection-window padding, `..;/` path confusion,
+  payload-bearing header/cookie mutations, gzip-compressed bodies
+  (`Content-Encoding`), the legacy `$Version` cookie parser differential,
   decimal/hex/octal/IPv6 payload-IP spellings, symbolic SQL boolean operators,
   and modern SVG/MathML/media XSS tags plus backtick/computed `alert` calls.
   Every variant still needs two stable application responses; no stealth claim.
@@ -381,6 +463,20 @@ Dates are UTC.
 
 ### Fixed
 
+- Removed the `csp-object-src-missing` finding: `object-src` falls back to
+  `default-src`, so the check duplicated `csp-default-src-missing` and flagged
+  compliant policies. Replaced by `permissions-policy-payment-missing`; the
+  header pack stays at 28 plugins and the catalog at 438.
+- Flarum and NodeBB fingerprints no longer match generic `/assets/...` paths;
+  they require product-specific runtime markers, reducing tentative false
+  positives.
+- A panic inside a shared passive-cache fetch now closes the entry with an
+  error instead of leaving waiters blocked and the key poisoned; the next
+  caller can retry.
+- CLI budget flag defaults now match the standard profile (2,000 per target /
+  15,000 total) instead of advertising the stale 1,000/10,000 while profiles
+  overrode them. Explicit flags still win.
+- Text report summaries propagate writer errors and use singular "1 error".
 - Interactive scan flow now honours its own "empty = automatic" report label:
   leaving the report field empty writes `reports/<target>.json` and `.text`
   (with the terminal summary kept), instead of producing no file at all. The

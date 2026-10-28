@@ -1,0 +1,11 @@
+{
+  "name": "WooCommerce Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body><script src=\"/wp-content/plugins/woocommerce/assets/js/frontend.js\"></script></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

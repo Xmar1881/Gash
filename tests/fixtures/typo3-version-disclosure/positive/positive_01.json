@@ -1,0 +1,11 @@
+{
+  "name": "TYPO3 Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><head><meta name=\"generator\" content=\"TYPO3 CMS\"></head><body>site</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/feature-policy-deprecated.yaml
+# What: Deprecated Feature-Policy header check.
+# Why: Legacy header is ignored by current browsers; deterministic presence logic.
+
+id: feature-policy-deprecated
+name: Feature-Policy Deprecated
+description: Detects the deprecated Feature-Policy response header that is superseded by Permissions-Policy.
+author: GASH contributors
+severity: info
+tags: [headers, legacy, permissions-policy, misconfig, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 219
+api_version: "1.0"
+tests: tests/fixtures/feature-policy-deprecated/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: Feature-Policy
+    policy: forbidden

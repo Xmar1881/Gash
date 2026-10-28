@@ -1,0 +1,11 @@
+{
+  "name": "MyBB Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body><script src=\"/jscripts/general.js\"></script></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

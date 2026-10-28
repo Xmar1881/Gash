@@ -1,0 +1,11 @@
+{
+  "name": "ArangoDB Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><head><title>ArangoDB</title></head><body>web interface</body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

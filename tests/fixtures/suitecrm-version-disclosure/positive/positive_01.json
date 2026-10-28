@@ -1,0 +1,11 @@
+{
+  "name": "SuiteCRM Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body><footer>SuiteCRM</footer></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

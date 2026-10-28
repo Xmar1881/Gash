@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/headers/coep-unsafe-none.yaml
+# What: Explicit weak COEP value check.
+# Why: unsafe-none is the no-protection value; the presence check alone would miss it.
+
+id: coep-unsafe-none
+name: COEP unsafe-none
+description: Detects an explicit Cross-Origin-Embedder-Policy unsafe-none that disables embedder isolation.
+author: GASH contributors
+severity: low
+tags: [headers, isolation, coep, misconfig, header]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: probe
+order: 213
+api_version: "1.0"
+tests: tests/fixtures/coep-unsafe-none/
+request:
+  method: GET
+oracle:
+  name: header
+  params:
+    mode: policy
+    header_name: Cross-Origin-Embedder-Policy
+    policy: forbidden_tokens
+    forbidden_tokens: [unsafe-none]

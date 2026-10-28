@@ -1,0 +1,11 @@
+{
+  "name": "compliant policy for x-permitted-cross-domain-policies-missing",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html",
+    "X-Permitted-Cross-Domain-Policies": "none"
+  },
+  "body": "<html><body><h1>Welcome</h1><p>Static page.</p></body></html>",
+  "expected_verdict": "reject"
+}

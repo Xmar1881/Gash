@@ -1,0 +1,11 @@
+{
+  "name": "Concourse Fingerprint Disclosure marker",
+  "target": "http://example.com/api/v1/info",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "{\"version\":\"7.11.2\",\"worker_version\":\"2.11.1\",\"external_url\":\"https://ci.example.com\"}",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

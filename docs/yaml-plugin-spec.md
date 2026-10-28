@@ -82,7 +82,9 @@ Supported oracles and their params:
   mirror the engine oracle (e.g. `ratelimit` burst budget, `host_header`
   canary). `policy` additionally accepts `header_name`, `policy` (`missing`,
   `required`, `forbidden`, `forbidden_tokens`), `required_tokens`, and
-  `forbidden_tokens`. Examples: `plugins/headers/missing-security-headers.yaml`,
+  `forbidden_tokens`; set `skip_if_header_missing: true` so a directive check
+  only evaluates when the header exists and does not duplicate the dedicated
+  missing-header finding. Examples: `plugins/headers/missing-security-headers.yaml`,
   `plugins/host-header/host-header-injection.yaml`.
 - `redirect` (`expect_external_host: true`): parses the real `Location`
   header and compares hosts, with a neutral control request. Example:

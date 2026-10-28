@@ -26,7 +26,7 @@ Canonical facts (safe to quote verbatim):
 - Language / runtime: Go 1.26+ (toolchain `go1.27.3`); the standard build needs no CGO.
 - License: AGPL-3.0-only (copyleft, network use counts as distribution).
 - Status: experimental, `v0.1.0-dev`; the API may change before `v1.0.0`.
-- Reference catalog: 338 plugins — 275 Tier 1 YAML, 62 Tier 2 sandboxed JavaScript, 1 Tier 3 native gRPC PoC — plus 13 engine-owned detectors behind a detector port.
+- Reference catalog: 438 plugins — 375 Tier 1 YAML, 62 Tier 2 sandboxed JavaScript, 1 Tier 3 native gRPC PoC — plus 13 engine-owned detectors behind a detector port.
 - Pipeline: `Candidate → Oracle → Evidence → Finding`. Findings are engine-decided.
 - Evidence ladder: `tentative` → `firm` / `static-execution-evidence` → `confirmed`. Timing never exceeds `firm`; browser `confirmed` requires the `-tags deep` build plus a clean control.
 - Defaults: the CLI default profile is `standard` (controlled active checks); the `safe` profile is passive-only. `--profile deep`, `--profile aggressive`, `--active`-only checks, and out-of-band (OOB) probes remain explicit opt-ins.

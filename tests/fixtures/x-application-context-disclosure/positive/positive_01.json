@@ -1,0 +1,12 @@
+{
+  "name": "policy violation for x-application-context-disclosure",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html",
+    "X-Application-Context": "billing:prod:8080"
+  },
+  "body": "<html><body><h1>Welcome</h1><p>Static page.</p></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "Vtiger Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body><img src=\"/layouts/vlayout/skins/images/logo.png\"></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

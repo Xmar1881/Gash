@@ -28,6 +28,11 @@ func TestJSONEmptyValid(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &v); err != nil {
 		t.Fatalf("json geçersiz: %v", err)
 	}
+	for _, key := range []string{"findings", "skipped"} {
+		if _, ok := v[key].([]any); !ok {
+			t.Fatalf("%s must serialize as an array on empty reports, got %T", key, v[key])
+		}
+	}
 }
 
 func TestSARIFEmptyValid(t *testing.T) {
@@ -77,6 +82,26 @@ func TestTextReportSeparatesPartialPlugins(t *testing.T) {
 	}
 	if !strings.Contains(out, "partial (not fully executed)") {
 		t.Fatalf("partial nedeni raporda yok:\n%s", out)
+	}
+}
+
+func TestTextSummaryShowsCacheSavings(t *testing.T) {
+	rep := &engine.Report{
+		Target: "http://example.com/",
+		Stats: map[string]int{
+			"http_requests": 1499, "passive_cache_hits": 218,
+			"scheduled": 399, "partial_plugins": 15, "errors": 1, "total_ms": 146194,
+		},
+	}
+	var buf bytes.Buffer
+	if err := WriteText(&buf, rep, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{"summary: 1499 requests (218 cached)", "399 scheduled", "15 partial", "1 error", "146.2s"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("text summary missing %q:\n%s", want, out)
+		}
 	}
 }
 
@@ -164,5 +189,75 @@ func TestErrorSummarySeparatesNetworkFromPolicy(t *testing.T) {
 	want := " (1 limit, 1 network)"
 	if got != want {
 		t.Fatalf("errorSummary = %q, want %q", got, want)
+	}
+}
+
+// TestJSONAuditSchemaAndVisibleStats locks the report contract: visible
+// findings, hidden tentative count, scan id, and audit fields stay together.
+func TestJSONAuditSchemaAndVisibleStats(t *testing.T) {
+	firm := &finding.Finding{
+		ID: "F1", RuleID: "GASH-028", CWE: "CWE-200", Title: "Exposed path",
+		Severity: plugin.SeverityHigh, Confidence: plugin.ConfidenceFirm,
+		Target: "https://example.com/x", PluginID: "exposure-check",
+		Fingerprint: "fp-firm", OracleName: "error",
+		Method: "GET", VerificationMethod: "control-absent",
+		InjectionPoint: plugin.InjectionPoint{URL: "https://example.com/x", ParamName: "q"},
+		Note:           "audit note", Evidence: map[string]string{"signature": "marker"},
+	}
+	tentative := &finding.Finding{
+		ID: "F2", RuleID: "GASH-000", Title: "Tentative lead",
+		Severity: plugin.SeverityLow, Confidence: plugin.ConfidenceTentative,
+		Target: "https://example.com/y", PluginID: "lead", Fingerprint: "fp-tentative",
+	}
+	rep := &engine.Report{
+		Target:   "https://example.com",
+		ScanID:   "scan_test",
+		Findings: []*finding.Finding{firm, tentative},
+		Stats:    map[string]int{"findings": 2, "scheduled": 5},
+		Skipped:  []plugin.SkippedPlugin{{PluginID: "p1", Reason: "skipped (requires auth)"}},
+		NoisyNote: []string{
+			"test note",
+		},
+	}
+	var buf bytes.Buffer
+	if err := WriteJSON(&buf, rep, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		ScanID    string           `json:"scan_id"`
+		Findings  []map[string]any `json:"findings"`
+		Skipped   []map[string]any `json:"skipped"`
+		Stats     map[string]int   `json:"stats"`
+		NoisyNote []string         `json:"noisy_notes"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.ScanID != "scan_test" || len(out.Findings) != 1 || len(out.NoisyNote) != 1 {
+		t.Fatalf("audit envelope = %+v", out)
+	}
+	if len(out.Skipped) != 1 || out.Skipped[0]["plugin_id"] != "p1" || out.Skipped[0]["reason"] == "" {
+		t.Fatalf("skipped JSON keys must be lowercase: %+v", out.Skipped)
+	}
+	if out.Stats["findings"] != 1 || out.Stats["findings_total"] != 2 ||
+		out.Stats["findings_visible"] != 1 || out.Stats["findings_tentative_hidden"] != 1 {
+		t.Fatalf("visible stats inconsistent: %+v", out.Stats)
+	}
+	f := out.Findings[0]
+	for _, key := range []string{"oracle_name", "injection_point", "method", "verification_method", "note", "evidence"} {
+		if _, ok := f[key]; !ok {
+			t.Fatalf("finding audit field %q missing: %+v", key, f)
+		}
+	}
+	if f["oracle_name"] != "error" || f["method"] != "GET" {
+		t.Fatalf("finding audit values = %+v", f)
+	}
+
+	var text bytes.Buffer
+	if err := WriteText(&text, rep, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text.String(), "1 tentative hidden") {
+		t.Fatalf("text header must disclose hidden tentative findings: %q", text.String())
 	}
 }

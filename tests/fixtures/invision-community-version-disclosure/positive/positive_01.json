@@ -1,0 +1,11 @@
+{
+  "name": "Invision Community Fingerprint Disclosure marker",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body><div class=\"ipsLayout_container\">community</div></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

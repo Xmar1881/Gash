@@ -1,0 +1,12 @@
+{
+  "name": "policy violation for permissions-policy-microphone-missing",
+  "target": "http://example.com/",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html",
+    "Permissions-Policy": "geolocation=(), camera=()"
+  },
+  "body": "<html><body><h1>Welcome</h1><p>Static page.</p></body></html>",
+  "expected_verdict": "accept",
+  "expected_confidence": "firm"
+}

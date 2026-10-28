@@ -1,0 +1,11 @@
+{
+  "name": "GoCD Fingerprint Disclosure marker",
+  "target": "http://example.com/go/api/version",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "{\"version\":\"24.1.0\",\"build_number\":\"17234\",\"git_sha\":\"abc123\"}",
+  "expected_verdict": "accept",
+  "expected_confidence": "tentative"
+}

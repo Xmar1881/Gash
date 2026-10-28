@@ -172,4 +172,4 @@ the current platform; without it the native binary never spawns (B10).
 - Metadata warning-free; fixtures positive plus negative; precision >= 0.99.
 - Metrics report added; corpus gate green; `go test ./...` green.
 - Responsible-use note: authorized targets only, scope allowlist, OOB
-  opt-in, safe default. See `docs/SECURITY.md`.
+  opt-in, `--profile safe` for passive runs. See `docs/SECURITY.md`.

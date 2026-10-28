@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Xmar1881 / GASH contributors
+# Module: github.com/Xmar1881/Gash
+#
+# File: plugins/tier1-expansion/products/jira-version-disclosure.yaml
+# What: Jira Fingerprint Disclosure (banner-only fingerprint).
+# Why: Banner-only product fingerprint; tentative evidence, never version-exploit proof.
+
+id: jira-version-disclosure
+name: Jira Fingerprint Disclosure
+description: Detects the Jira serverInfo response marker; banner-only fingerprint, tentative confidence.
+author: GASH contributors
+severity: low
+tags: [version, fingerprint, disclosure, jira, atlassian]
+safe: true
+deep: false
+active: false
+requires_auth: false
+max_requests: 1
+phase: discovery
+order: 264
+api_version: "1.0"
+tests: tests/fixtures/jira-version-disclosure/
+request:
+  method: GET
+  paths:
+    - "/rest/api/2/serverInfo"
+oracle:
+  name: version
+  params:
+    mode: banner
+    banner_regex: "(?is)\\\"serverTitle\\\"\\s*:"

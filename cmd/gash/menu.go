@@ -25,9 +25,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Xmar1881/Gash/internal/config"
 	"github.com/Xmar1881/Gash/internal/headless"
-	"github.com/Xmar1881/Gash/internal/plugin"
-	"github.com/Xmar1881/Gash/internal/plugin/loader"
+	"github.com/Xmar1881/Gash/internal/wafbypass"
 )
 
 var (
@@ -55,6 +55,9 @@ type menuSession struct {
 	history []string          // konsolda çalıştırılan komutlar
 	last    lastRun           // en son çalıştırılan komutun özeti
 	memo    map[string]string // oturum boyunca hatırlanan son değerler
+	// settings is loaded once at session start and updated by the Settings
+	// and plugin-selection flows; every scan reads the current values.
+	settings menuSettings
 }
 
 // tab: ana menüdeki bir sekme. name/description/details alanları i18n
@@ -131,6 +134,7 @@ func newMenuSession(in io.Reader, out io.Writer, l uiLang) *menuSession {
 		th:          detectTheme(out),
 		width:       detectWidth(),
 		memo:        map[string]string{},
+		settings:    loadMenuSettings(),
 	}
 }
 
@@ -322,7 +326,7 @@ func (s *menuSession) initTabs() {
 			key: "p", short: "2", icon: "◈",
 			name: "tab.plugins.name", description: "tab.plugins.desc",
 			handler: func(ms *menuSession) error { return ms.pluginsFlow() },
-			details: []string{"tab.plugins.d1", "tab.plugins.d2", "tab.plugins.d3"},
+			details: []string{"tab.plugins.d1", "tab.plugins.d2", "tab.plugins.d3", "tab.plugins.d4"},
 			aliases: []string{"plugin", "plugins"},
 		},
 		{
@@ -690,7 +694,10 @@ func (s *menuSession) printInfoBar() {
 
 func (s *menuSession) printBanner() {
 	s.println()
-	left := s.th.brand("◆ GASH") + " " + s.th.keycap(" "+menuVersion+" ")
+	if s.settings.logoEnabled() {
+		s.printLogo()
+	}
+	left := s.th.brand("GASH") + " " + s.th.keycap(" "+menuVersion+" ")
 	right := s.th.muted(s.t("banner.meta", s.lang.String(), len(s.tabs)))
 	s.lineLR(left, right)
 	s.println("  " + s.th.accent(s.t("banner.tagline")))
@@ -835,8 +842,11 @@ func (s *menuSession) statusFlow() error {
 			proxyLabel = fmt.Sprintf("%s (%d)", p, countListEntries(p))
 		}
 		reports := latestReportFiles(5)
+		std := config.StandardProfile()
+		engineLabel := s.t("status.engineValue", std.Name, std.MaxRequestsPerTarget, wafbypass.MaxAttemptsForPlugin)
 		lines := []string{
 			s.kv(s.t("status.build"), build),
+			s.kv(s.t("status.engine"), engineLabel),
 			s.kv(s.t("status.chrome"), chromeLabel),
 			s.kv(s.t("status.go"), runtime.Version()+" · "+runtime.GOOS+"/"+runtime.GOARCH),
 			s.kv(s.t("status.catalog"), catalogLabel),
@@ -889,15 +899,11 @@ func (s *menuSession) statusFlow() error {
 }
 
 func (s *menuSession) catalogCount() int {
-	root := menuRepoRoot()
-	if root == "" {
-		root = "."
-	}
-	reg := plugin.NewRegistry()
-	if _, err := loader.Discover([]string{filepath.Join(root, "plugins")}, reg); err != nil {
+	ids, _, err := s.catalogPluginIDs()
+	if err != nil {
 		return -1
 	}
-	return len(reg.Snapshot())
+	return len(ids)
 }
 
 // menuRepoRoot walks upward to the module root so the status tab also works
@@ -1066,9 +1072,9 @@ func (s *menuSession) scanFlow() error {
 		}
 	}
 
-	defProfile := s.memo["profile"]
-	if defProfile == "" {
-		defProfile = "standard"
+	defProfile := s.settings.defaultProfile()
+	if v := s.memo["profile"]; v != "" {
+		defProfile = v
 	}
 	profile, err := s.choose(s.t("scan.profile"), []choice{
 		{"safe", "s", "profile.safe.label", "profile.safe.desc"},
@@ -1118,6 +1124,12 @@ func (s *menuSession) scanFlow() error {
 	var infraDeep bool
 	var customTimeout string
 	proxyMode := "auto"
+	if !everything {
+		proxyMode = s.settings.defaultProxyMode()
+	}
+	onlyIDs := append([]string(nil), s.settings.PluginOnly...)
+	excludeIDs := append([]string(nil), s.settings.PluginExclude...)
+	onlyIDs, excludeIDs = s.prunePluginSelection(onlyIDs, excludeIDs)
 	proxySingle := ""
 	allowExternal := false
 	authMode := "none"
@@ -1285,6 +1297,16 @@ func (s *menuSession) scanFlow() error {
 		customTimeout = strings.TrimSpace(to)
 	}
 
+	if len(onlyIDs)+len(excludeIDs) > 0 {
+		useSelection, serr := s.confirm(s.t("scan.useSelection", len(onlyIDs), len(excludeIDs)), true)
+		if serr != nil {
+			return serr
+		}
+		if !useSelection {
+			onlyIDs, excludeIDs = nil, nil
+		}
+	}
+
 	if targetFile != "" {
 		resume, err = s.confirm(s.t("scan.resume"), false)
 		if err != nil {
@@ -1348,6 +1370,12 @@ func (s *menuSession) scanFlow() error {
 	}
 	if profile == "aggressive" {
 		args = append(args, "--aggressive")
+	}
+	if len(onlyIDs) > 0 {
+		args = append(args, "--only-plugin", strings.Join(onlyIDs, ","))
+	}
+	if len(excludeIDs) > 0 {
+		args = append(args, "--ignore-plugin", strings.Join(excludeIDs, ","))
 	}
 	switch proxyMode {
 	case "off":
@@ -1437,9 +1465,15 @@ func (s *menuSession) scanFlow() error {
 		s.kv(targetKey, targetLabel),
 		s.kv(s.t("kv.scope"), scopeLabel),
 		s.th.muted(padVisible(s.t("kv.profile"), kvLabelW)) + s.profileTone(profile),
+	}
+	if budget := s.profileBudget(profile); budget != "" {
+		summaryItems = append(summaryItems, s.kv(s.t("kv.budget"), budget))
+	}
+	summaryItems = append(summaryItems, s.kv(s.t("kv.plugins"), s.selectionSummary(onlyIDs, excludeIDs)))
+	summaryItems = append(summaryItems,
 		s.kv(s.t("kv.report"), outLabel),
 		s.kv(s.t("kv.proxy"), proxyLabel),
-	}
+	)
 	if authMode != "none" {
 		summaryItems = append(summaryItems, s.kv(s.t("kv.auth"), s.t("auth."+authMode+".label")))
 	}
@@ -1509,6 +1543,17 @@ func (s *menuSession) profileTone(p string) string {
 	return s.th.bold(p)
 }
 
+// profileBudget renders the limits the engine will enforce for a profile, so
+// the pre-scan summary and the actual run can never disagree about budgets.
+func (s *menuSession) profileBudget(p string) string {
+	profile := config.GetProfile(config.ProfileName(p))
+	if profile == nil {
+		return ""
+	}
+	rate := strconv.FormatFloat(profile.RatePerSecond, 'f', -1, 64)
+	return s.t("scan.budget", profile.MaxRequestsPerTarget, rate, profile.MaxPages, profile.CrawlDepth)
+}
+
 func (s *menuSession) pluginsFlow() error {
 	return s.submenu(s.t("plugins.title"), s.t("common.mainMenu"), []menuItem{
 		{"l", "plugins.list", "plugins.list.desc", func() error {
@@ -1573,6 +1618,8 @@ func (s *menuSession) pluginsFlow() error {
 			s.execute("plugins", "trust", manifest)
 			return nil
 		}},
+		{"s", "plugins.selection.label", "plugins.selection.desc", s.pluginSelectionFlow},
+		{"g", "plugins.settings.label", "plugins.settings.desc", s.settingsFlow},
 	})
 }
 
