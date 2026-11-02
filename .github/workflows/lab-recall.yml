@@ -182,7 +182,7 @@ jobs:
           } | tee recall-summary.md
 
       - name: Upload lab artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lab-recall
           path: |
