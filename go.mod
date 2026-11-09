@@ -5,8 +5,8 @@ go 1.26.0
 toolchain go1.27.3
 
 require (
-	github.com/chromedp/cdproto v0.157.8
-	github.com/chromedp/chromedp v0.21.0
+	github.com/chromedp/cdproto v0.159.2
+	github.com/chromedp/chromedp v0.23.0
 	github.com/dop251/goja v0.0.0-20261011204819-0c9fae1b959d
 	github.com/go-playground/validator/v10 v10.27.0
 	github.com/hashicorp/go-plugin v1.8.0
